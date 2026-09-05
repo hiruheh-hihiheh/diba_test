@@ -3,7 +3,9 @@ export interface CloudinaryUploadResult {
   publicId: string;
 }
 
-export async function uploadDispatchPhoto(uri: string): Promise<CloudinaryUploadResult> {
+export async function uploadDispatchPhoto(
+  source: string | Blob
+): Promise<CloudinaryUploadResult> {
   const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME;
   const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
@@ -13,24 +15,41 @@ export async function uploadDispatchPhoto(uri: string): Promise<CloudinaryUpload
 
   const formData = new FormData();
   formData.append("upload_preset", uploadPreset);
-  
-  // React Native requires this specific object structure for file uploads
-  formData.append("file", {
-    uri,
-    type: "image/jpeg",
-    name: "dispatch-photo.jpg",
-  } as any);
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-    method: "POST",
-    body: formData,
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
-  });
+  if (typeof source === "string") {
+    // Native (React Native)
+    formData.append("file", {
+      uri: source,
+      type: "image/jpeg",
+      name: "dispatch-photo.jpg",
+    } as any);
+  } else {
+    // Web (File/Blob object)
+    formData.append("file", source, "dispatch-photo.jpg");
+  }
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    {
+      method: "POST",
+      body: formData,
+      // IMPORTANT: Do NOT manually set "Content-Type": "multipart/form-data".
+      // The browser/runtime will automatically set it with the correct boundary.
+    }
+  );
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const errorData = await response.json();
+      console.error("Cloudinary error response:", errorData);
+      if (errorData?.error?.message) {
+        errorMessage = errorData.error.message;
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+    throw new Error(errorMessage);
   }
 
   const data = await response.json();

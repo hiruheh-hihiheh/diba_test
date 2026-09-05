@@ -51,6 +51,50 @@ export default function LoginScreen() {
       return;
     }
 
+    // 1. Get the authenticated user
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      await supabase.auth.signOut();
+      setError("Unable to verify administrator access.");
+      setLoading(false);
+      return;
+    }
+
+    // 2. Query the profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role, is_active")
+      .eq("id", user.id)
+      .single();
+
+    // 3. Validate profile lookup
+    if (profileError || !profile) {
+      await supabase.auth.signOut();
+      setError("Unable to verify administrator access.");
+      setLoading(false);
+      return;
+    }
+
+    // 4. Validate role
+    if (profile.role !== "admin") {
+      await supabase.auth.signOut();
+      setError("Admin access only.");
+      setLoading(false);
+      return;
+    }
+
+    // 5. Validate active status
+    if (!profile.is_active) {
+      await supabase.auth.signOut();
+      setError("Your admin account is inactive.");
+      setLoading(false);
+      return;
+    }
+
     // Navigate on success. The auth-state listener in index.tsx acts as
     // a safety-net for token-refresh and deep-link edge-cases.
     router.replace("/dashboard");

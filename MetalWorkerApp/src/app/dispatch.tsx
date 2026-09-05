@@ -30,6 +30,7 @@ export default function DispatchScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoAsset, setPhotoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState("");
   const [materialType, setMaterialType] = useState<MaterialType | null>(null);
   
@@ -109,7 +110,9 @@ export default function DispatchScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setPhotoUri(result.assets[0].uri);
+        const asset = result.assets[0];
+        setPhotoAsset(asset);
+        setPhotoUri(asset.uri);
       }
     } catch {
       Alert.alert(t.something_went_wrong, t.camera_error);
@@ -125,10 +128,19 @@ export default function DispatchScreen() {
   }
 
   async function handleSubmit() {
-    if (!photoUri) {
+    if (!photoAsset || !photoUri) {
       Alert.alert(t.something_went_wrong, t.photo_required);
       return;
     }
+
+    // Determine upload source based on platform
+    const uploadSource = Platform.OS === "web" ? photoAsset.file : photoAsset.uri;
+
+    if (!uploadSource) {
+      Alert.alert(t.something_went_wrong, t.photo_required);
+      return;
+    }
+
     if (!vehicleNumber) {
       Alert.alert(t.something_went_wrong, t.vehicle_required);
       return;
@@ -144,7 +156,7 @@ export default function DispatchScreen() {
       // 1. Upload to Cloudinary
       let uploadResult;
       try {
-        uploadResult = await uploadDispatchPhoto(photoUri);
+        uploadResult = await uploadDispatchPhoto(uploadSource as string | Blob);
       } catch (err) {
         console.error("Cloudinary upload error:", err);
         Alert.alert(t.something_went_wrong, t.photo_upload_failed);
