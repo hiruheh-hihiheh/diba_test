@@ -1,22 +1,29 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
+import { router } from "expo-router";
 
 import { theme } from "../constants/theme";
 import { supabase, usernameToEmail } from "../services/supabase";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 
-export function LoginScreen() {
+export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const passwordRef = useRef<TextInput>(null);
 
   async function handleLogin() {
     setError(null);
@@ -40,9 +47,19 @@ export function LoginScreen() {
           ? "Wrong username or password."
           : signInError.message
       );
+      setLoading(false);
+      return;
     }
 
+    // Navigate on success. The auth-state listener in index.tsx acts as
+    // a safety-net for token-refresh and deep-link edge-cases.
+    router.replace("/dashboard");
     setLoading(false);
+  }
+
+  function clearErrorOnChange(text: string, setter: (v: string) => void) {
+    setter(text);
+    if (error) setError(null);
   }
 
   return (
@@ -50,39 +67,68 @@ export function LoginScreen() {
       style={styles.screen}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={styles.card}>
-        <View style={styles.logo}>
-          <Text style={styles.logoText}>MW</Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          {/* ── Logo ─────────────────────────────── */}
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>MW</Text>
+          </View>
+
+          <Text style={styles.title}>Admin Portal</Text>
+          <Text style={styles.subtitle}>
+            Restricted area — authorized administrators only.
+          </Text>
+
+          {/* ── Username ─────────────────────────── */}
+          <Input
+            label="USERNAME"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={username}
+            onChangeText={(text: string) => clearErrorOnChange(text, setUsername)}
+            placeholder="admin"
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+          />
+
+          {/* ── Password ─────────────────────────── */}
+          <Input
+            label="PASSWORD"
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={(text: string) => clearErrorOnChange(text, setPassword)}
+            placeholder="••••••••"
+            returnKeyType="done"
+            onSubmitEditing={handleLogin}
+          />
+
+          <TouchableOpacity
+            style={styles.togglePassword}
+            onPress={() => setShowPassword((prev) => !prev)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+          >
+            <Text style={styles.togglePasswordText}>
+              {showPassword ? "Hide password" : "Show password"}
+            </Text>
+          </TouchableOpacity>
+
+          {/* ── Error ────────────────────────────── */}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          {/* ── Submit ───────────────────────────── */}
+          <Button
+            title="Sign In"
+            loading={loading}
+            disabled={loading}
+            onPress={handleLogin}
+          />
         </View>
-
-        <Text style={styles.title}>Metal Worker</Text>
-        <Text style={styles.subtitle}>Admin Portal</Text>
-
-        <Input
-          label="USERNAME"
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={username}
-          onChangeText={setUsername}
-          placeholder="admin"
-        />
-
-        <Input
-          label="PASSWORD"
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-          placeholder="••••••••"
-        />
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <Button
-          title="Sign In"
-          loading={loading}
-          onPress={handleLogin}
-        />
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -91,6 +137,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
     padding: theme.spacing.lg,
   },
@@ -127,6 +176,18 @@ const styles = StyleSheet.create({
     fontSize: theme.textSizes.sm,
     textAlign: "center",
     marginBottom: theme.spacing.lg,
+  },
+  togglePassword: {
+    alignSelf: "flex-end",
+    marginTop: -theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  togglePasswordText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
   },
   error: {
     color: theme.colors.danger,

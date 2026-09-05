@@ -1,51 +1,65 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
-import type { Session } from "@supabase/supabase-js";
+import { router } from "expo-router";
 
-import { AdminDashboardScreen } from "../app/dashboard";
-import { LoginScreen } from "../app/login";
 import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
 
 export default function Index() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
+    let isMounted = true;
+
+    async function checkSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) return;
+
+      if (session) {
+        router.replace("/dashboard");
+      } else {
+        router.replace("/login");
+      }
+
+      setLoading(false);
+    }
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        router.replace("/login");
+      }
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession);
-      }
-    );
-
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  if (!ready) {
+  if (loading) {
     return (
-      <View style={styles.splash}>
-        <ActivityIndicator color={theme.colors.primary} size="large" />
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }
 
-  return session ? (
-    <AdminDashboardScreen session={session} />
-  ) : (
-    <LoginScreen />
-  );
+  return null;
 }
 
 const styles = StyleSheet.create({
-  splash: {
+  container: {
     flex: 1,
     backgroundColor: theme.colors.background,
     alignItems: "center",
     justifyContent: "center",
   },
 });
+
