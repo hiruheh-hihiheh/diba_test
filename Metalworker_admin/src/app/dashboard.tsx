@@ -9,16 +9,16 @@ import {
 
 import type { Session } from "@supabase/supabase-js";
 
-import { theme } from "../../constants/theme";
+import { theme } from "../constants/theme";
 import {
   createWorkerUser,
   fetchWorkers,
-} from "../../services/admin";
-import { supabase } from "../../services/supabase";
-import type { Profile } from "../../types/profile";
+} from "../services/admin";
+import { supabase } from "../services/supabase";
+import type { Profile } from "../types/profile";
 
-import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
 
 interface AdminDashboardScreenProps {
   session: Session;

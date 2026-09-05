@@ -7,10 +7,10 @@ import {
   View,
 } from "react-native";
 
-import { theme } from "../../constants/theme";
-import { supabase, usernameToEmail } from "../../services/supabase";
-import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { theme } from "../constants/theme";
+import { supabase, usernameToEmail } from "../services/supabase";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
 
 export function LoginScreen() {
   const [username, setUsername] = useState("");

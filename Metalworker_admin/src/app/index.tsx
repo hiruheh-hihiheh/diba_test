@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 
-import { AdminDashboardScreen } from "../components/screens/AdminDashboardScreen";
-import { LoginScreen } from "../components/screens/LoginScreen";
+import { AdminDashboardScreen } from "../app/dashboard";
+import { LoginScreen } from "../app/login";
 import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
 
