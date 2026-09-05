@@ -13,6 +13,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useRouter } from "expo-router"; // Added for navigation
 import type { Session } from "@supabase/supabase-js";
 
 import { theme } from "../constants/theme";
@@ -149,6 +150,7 @@ function WorkerRow({
 */
 
 export default function DashboardScreen() {
+  const router = useRouter(); // Added router instance
   const [session, setSession] = useState<Session | null>(null);
 
   const [workers, setWorkers] = useState<Profile[]>([]);
@@ -479,6 +481,14 @@ export default function DashboardScreen() {
             <Text style={styles.headerSub}>Signed in as {adminUsername}</Text>
           </View>
           <Button title="Logout" variant="ghost" onPress={handleLogout} />
+        </View>
+
+        {/* DISPATCH NAVIGATION BUTTON */}
+        <View style={{ marginBottom: theme.spacing.lg }}>
+          <Button 
+            title="View Dispatch Management →" 
+            onPress={() => router.push("/dispatch")} 
+          />
         </View>
 
         {/* STATS */}
