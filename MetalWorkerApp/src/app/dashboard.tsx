@@ -8,685 +8,366 @@ import {
   View,
 } from "react-native";
 
-import {
-  useEffect,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 
 import { useRouter } from "expo-router";
 
 import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
-
+import { getTranslations, type Language } from "../constants/translations";
+import { ActionCard } from "../components/dashboard/ActionCard";
 
 export default function DashboardScreen() {
-
   const router = useRouter();
 
-  const [loading, setLoading] =
-    useState(true);
+  const [language, setLanguage] = useState<Language>("en");
+  const t = getTranslations(language);
 
-  const [username, setUsername] =
-    useState("Worker");
-
-  const [loggingOut, setLoggingOut] =
-    useState(false);
-
+  const [loading, setLoading] = useState(true);
+  const [username, setUsername] = useState("Worker");
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
-
     async function loadUser() {
-
       const {
         data: { session },
-      } =
-        await supabase.auth.getSession();
-
+      } = await supabase.auth.getSession();
 
       if (!session) {
-
         router.replace("/login");
-
         return;
       }
 
-
-      const email =
-        session.user.email ?? "";
-
-
-      const workerUsername =
-        email.split("@")[0];
-
+      const email = session.user.email ?? "";
+      const workerUsername = email.split("@")[0];
 
       if (workerUsername) {
-
         setUsername(workerUsername);
-
       }
-
 
       setLoading(false);
     }
 
-
     loadUser();
-
   }, [router]);
 
-
   async function handleLogout() {
-
     try {
-
       setLoggingOut(true);
 
-
-      const { error } =
-        await supabase.auth.signOut();
-
+      const { error } = await supabase.auth.signOut();
 
       if (error) {
-
-        Alert.alert(
-          "Logout Failed",
-          error.message
-        );
-
+        Alert.alert(t.logout_failed, error.message);
         return;
       }
 
-
       router.replace("/login");
-
     } catch {
-
-      Alert.alert(
-        "Error",
-        "Unable to logout."
-      );
-
+      Alert.alert(t.logout_failed, t.unable_to_logout);
     } finally {
-
       setLoggingOut(false);
-
     }
-
   }
 
+  function showComingSoon(enMsg: string, hiMsg: string) {
+    Alert.alert(
+      language === "hi" ? "जल्द आ रहा है" : "Coming Soon",
+      language === "hi" ? hiMsg : enMsg
+    );
+  }
 
   if (loading) {
-
     return (
-
-      <View
-        style={styles.loadingContainer}
-      >
-
-        <ActivityIndicator
-          size="large"
-          color={theme.colors.primary}
-        />
-
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
-
     );
-
   }
 
-
   return (
-
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={
-        styles.content
-      }
+      contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-
       {/* HEADER */}
-
       <View style={styles.header}>
-
         <View style={styles.userInfo}>
-
-          <Text style={styles.greeting}>
-            Good Morning,
-          </Text>
-
-          <Text style={styles.username}>
-            {username}
-          </Text>
-
+          <Text style={styles.greeting}>{t.good_morning},</Text>
+          <Text style={styles.username}>{username}</Text>
         </View>
 
+        <View style={styles.headerRight}>
+          <View style={styles.langSwitch}>
+            <TouchableOpacity
+              style={[styles.langBtn, language === "en" && styles.langBtnActive]}
+              onPress={() => setLanguage("en")}
+            >
+              <Text style={[styles.langText, language === "en" && styles.langTextActive]}>
+                EN
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.langBtn, language === "hi" && styles.langBtnActive]}
+              onPress={() => setLanguage("hi")}
+            >
+              <Text style={[styles.langText, language === "hi" && styles.langTextActive]}>
+                हिं
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity
-          onPress={handleLogout}
-          disabled={loggingOut}
-          style={styles.logoutButton}
-        >
-
-          <Text style={styles.logoutText}>
-
-            {loggingOut
-              ? "Logging out..."
-              : "Logout"}
-
-          </Text>
-
-        </TouchableOpacity>
-
+          <TouchableOpacity
+            onPress={handleLogout}
+            disabled={loggingOut}
+            style={styles.logoutButton}
+          >
+            <Text style={styles.logoutText}>
+              {loggingOut ? t.logging_out : t.logout}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
 
       {/* STATUS */}
-
       <View style={styles.statusCard}>
-
         <View style={styles.statusIndicator}>
-
           <View style={styles.statusDot} />
-
-          <Text style={styles.statusText}>
-            Active & Online
-          </Text>
-
+          <Text style={styles.statusText}>{t.active_online}</Text>
         </View>
-
-        <Text style={styles.statusSub}>
-          You are ready to log dispatches.
-        </Text>
-
+        <Text style={styles.statusSub}>{t.ready_to_log}</Text>
       </View>
-
 
       {/* QUICK ACTIONS */}
-
-      <Text style={styles.sectionTitle}>
-        Quick Actions
-      </Text>
-
+      <Text style={styles.sectionTitle}>{t.quick_actions}</Text>
 
       <View style={styles.grid}>
-
         <ActionCard
-          title="New Dispatch"
-          subtitle="Log a new metal sale"
+          title={t.new_dispatch}
+          subtitle={t.log_new_sale}
           icon="🚛"
           primary
+          onPress={() =>
+            showComingSoon(
+              "New dispatch screen is coming soon.",
+              "नई एंट्री स्क्रीन जल्द उपलब्ध होगी।"
+            )
+          }
         />
 
         <ActionCard
-          title="My History"
-          subtitle="View past logs"
+          title={t.my_history}
+          subtitle={t.view_past_logs}
           icon="📋"
+          onPress={() =>
+            showComingSoon(
+              "Your dispatch history will appear here.",
+              "आपकी पुरानी एंट्री यहाँ दिखाई देंगी।"
+            )
+          }
         />
 
         <ActionCard
-          title="Scan QR"
-          subtitle="Scan truck/item"
+          title={t.scan_qr}
+          subtitle={t.scan_truck_item}
           icon="📷"
+          onPress={() =>
+            showComingSoon(
+              "QR scanning will be available soon.",
+              "QR स्कैन की सुविधा जल्द उपलब्ध होगी।"
+            )
+          }
         />
 
         <ActionCard
-          title="Profile"
-          subtitle="Settings & info"
+          title={t.profile}
+          subtitle={t.settings_info}
           icon="👤"
+          onPress={() =>
+            showComingSoon(
+              "Profile settings will be available soon.",
+              "प्रोफाइल सेटिंग्स जल्द उपलब्ध होंगी।"
+            )
+          }
         />
-
       </View>
-
 
       {/* ACTIVITY */}
-
-      <Text style={styles.sectionTitle}>
-        Recent Activity
-      </Text>
-
+      <Text style={styles.sectionTitle}>{t.recent_activity}</Text>
 
       <View style={styles.emptyCard}>
-
-        <Text style={styles.emptyText}>
-          No recent dispatches.
-        </Text>
-
-        <Text style={styles.emptySub}>
-          Your submitted logs will appear here.
-        </Text>
-
+        <Text style={styles.emptyText}>{t.no_recent_dispatches}</Text>
+        <Text style={styles.emptySub}>{t.submitted_logs_appear_here}</Text>
       </View>
-
     </ScrollView>
-
   );
-
 }
-
-
-function ActionCard({
-  title,
-  subtitle,
-  icon,
-  primary = false,
-}: {
-  title: string;
-  subtitle: string;
-  icon: string;
-  primary?: boolean;
-}) {
-
-  return (
-
-    <TouchableOpacity
-      activeOpacity={0.7}
-
-      style={[
-        styles.actionCard,
-
-        primary &&
-          styles.actionCardPrimary,
-      ]}
-    >
-
-      <Text style={styles.actionIcon}>
-        {icon}
-      </Text>
-
-
-      <Text
-        style={[
-          styles.actionTitle,
-
-          primary &&
-            styles.actionTitlePrimary,
-        ]}
-      >
-        {title}
-      </Text>
-
-
-      <Text
-        style={[
-          styles.actionSub,
-
-          primary &&
-            styles.actionSubPrimary,
-        ]}
-      >
-        {subtitle}
-      </Text>
-
-    </TouchableOpacity>
-
-  );
-
-}
-
 
 const styles = StyleSheet.create({
-
   screen: {
     flex: 1,
-    backgroundColor:
-      theme.colors.background,
+    backgroundColor: theme.colors.background,
   },
-
 
   content: {
-    padding:
-      theme.spacing.lg,
-
-    paddingBottom:
-      theme.spacing.xxl,
+    padding: theme.spacing.lg,
+    paddingBottom: theme.spacing.xxl,
   },
-
 
   loadingContainer: {
     flex: 1,
-
-    justifyContent:
-      "center",
-
-    alignItems:
-      "center",
-
-    backgroundColor:
-      theme.colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: theme.colors.background,
   },
-
 
   header: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    justifyContent:
-      "space-between",
-
-    marginBottom:
-      theme.spacing.lg,
-
-    marginTop:
-      theme.spacing.sm,
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.lg,
+    marginTop: theme.spacing.sm,
   },
-
 
   userInfo: {
     flex: 1,
-
-    marginRight:
-      theme.spacing.md,
+    marginRight: theme.spacing.md,
   },
 
-
   greeting: {
-    color:
-      theme.colors.textMuted,
-
-    fontSize:
-      theme.textSizes.sm,
-
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
     fontWeight: "500",
   },
 
-
   username: {
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.xl,
-
+    color: theme.colors.text,
+    fontSize: theme.textSizes.xl,
     fontWeight: "800",
-
     marginTop: 2,
-
-    textTransform:
-      "capitalize",
+    textTransform: "capitalize",
   },
 
-
-  logoutButton: {
-
-    backgroundColor:
-      "#FEF2F2",
-
-    paddingHorizontal: 16,
-
-    paddingVertical: 12,
-
-    borderRadius: 12,
-
-    borderWidth: 1,
-
-    borderColor:
-      "#FECACA",
-
-    minHeight: 44,
-
-    justifyContent:
-      "center",
-
+  headerRight: {
+    alignItems: "flex-end",
+    gap: theme.spacing.sm,
   },
 
-
-  logoutText: {
-
-    color:
-      theme.colors.danger,
-
-    fontSize:
-      theme.textSizes.sm,
-
-    fontWeight: "700",
-
-  },
-
-
-  statusCard: {
-
-    backgroundColor:
-      theme.colors.surface,
-
-    borderRadius:
-      theme.radius.lg,
-
-    padding:
-      theme.spacing.lg,
-
-    borderWidth: 1,
-
-    borderColor:
-      theme.colors.border,
-
-    marginBottom:
-      theme.spacing.lg,
-
-  },
-
-
-  statusIndicator: {
-
+  langSwitch: {
     flexDirection: "row",
-
-    alignItems: "center",
-
-    marginBottom:
-      theme.spacing.xs,
-
-  },
-
-
-  statusDot: {
-
-    width: 8,
-    height: 8,
-
-    borderRadius: 4,
-
-    backgroundColor:
-      theme.colors.primary,
-
-    marginRight:
-      theme.spacing.sm,
-
-  },
-
-
-  statusText: {
-
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.md,
-
-    fontWeight: "700",
-
-  },
-
-
-  statusSub: {
-
-    color:
-      theme.colors.textMuted,
-
-    fontSize:
-      theme.textSizes.sm,
-
-  },
-
-
-  sectionTitle: {
-
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.md,
-
-    fontWeight: "700",
-
-    marginBottom:
-      theme.spacing.md,
-
-    marginTop:
-      theme.spacing.sm,
-
-  },
-
-
-  grid: {
-
-    flexDirection: "row",
-
-    flexWrap: "wrap",
-
-    justifyContent:
-      "space-between",
-
-  },
-
-
-  actionCard: {
-
-    width: "48%",
-
-    backgroundColor:
-      theme.colors.surface,
-
-    borderRadius:
-      theme.radius.lg,
-
-    padding:
-      theme.spacing.md,
-
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     borderWidth: 1,
-
-    borderColor:
-      theme.colors.border,
-
-    marginBottom:
-      theme.spacing.md,
-
-    minHeight: 120,
-
-    justifyContent:
-      "flex-end",
-
+    borderColor: theme.colors.border,
+    padding: 2,
   },
 
-
-  actionCardPrimary: {
-
-    backgroundColor:
-      theme.colors.primary,
-
-    borderColor:
-      theme.colors.primary,
-
+  langBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radius.sm,
   },
 
-
-  actionIcon: {
-
-    fontSize: 26,
-
-    marginBottom:
-      theme.spacing.sm,
-
+  langBtnActive: {
+    backgroundColor: theme.colors.primary,
   },
 
-
-  actionTitle: {
-
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.md,
-
+  langText: {
+    fontSize: theme.textSizes.xs,
     fontWeight: "700",
-
-    marginBottom: 4,
-
+    color: theme.colors.textMuted,
   },
 
-
-  actionTitlePrimary: {
+  langTextActive: {
     color: "#FFFFFF",
   },
 
-
-  actionSub: {
-
-    color:
-      theme.colors.textMuted,
-
-    fontSize:
-      theme.textSizes.xs,
-
+  logoutButton: {
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    minHeight: 44,
+    justifyContent: "center",
   },
 
-
-  actionSubPrimary: {
-    color: "#D1FAE5",
+  logoutText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
   },
 
+  statusCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+  },
+
+  statusIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: theme.spacing.xs,
+  },
+
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.primary,
+    marginRight: theme.spacing.sm,
+  },
+
+  statusText: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+  },
+
+  statusSub: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+
+  sectionTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    marginBottom: theme.spacing.md,
+    marginTop: theme.spacing.sm,
+  },
+
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
 
   emptyCard: {
-
-    backgroundColor:
-      theme.colors.surface,
-
-    borderRadius:
-      theme.radius.lg,
-
-    padding:
-      theme.spacing.lg,
-
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.lg,
     borderWidth: 1,
-
-    borderColor:
-      theme.colors.border,
-
-    alignItems:
-      "center",
-
-    paddingVertical:
-      theme.spacing.xl,
-
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    paddingVertical: theme.spacing.xl,
   },
-
 
   emptyText: {
-
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.md,
-
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
     fontWeight: "600",
-
-    marginBottom:
-      theme.spacing.xs,
-
+    marginBottom: theme.spacing.xs,
   },
-
 
   emptySub: {
-
-    color:
-      theme.colors.textMuted,
-
-    fontSize:
-      theme.textSizes.sm,
-
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
     textAlign: "center",
-
   },
-
 });
