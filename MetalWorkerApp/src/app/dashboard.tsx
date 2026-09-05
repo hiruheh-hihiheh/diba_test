@@ -143,18 +143,13 @@ export default function DashboardScreen() {
       <Text style={styles.sectionTitle}>{t.quick_actions}</Text>
 
       <View style={styles.grid}>
-        <ActionCard
-          title={t.new_dispatch}
-          subtitle={t.log_new_sale}
-          icon="🚛"
-          primary
-          onPress={() =>
-            showComingSoon(
-              "New dispatch screen is coming soon.",
-              "नई एंट्री स्क्रीन जल्द उपलब्ध होगी।"
-            )
-          }
-        />
+<ActionCard
+  title={t.new_dispatch}
+  subtitle={t.log_new_sale}
+  icon="🚛"
+  primary
+  onPress={() => router.push("/dispatch")}
+/>
 
         <ActionCard
           title={t.my_history}
