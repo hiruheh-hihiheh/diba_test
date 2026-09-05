@@ -8,14 +8,21 @@ import {
   View,
 } from "react-native";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
 import { getTranslations, type Language } from "../constants/translations";
 import { ActionCard } from "../components/dashboard/ActionCard";
+import {
+  fetchMyRecentDispatches,
+  getMaterialLabelKey,
+  getStatusLabelKey,
+  getStatusColor,
+  type Dispatch,
+} from "../services/dispatch";
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -26,6 +33,10 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [username, setUsername] = useState("Worker");
   const [loggingOut, setLoggingOut] = useState(false);
+
+  // Recent Dispatches State
+  const [recentDispatches, setRecentDispatches] = useState<Dispatch[]>([]);
+  const [loadingDispatches, setLoadingDispatches] = useState(true);
 
   useEffect(() => {
     async function loadUser() {
@@ -50,6 +61,31 @@ export default function DashboardScreen() {
 
     loadUser();
   }, [router]);
+
+  // Fetch recent dispatches every time the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      
+      async function loadRecent() {
+        setLoadingDispatches(true);
+        const res = await fetchMyRecentDispatches(5);
+        
+        if (isActive && res.ok && res.data) {
+          setRecentDispatches(res.data);
+        }
+        if (isActive) {
+          setLoadingDispatches(false);
+        }
+      }
+      
+      loadRecent();
+      
+      return () => {
+        isActive = false;
+      };
+    }, [])
+  );
 
   async function handleLogout() {
     try {
@@ -143,13 +179,13 @@ export default function DashboardScreen() {
       <Text style={styles.sectionTitle}>{t.quick_actions}</Text>
 
       <View style={styles.grid}>
-<ActionCard
-  title={t.new_dispatch}
-  subtitle={t.log_new_sale}
-  icon="🚛"
-  primary
-  onPress={() => router.push("/dispatch")}
-/>
+        <ActionCard
+          title={t.new_dispatch}
+          subtitle={t.log_new_sale}
+          icon="🚛"
+          primary
+          onPress={() => router.push("/dispatch")}
+        />
 
         <ActionCard
           title={t.my_history}
@@ -191,10 +227,39 @@ export default function DashboardScreen() {
       {/* ACTIVITY */}
       <Text style={styles.sectionTitle}>{t.recent_activity}</Text>
 
-      <View style={styles.emptyCard}>
-        <Text style={styles.emptyText}>{t.no_recent_dispatches}</Text>
-        <Text style={styles.emptySub}>{t.submitted_logs_appear_here}</Text>
-      </View>
+      {loadingDispatches ? (
+        <View style={styles.emptyCard}>
+          <ActivityIndicator color={theme.colors.primary} />
+        </View>
+      ) : recentDispatches.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyText}>{t.no_recent_dispatches}</Text>
+          <Text style={styles.emptySub}>{t.submitted_logs_appear_here}</Text>
+        </View>
+      ) : (
+        <View style={styles.listCard}>
+          {recentDispatches.map((d) => (
+            <View key={d.id} style={styles.dispatchRow}>
+              <View style={styles.dispatchInfo}>
+                <Text style={styles.dispatchVehicle}>{d.vehicle_number}</Text>
+                <Text style={styles.dispatchMaterial}>
+                  {t[getMaterialLabelKey(d.material_type)]}
+                </Text>
+                <Text style={styles.dispatchDate}>
+                  {new Date(d.submitted_at).toLocaleString()}
+                </Text>
+              </View>
+              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(d.status) + "20" }]}>
+                <Text style={[styles.statusTextBadge, { color: getStatusColor(d.status) }]}>
+                  {t[getStatusLabelKey(d.status)]}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+      
+      <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
@@ -364,5 +429,51 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
     textAlign: "center",
+  },
+
+  // Recent Dispatches List Styles
+  listCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+  },
+  dispatchRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  dispatchInfo: {
+    flex: 1,
+  },
+  dispatchVehicle: {
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+  dispatchMaterial: {
+    fontSize: theme.textSizes.sm,
+    color: theme.colors.textMuted,
+    marginTop: 2,
+  },
+  dispatchDate: {
+    fontSize: theme.textSizes.xs,
+    color: theme.colors.textMuted,
+    marginTop: 4,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: theme.spacing.md,
+  },
+  statusTextBadge: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
   },
 });

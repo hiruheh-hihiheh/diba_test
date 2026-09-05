@@ -71,6 +71,20 @@ export interface TranslationDictionary {
   photo_upload_failed: string;
   dispatch_save_failed: string;
   check_internet: string;
+  
+  // NEW SUCCESS & RECENT ACTIVITY KEYS
+  uploading_photo: string;
+  saving_dispatch: string;
+  dispatch_submitted: string;
+  your_dispatch_recorded: string;
+  back_to_dashboard: string;
+  retry: string;
+  recent_dispatches: string;
+  status_submitted: string;
+  status_reviewed: string;
+  status_approved: string;
+  status_rejected: string;
+  failed_to_load_dispatches: string;
 
   // LANGUAGE
   language_english: string;
@@ -149,6 +163,20 @@ export const translations: Record<Language, TranslationDictionary> = {
     photo_upload_failed: "Could not upload the photo. Please try again.",
     dispatch_save_failed: "Could not save the dispatch. Please try again.",
     check_internet: "Please check your internet connection.",
+    
+    // NEW SUCCESS & RECENT ACTIVITY KEYS
+    uploading_photo: "Uploading photo...",
+    saving_dispatch: "Saving dispatch...",
+    dispatch_submitted: "Dispatch Submitted",
+    your_dispatch_recorded: "Your dispatch has been successfully recorded.",
+    back_to_dashboard: "Back to Dashboard",
+    retry: "Retry",
+    recent_dispatches: "Recent Dispatches",
+    status_submitted: "Submitted",
+    status_reviewed: "Reviewed",
+    status_approved: "Approved",
+    status_rejected: "Rejected",
+    failed_to_load_dispatches: "Failed to load dispatches",
 
     // LANGUAGE
     language_english: "English",
@@ -225,6 +253,20 @@ export const translations: Record<Language, TranslationDictionary> = {
     photo_upload_failed: "फोटो अपलोड नहीं हो सकी। कृपया पुनः प्रयास करें।",
     dispatch_save_failed: "डिस्पैच सेव नहीं हो सका। कृपया पुनः प्रयास करें।",
     check_internet: "कृपया अपना इंटरनेट कनेक्शन जांचें।",
+    
+    // NEW SUCCESS & RECENT ACTIVITY KEYS
+    uploading_photo: "फोटो अपलोड हो रही है...",
+    saving_dispatch: "डिस्पैच सेव हो रहा है...",
+    dispatch_submitted: "डिस्पैच जमा हो गया",
+    your_dispatch_recorded: "आपका डिस्पैच सफलतापूर्वक दर्ज कर लिया गया है।",
+    back_to_dashboard: "डैशबोर्ड पर वापस जाएं",
+    retry: "पुनः प्रयास करें",
+    recent_dispatches: "हाल के डिस्पैच",
+    status_submitted: "जमा किया गया",
+    status_reviewed: "समीक्षा की गई",
+    status_approved: "स्वीकृत",
+    status_rejected: "अस्वीकृत",
+    failed_to_load_dispatches: "डिस्पैच लोड करने में विफल",
 
     // LANGUAGE
     language_english: "English",
