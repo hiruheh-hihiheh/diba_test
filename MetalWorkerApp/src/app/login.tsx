@@ -1,295 +1,261 @@
 import { useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { router } from "expo-router";
 
 import { theme } from "../constants/theme";
-import {
-  supabase,
-  usernameToEmail,
-} from "../services/supabase";
+import { getTranslations, type Language } from "../constants/translations";
+import { supabase, usernameToEmail } from "../services/supabase";
+import { updateLastLogin } from "../services/profile";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 
 export default function LoginScreen() {
-  const router = useRouter();
+  // TODO: To persist language choice across app restarts, install 
+  // @react-native-async-storage/async-storage and replace this state 
+  // with AsyncStorage.getItem/setItem logic.
+  const [language, setLanguage] = useState<Language>("en");
+  const t = getTranslations(language);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] =
-    useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleLogin() {
     setError(null);
-
-    const cleanUsername =
-      username.trim().toLowerCase();
+    const cleanUsername = username.trim().toLowerCase();
 
     if (!cleanUsername || !password) {
-      setError(
-        "Please enter username and password."
-      );
+      setError(t.enter_username_password);
       return;
     }
 
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      const {
-        data,
-        error: signInError,
-      } =
-        await supabase.auth.signInWithPassword({
-          email: usernameToEmail(
-            cleanUsername
-          ),
-          password,
-        });
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: usernameToEmail(cleanUsername),
+      password,
+    });
 
-      if (signInError) {
-        setError(
-          signInError.message ===
-            "Invalid login credentials"
-            ? "Wrong username or password."
-            : signInError.message
-        );
-
-        return;
-      }
-
-      if (!data.session) {
-        setError(
-          "Login failed. Please try again."
-        );
-        return;
-      }
-
-      // SUCCESS
-      // Go directly to dashboard
-      router.replace("/dashboard");
-
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong."
-      );
-    } finally {
+    if (signInError) {
+      const isInvalidCreds = signInError.message
+        .toLowerCase()
+        .includes("invalid login credentials");
+      
+      setError(isInvalidCreds ? t.wrong_credentials : t.something_went_wrong);
       setLoading(false);
+      return;
     }
+
+    // Update last login in the background. 
+    // We do not block navigation if this fails, as the user is already authenticated.
+    updateLastLogin().catch((err) => {
+      console.warn("Failed to update last_login_at:", err);
+    });
+
+    router.replace("/dashboard");
+    setLoading(false);
   }
+
+  function clearErrorOnChange(text: string, setter: (v: string) => void) {
+    setter(text);
+    if (error) setError(null);
+  }
+
+  const togglePasswordText = showPassword
+    ? language === "hi"
+      ? "छिपाएँ"
+      : "Hide"
+    : language === "hi"
+    ? "दिखाएँ"
+    : "Show";
 
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={
-        Platform.OS === "ios"
-          ? "padding"
-          : undefined
-      }
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={styles.topAccent} />
-
-      <View style={styles.content}>
-
-        <View style={styles.header}>
-
-          <View style={styles.logoContainer}>
-            <Text style={styles.logoText}>
-              MW
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Language Switcher */}
+        <View style={styles.languageRow}>
+          <TouchableOpacity
+            style={[
+              styles.langButton,
+              language === "en" && styles.langButtonActive,
+            ]}
+            onPress={() => setLanguage("en")}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={[
+                styles.langText,
+                language === "en" && styles.langTextActive,
+              ]}
+            >
+              English
             </Text>
-          </View>
-
-          <Text style={styles.title}>
-            Metal Worker
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Sign in to your worker account
-          </Text>
-
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.langButton,
+              language === "hi" && styles.langButtonActive,
+            ]}
+            onPress={() => setLanguage("hi")}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={[
+                styles.langText,
+                language === "hi" && styles.langTextActive,
+              ]}
+            >
+              हिंदी
+            </Text>
+          </TouchableOpacity>
         </View>
 
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.appName}>{t.app_name}</Text>
+          <Text style={styles.subtitle}>{t.login_subtitle}</Text>
+        </View>
 
+        {/* Form */}
         <View style={styles.form}>
-
           <Input
-            label="Username"
+            label={t.username}
+            placeholder={t.enter_username}
+            value={username}
+            onChangeText={(text: string) => clearErrorOnChange(text, setUsername)}
             autoCapitalize="none"
             autoCorrect={false}
-            value={username}
-            onChangeText={setUsername}
-            placeholder="e.g. raju"
+            returnKeyType="next"
           />
 
-          <Input
-            label="Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            placeholder="••••••••"
-          />
-
-          {error ? (
-            <Text style={styles.error}>
-              {error}
-            </Text>
-          ) : null}
-
-
-          <View style={styles.buttonWrap}>
-
-            <Button
-              title="Sign In"
-              loading={loading}
-              onPress={handleLogin}
+          <View style={styles.passwordContainer}>
+            <Input
+              label={t.password}
+              placeholder={t.enter_password}
+              value={password}
+              onChangeText={(text: string) => clearErrorOnChange(text, setPassword)}
+              secureTextEntry={!showPassword}
+              returnKeyType="done"
+              onSubmitEditing={handleLogin}
             />
-
+            <TouchableOpacity
+              style={styles.togglePassword}
+              onPress={() => setShowPassword((prev) => !prev)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.togglePasswordText}>{togglePasswordText}</Text>
+            </TouchableOpacity>
           </View>
 
-        </View>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      </View>
+          <Button
+            title={loading ? t.logging_in : t.login}
+            loading={loading}
+            disabled={loading}
+            onPress={handleLogin}
+          />
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-
 const styles = StyleSheet.create({
-
   screen: {
     flex: 1,
-    backgroundColor:
-      theme.colors.background,
+    backgroundColor: theme.colors.background,
   },
-
-  topAccent: {
-    height: 120,
-    backgroundColor:
-      theme.colors.primary,
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
+  scrollContent: {
+    flexGrow: 1,
+    padding: theme.spacing.lg,
+    justifyContent: "center",
   },
-
-  content: {
-    flex: 1,
-    paddingHorizontal:
-      theme.spacing.lg,
-    paddingTop:
-      theme.spacing.xxl,
+  languageRow: {
+    flexDirection: "row",
+    alignSelf: "flex-end",
+    marginBottom: theme.spacing.xl,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 4,
   },
-
+  langButton: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 8,
+    borderRadius: theme.radius.sm,
+  },
+  langButtonActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  langText: {
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    color: theme.colors.textMuted,
+  },
+  langTextActive: {
+    color: "#FFFFFF",
+  },
   header: {
     alignItems: "center",
-    marginBottom:
-      theme.spacing.xl,
+    marginBottom: theme.spacing.xl,
   },
-
-  logoContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-
-    backgroundColor:
-      theme.colors.surface,
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    marginBottom:
-      theme.spacing.md,
-
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-
-  logoText: {
-    color:
-      theme.colors.primary,
-
-    fontSize: 24,
+  appName: {
+    fontSize: 32,
     fontWeight: "800",
+    color: theme.colors.text,
+    marginBottom: theme.spacing.sm,
   },
-
-  title: {
-    color:
-      theme.colors.text,
-
-    fontSize:
-      theme.textSizes.xl,
-
-    fontWeight: "800",
-    textAlign: "center",
-  },
-
   subtitle: {
-    color:
-      theme.colors.textMuted,
-
-    fontSize:
-      theme.textSizes.sm,
-
+    fontSize: theme.textSizes.md,
+    color: theme.colors.textMuted,
     textAlign: "center",
-
-    marginTop:
-      theme.spacing.xs,
   },
-
   form: {
-    backgroundColor:
-      theme.colors.surface,
-
-    borderRadius:
-      theme.radius.lg,
-
-    padding:
-      theme.spacing.lg,
-
-    borderWidth: 1,
-
-    borderColor:
-      theme.colors.border,
+    width: "100%",
+    maxWidth: 400,
+    alignSelf: "center",
   },
-
-  buttonWrap: {
-    marginTop:
-      theme.spacing.sm,
+  passwordContainer: {
+    position: "relative",
+    marginBottom: theme.spacing.md,
   },
-
-  error: {
-    color:
-      theme.colors.danger,
-
-    fontSize:
-      theme.textSizes.sm,
-
-    marginBottom:
-      theme.spacing.md,
-
+  togglePassword: {
+    position: "absolute",
+    right: 12,
+    top: 42, // Adjusts to align with the input text area
+    padding: 8,
+  },
+  togglePasswordText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+  errorText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.md,
     textAlign: "center",
-
-    backgroundColor:
-      "#FEF2F2",
-
-    padding:
-      theme.spacing.sm,
-
-    borderRadius:
-      theme.radius.sm,
+    marginBottom: theme.spacing.md,
+    fontWeight: "500",
   },
-
 });
