@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
-
 import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
 
