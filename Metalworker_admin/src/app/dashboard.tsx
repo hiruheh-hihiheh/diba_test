@@ -386,27 +386,60 @@ export default function DashboardScreen() {
     ============================
   */
 
-  function handleDelete(worker: Profile) {
-    Alert.alert(
-      "Delete Worker",
-      `Are you sure you want to delete "${worker.username}"? This will permanently remove their account and authentication credentials.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            const res = await deleteWorker(worker.id);
-            if (res.ok) {
-              await loadWorkers();
-            } else {
-              Alert.alert("Error", res.error || "Failed to delete worker.");
-            }
-          },
-        },
-      ]
+ function handleDelete(worker: Profile) {
+  const performDelete = async () => {
+    try {
+      const res = await deleteWorker(worker.id);
+
+      if (res.ok) {
+        await loadWorkers();
+      } else {
+        if (Platform.OS === "web") {
+          window.alert(res.error || "Failed to delete worker.");
+        } else {
+          Alert.alert("Error", res.error || "Failed to delete worker.");
+        }
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete worker.";
+
+      if (Platform.OS === "web") {
+        window.alert(message);
+      } else {
+        Alert.alert("Error", message);
+      }
+    }
+  };
+
+  if (Platform.OS === "web") {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${worker.username}"?\n\nThis will permanently remove their account and authentication credentials.`
     );
+
+    if (confirmed) {
+      performDelete();
+    }
+
+    return;
   }
+
+  Alert.alert(
+    "Delete Worker",
+    `Are you sure you want to delete "${worker.username}"? This will permanently remove their account and authentication credentials.`,
+    [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: performDelete,
+      },
+    ]
+  );
+}
 
   /*
     ============================
