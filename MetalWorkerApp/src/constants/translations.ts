@@ -64,8 +64,13 @@ export interface TranslationDictionary {
   material_required: string;
   camera_error: string;
   location_error: string;
-  coming_soon_title: string;
-  submission_coming_soon: string;
+  
+  // DISPATCH SUBMISSION & ERRORS
+  success_title: string;
+  dispatch_submitted_successfully: string;
+  photo_upload_failed: string;
+  dispatch_save_failed: string;
+  check_internet: string;
 
   // LANGUAGE
   language_english: string;
@@ -137,8 +142,13 @@ export const translations: Record<Language, TranslationDictionary> = {
     material_required: "Material type required",
     camera_error: "Could not access camera",
     location_error: "Could not access location",
-    coming_soon_title: "Coming Soon",
-    submission_coming_soon: "Dispatch submission will be connected next.",
+    
+    // DISPATCH SUBMISSION & ERRORS
+    success_title: "Success",
+    dispatch_submitted_successfully: "Dispatch submitted successfully.",
+    photo_upload_failed: "Could not upload the photo. Please try again.",
+    dispatch_save_failed: "Could not save the dispatch. Please try again.",
+    check_internet: "Please check your internet connection.",
 
     // LANGUAGE
     language_english: "English",
@@ -208,8 +218,13 @@ export const translations: Record<Language, TranslationDictionary> = {
     material_required: "सामग्री चुनना जरूरी है",
     camera_error: "कैमरा चालू नहीं हो सका",
     location_error: "स्थान की अनुमति नहीं मिली",
-    coming_soon_title: "जल्द आ रहा है",
-    submission_coming_soon: "डिस्पैच जमा करने की सुविधा जल्द जोड़ी जाएगी।",
+    
+    // DISPATCH SUBMISSION & ERRORS
+    success_title: "सफलता",
+    dispatch_submitted_successfully: "डिस्पैच सफलतापूर्वक जमा हो गया।",
+    photo_upload_failed: "फोटो अपलोड नहीं हो सकी। कृपया पुनः प्रयास करें।",
+    dispatch_save_failed: "डिस्पैच सेव नहीं हो सका। कृपया पुनः प्रयास करें।",
+    check_internet: "कृपया अपना इंटरनेट कनेक्शन जांचें।",
 
     // LANGUAGE
     language_english: "English",

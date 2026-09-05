@@ -19,50 +19,19 @@ import * as Location from "expo-location";
 import { theme } from "../constants/theme";
 import { getTranslations, type Language } from "../constants/translations";
 import { supabase } from "../services/supabase";
-
-// Temporary fallback for keys not yet in translations.ts
-const dt = (language: Language) => ({
-  back: language === "hi" ? "वापस" : "Back",
-  take_photo: language === "hi" ? "फोटो लें" : "Take Photo",
-  retake_photo: language === "hi" ? "फोटो बदलें" : "Retake Photo",
-  vehicle_number: language === "hi" ? "वाहन नंबर" : "Vehicle Number",
-  enter_vehicle_number: language === "hi" ? "वाहन नंबर दर्ज करें" : "Enter vehicle number",
-  material_type: language === "hi" ? "सामग्री का प्रकार" : "Material Type",
-  select_material: language === "hi" ? "सामग्री चुनें" : "Select material",
-  scrap_metal: language === "hi" ? "स्क्रेप धातु" : "Scrap Metal",
-  ferrous_metal: language === "hi" ? "लोहे की धातु" : "Ferrous Metal",
-  non_ferrous_metal: language === "hi" ? "गैर-लोहे की धातु" : "Non-Ferrous Metal",
-  other: language === "hi" ? "अन्य" : "Other",
-  current_location: language === "hi" ? "वर्तमान स्थान" : "Current Location",
-  location_captured: language === "hi" ? "स्थान मिल गया" : "Location captured",
-  getting_location: language === "hi" ? "स्थान खोजा जा रहा है..." : "Getting location...",
-  location_unavailable: language === "hi" ? "स्थान नहीं मिला" : "Location unavailable",
-  date_time: language === "hi" ? "दिनांक और समय" : "Date & Time",
-  auto_captured: language === "hi" ? "स्वचालित रूप से लिया गया" : "Automatically captured",
-  review_dispatch: language === "hi" ? "डिस्पैच की समीक्षा" : "Review Dispatch",
-  submit_dispatch: language === "hi" ? "डिस्पैच जमा करें" : "Submit Dispatch",
-  submitting: language === "hi" ? "जमा हो रहा है..." : "Submitting...",
-  complete_required_fields: language === "hi" ? "कृपया सभी जरूरी जानकारी भरें" : "Please complete all required fields",
-  photo_required: language === "hi" ? "फोटो जरूरी है" : "Photo required",
-  vehicle_required: language === "hi" ? "वाहन नंबर जरूरी है" : "Vehicle number required",
-  material_required: language === "hi" ? "सामग्री चुनना जरूरी है" : "Material type required",
-  camera_error: language === "hi" ? "कैमरा चालू नहीं हो सका" : "Could not access camera",
-  location_error: language === "hi" ? "स्थान की अनुमति नहीं मिली" : "Could not access location",
-  coming_soon_title: language === "hi" ? "जल्द आ रहा है" : "Coming Soon",
-  submission_coming_soon: language === "hi" ? "डिस्पैच जमा करने की सुविधा जल्द जोड़ी जाएगी।" : "Dispatch submission will be connected next.",
-});
+import { uploadDispatchPhoto } from "../services/cloudinary";
+import { createDispatch, type MaterialType } from "../services/dispatch";
 
 export default function DispatchScreen() {
   const [language, setLanguage] = useState<Language>("en");
   const t = getTranslations(language);
-  const d = dt(language);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState("");
-  const [materialType, setMaterialType] = useState<string | null>(null);
+  const [materialType, setMaterialType] = useState<MaterialType | null>(null);
   
   const [locationStatus, setLocationStatus] = useState<"getting" | "captured" | "unavailable">("getting");
   const [locationData, setLocationData] = useState<{ latitude: number; longitude: number; name: string } | null>(null);
@@ -97,7 +66,6 @@ export default function DispatchScreen() {
           name: "",
         };
 
-        // Try reverse geocoding for a human-readable name
         try {
           const reverse = await Location.reverseGeocodeAsync(coords);
           if (reverse && reverse.length > 0) {
@@ -131,7 +99,7 @@ export default function DispatchScreen() {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(t.something_went_wrong, d.camera_error);
+        Alert.alert(t.something_went_wrong, t.camera_error);
         return;
       }
 
@@ -144,40 +112,75 @@ export default function DispatchScreen() {
         setPhotoUri(result.assets[0].uri);
       }
     } catch {
-      Alert.alert(t.something_went_wrong, d.camera_error);
+      Alert.alert(t.something_went_wrong, t.camera_error);
     }
   }
 
   function handleVehicleChange(text: string) {
-    // Normalize: uppercase and trim
     setVehicleNumber(text.toUpperCase().trim());
   }
 
-  function handleSelectMaterial(type: string) {
+  function handleSelectMaterial(type: MaterialType) {
     setMaterialType(type);
   }
 
   async function handleSubmit() {
     if (!photoUri) {
-      Alert.alert(t.something_went_wrong, d.photo_required);
+      Alert.alert(t.something_went_wrong, t.photo_required);
       return;
     }
     if (!vehicleNumber) {
-      Alert.alert(t.something_went_wrong, d.vehicle_required);
+      Alert.alert(t.something_went_wrong, t.vehicle_required);
       return;
     }
     if (!materialType) {
-      Alert.alert(t.something_went_wrong, d.material_required);
+      Alert.alert(t.something_went_wrong, t.material_required);
       return;
     }
 
     setSubmitting(true);
     
-    // Simulate network delay for UX
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setSubmitting(false);
-    Alert.alert(d.coming_soon_title, d.submission_coming_soon);
+    try {
+      // 1. Upload to Cloudinary
+      let uploadResult;
+      try {
+        uploadResult = await uploadDispatchPhoto(photoUri);
+      } catch (err) {
+        console.error("Cloudinary upload error:", err);
+        Alert.alert(t.something_went_wrong, t.photo_upload_failed);
+        setSubmitting(false);
+        return;
+      }
+
+      // 2. Save to Supabase
+      const dbResult = await createDispatch({
+        vehicleNumber,
+        materialType,
+        photoUrl: uploadResult.secureUrl,
+        photoPublicId: uploadResult.publicId,
+        latitude: locationData?.latitude ?? null,
+        longitude: locationData?.longitude ?? null,
+        locationName: locationData?.name ?? null,
+      });
+
+      if (!dbResult.ok) {
+        console.error("Supabase insert error:", dbResult.error);
+        Alert.alert(t.something_went_wrong, t.dispatch_save_failed);
+        setSubmitting(false);
+        return;
+      }
+
+      // 3. Success
+      Alert.alert(t.success_title, t.dispatch_submitted_successfully, [
+        { text: "OK", onPress: () => router.replace("/dashboard") }
+      ]);
+
+    } catch (err) {
+      console.error("Unexpected submit error:", err);
+      Alert.alert(t.something_went_wrong, t.check_internet);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (loading) {
@@ -188,11 +191,11 @@ export default function DispatchScreen() {
     );
   }
 
-  const materialOptions = [
-    { key: "scrap", label: d.scrap_metal },
-    { key: "ferrous", label: d.ferrous_metal },
-    { key: "non_ferrous", label: d.non_ferrous_metal },
-    { key: "other", label: d.other },
+  const materialOptions: { key: MaterialType; label: string }[] = [
+    { key: "scrap", label: t.scrap_metal },
+    { key: "ferrous", label: t.ferrous_metal },
+    { key: "non_ferrous", label: t.non_ferrous_metal },
+    { key: "other", label: t.other },
   ];
 
   return (
@@ -208,7 +211,7 @@ export default function DispatchScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>← {d.back}</Text>
+            <Text style={styles.backText}>← {t.back}</Text>
           </Pressable>
           
           <View style={styles.langSwitch}>
@@ -231,28 +234,28 @@ export default function DispatchScreen() {
 
         {/* PHOTO SECTION */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{d.take_photo} *</Text>
+          <Text style={styles.sectionLabel}>{t.take_photo} *</Text>
           {photoUri ? (
             <View style={styles.photoContainer}>
               <Image source={{ uri: photoUri }} style={styles.photoPreview} />
               <Pressable style={styles.retakeBtn} onPress={handleTakePhoto}>
-                <Text style={styles.retakeBtnText}>{d.retake_photo}</Text>
+                <Text style={styles.retakeBtnText}>{t.retake_photo}</Text>
               </Pressable>
             </View>
           ) : (
             <Pressable style={styles.takePhotoBtn} onPress={handleTakePhoto}>
               <Text style={styles.takePhotoIcon}>📷</Text>
-              <Text style={styles.takePhotoText}>{d.take_photo}</Text>
+              <Text style={styles.takePhotoText}>{t.take_photo}</Text>
             </Pressable>
           )}
         </View>
 
         {/* VEHICLE NUMBER */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{d.vehicle_number} *</Text>
+          <Text style={styles.sectionLabel}>{t.vehicle_number} *</Text>
           <TextInput
             style={styles.input}
-            placeholder={d.enter_vehicle_number}
+            placeholder={t.enter_vehicle_number}
             placeholderTextColor={theme.colors.textMuted}
             value={vehicleNumber}
             onChangeText={handleVehicleChange}
@@ -263,7 +266,7 @@ export default function DispatchScreen() {
 
         {/* MATERIAL TYPE */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{d.material_type} *</Text>
+          <Text style={styles.sectionLabel}>{t.material_type} *</Text>
           <View style={styles.materialGrid}>
             {materialOptions.map((opt) => (
               <Pressable
@@ -289,19 +292,19 @@ export default function DispatchScreen() {
 
         {/* LOCATION */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{d.current_location}</Text>
+          <Text style={styles.sectionLabel}>{t.current_location}</Text>
           <View style={styles.infoCard}>
             {locationStatus === "getting" && (
               <View style={styles.infoRow}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text style={styles.infoText}>{d.getting_location}</Text>
+                <Text style={styles.infoText}>{t.getting_location}</Text>
               </View>
             )}
             {locationStatus === "captured" && (
               <View style={styles.infoRow}>
                 <Text style={styles.infoIcon}>✅</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.infoText}>{d.location_captured}</Text>
+                  <Text style={styles.infoText}>{t.location_captured}</Text>
                   {locationData?.name ? (
                     <Text style={styles.infoSubtext}>{locationData.name}</Text>
                   ) : null}
@@ -311,7 +314,7 @@ export default function DispatchScreen() {
             {locationStatus === "unavailable" && (
               <View style={styles.infoRow}>
                 <Text style={styles.infoIcon}>⚠️</Text>
-                <Text style={styles.infoText}>{d.location_unavailable}</Text>
+                <Text style={styles.infoText}>{t.location_unavailable}</Text>
               </View>
             )}
           </View>
@@ -319,7 +322,7 @@ export default function DispatchScreen() {
 
         {/* DATE & TIME */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{d.date_time}</Text>
+          <Text style={styles.sectionLabel}>{t.date_time}</Text>
           <View style={styles.infoCard}>
             <View style={styles.infoRow}>
               <Text style={styles.infoIcon}>🕒</Text>
@@ -327,7 +330,7 @@ export default function DispatchScreen() {
                 <Text style={styles.infoText}>
                   {currentTime.toLocaleDateString()} {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </Text>
-                <Text style={styles.infoSubtext}>{d.auto_captured}</Text>
+                <Text style={styles.infoSubtext}>{t.auto_captured}</Text>
               </View>
             </View>
           </View>
@@ -335,13 +338,13 @@ export default function DispatchScreen() {
 
         {/* REVIEW */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{d.review_dispatch}</Text>
+          <Text style={styles.sectionTitle}>{t.review_dispatch}</Text>
           <View style={styles.reviewCard}>
-            <ReviewRow label={d.take_photo} value={photoUri ? "✅" : "❌"} />
-            <ReviewRow label={d.vehicle_number} value={vehicleNumber || "-"} />
-            <ReviewRow label={d.material_type} value={materialOptions.find(m => m.key === materialType)?.label || "-"} />
-            <ReviewRow label={d.current_location} value={locationStatus === "captured" ? "✅" : "❌"} />
-            <ReviewRow label={d.date_time} value={currentTime.toLocaleDateString()} />
+            <ReviewRow label={t.take_photo} value={photoUri ? "✅" : "❌"} />
+            <ReviewRow label={t.vehicle_number} value={vehicleNumber || "-"} />
+            <ReviewRow label={t.material_type} value={materialOptions.find(m => m.key === materialType)?.label || "-"} />
+            <ReviewRow label={t.current_location} value={locationStatus === "captured" ? "✅" : "❌"} />
+            <ReviewRow label={t.date_time} value={currentTime.toLocaleDateString()} />
           </View>
         </View>
 
@@ -354,7 +357,7 @@ export default function DispatchScreen() {
           {submitting ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text style={styles.submitBtnText}>{d.submit_dispatch}</Text>
+            <Text style={styles.submitBtnText}>{t.submit_dispatch}</Text>
           )}
         </Pressable>
         
@@ -446,8 +449,6 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     marginBottom: theme.spacing.md,
   },
-  
-  // Photo
   photoContainer: {
     alignItems: "center",
   },
@@ -490,8 +491,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: theme.colors.primary,
   },
-
-  // Input
   input: {
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -503,8 +502,6 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     minHeight: 56,
   },
-
-  // Material
   materialGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -534,8 +531,6 @@ const styles = StyleSheet.create({
   materialOptionTextActive: {
     color: "#FFFFFF",
   },
-
-  // Info Cards (Location, Date)
   infoCard: {
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -561,8 +556,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginTop: 2,
   },
-
-  // Review
   reviewCard: {
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -591,8 +584,6 @@ const styles = StyleSheet.create({
     flex: 1.5,
     textAlign: "right",
   },
-
-  // Submit
   submitBtn: {
     backgroundColor: theme.colors.primary,
     borderRadius: theme.radius.lg,
