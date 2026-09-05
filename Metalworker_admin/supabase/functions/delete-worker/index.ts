@@ -1,121 +1,179 @@
-import { serve } from "https://deno.land/std@0.177.1/http/server.ts";
+// @ts-nocheck
+
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error("Missing environment variables");
+    if (req.method !== "POST") {
+      return json({ ok: false, error: "Method not allowed" }, 405);
     }
+
+    // =====================================
+    // GET SUPABASE ENVIRONMENT VARIABLES
+    // =====================================
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+      console.error("Missing Supabase environment variables");
+      return json(
+        { ok: false, error: "Server configuration error. Missing Supabase environment variables." },
+        500
+      );
+    }
+
+    // =====================================
+    // GET AUTHORIZATION TOKEN
+    // =====================================
 
     const authHeader = req.headers.get("Authorization");
+
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Missing authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json({ ok: false, error: "Not authenticated" }, 401);
     }
 
-    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
-      global: { headers: { Authorization: authHeader } },
+    // =====================================
+    // CLIENT TO IDENTIFY CALLING USER
+    // =====================================
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: authHeader,
+        },
+      },
     });
 
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Unauthenticated" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const { data: userData, error: userError } = await authClient.auth.getUser();
+
+    if (userError || !userData.user) {
+      console.error("Authentication error:", userError);
+      return json({ ok: false, error: "Not authenticated" }, 401);
     }
 
-    const { data: callerProfile, error: callerError } = await supabaseClient
+    // =====================================
+    // ADMIN CLIENT
+    // =====================================
+
+    const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+    // =====================================
+    // CHECK ADMIN PROFILE
+    // =====================================
+
+    const { data: adminProfile, error: profileError } = await adminClient
       .from("profiles")
-      .select("role")
-      .eq("id", user.id)
+      .select("role, is_active")
+      .eq("id", userData.user.id)
       .single();
 
-    if (callerError || !callerProfile || callerProfile.role !== "admin") {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Unauthorized: Admin access required" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (profileError || !adminProfile) {
+      console.error("Admin profile error:", profileError);
+      return json({ ok: false, error: "Admin profile not found." }, 403);
     }
+
+    if (adminProfile.role !== "admin") {
+      return json({ ok: false, error: "Admin access only." }, 403);
+    }
+
+    if (!adminProfile.is_active) {
+      return json({ ok: false, error: "Your admin account is inactive." }, 403);
+    }
+
+    // =====================================
+    // READ AND VALIDATE REQUEST DATA
+    // =====================================
 
     let body;
     try {
       body = await req.json();
     } catch {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Invalid JSON body" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json({ ok: false, error: "Invalid JSON body" }, 400);
     }
 
-    const { id } = body;
+    const id = String(body?.id ?? "").trim();
 
-    if (!id || typeof id !== "string") {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Missing or invalid 'id' in request body" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!id) {
+      return json({ ok: false, error: "Missing 'id' in request body" }, 400);
     }
 
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(id)) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Invalid UUID format" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json({ ok: false, error: "Invalid UUID format" }, 400);
     }
 
-    const { data: targetProfile, error: targetError } = await supabaseClient
+    // =====================================
+    // CHECK TARGET PROFILE
+    // =====================================
+
+    const { data: targetProfile, error: targetError } = await adminClient
       .from("profiles")
       .select("role")
       .eq("id", id)
-      .single();
+      .maybeSingle();
 
-    if (targetError || !targetProfile) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Worker not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (targetError) {
+      console.error("Target profile error:", targetError);
+      return json({ ok: false, error: targetError.message }, 500);
+    }
+
+    if (!targetProfile) {
+      return json({ ok: false, error: "Worker not found" }, 404);
     }
 
     if (targetProfile.role !== "worker") {
-      return new Response(
-        JSON.stringify({ ok: false, error: "Cannot delete an admin account" }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return json({ ok: false, error: "Cannot delete an admin account" }, 409);
     }
 
-    const { error: deleteAuthError } = await supabaseClient.auth.admin.deleteUser(id);
+    // =====================================
+    // DELETE AUTH USER (CASCADES TO PROFILE)
+    // =====================================
 
-    if (deleteAuthError) {
-      throw new Error("Failed to delete auth user: " + deleteAuthError.message);
+    const { error: deleteError } = await adminClient.auth.admin.deleteUser(id);
+
+    if (deleteError) {
+      console.error("Delete user error:", deleteError);
+      return json({ ok: false, error: "Failed to delete worker: " + deleteError.message }, 500);
     }
 
-    return new Response(
-      JSON.stringify({ ok: true }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    // =====================================
+    // SUCCESS
+    // =====================================
+
+    console.log(`Worker deleted successfully: ${id}`);
+
+    return json({ ok: true });
 
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected server error";
-    return new Response(
-      JSON.stringify({ ok: false, error: message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.error("Unexpected delete-worker error:", error);
+    return json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unexpected server error.",
+      },
+      500
     );
   }
 });
