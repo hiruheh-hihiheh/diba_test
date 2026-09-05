@@ -37,6 +37,36 @@ export interface TranslationDictionary {
   logout_failed: string;
   unable_to_logout: string;
 
+  // DISPATCH
+  back: string;
+  take_photo: string;
+  retake_photo: string;
+  vehicle_number: string;
+  enter_vehicle_number: string;
+  material_type: string;
+  select_material: string;
+  scrap_metal: string;
+  ferrous_metal: string;
+  non_ferrous_metal: string;
+  other: string;
+  current_location: string;
+  location_captured: string;
+  getting_location: string;
+  location_unavailable: string;
+  date_time: string;
+  auto_captured: string;
+  review_dispatch: string;
+  submit_dispatch: string;
+  submitting: string;
+  complete_required_fields: string;
+  photo_required: string;
+  vehicle_required: string;
+  material_required: string;
+  camera_error: string;
+  location_error: string;
+  coming_soon_title: string;
+  submission_coming_soon: string;
+
   // LANGUAGE
   language_english: string;
   language_hindi: string;
@@ -80,6 +110,36 @@ export const translations: Record<Language, TranslationDictionary> = {
     logout_failed: "Logout Failed",
     unable_to_logout: "Unable to logout",
 
+    // DISPATCH
+    back: "Back",
+    take_photo: "Take Photo",
+    retake_photo: "Retake Photo",
+    vehicle_number: "Vehicle Number",
+    enter_vehicle_number: "Enter vehicle number",
+    material_type: "Material Type",
+    select_material: "Select material",
+    scrap_metal: "Scrap Metal",
+    ferrous_metal: "Ferrous Metal",
+    non_ferrous_metal: "Non-Ferrous Metal",
+    other: "Other",
+    current_location: "Current Location",
+    location_captured: "Location captured",
+    getting_location: "Getting location...",
+    location_unavailable: "Location unavailable",
+    date_time: "Date & Time",
+    auto_captured: "Automatically captured",
+    review_dispatch: "Review Dispatch",
+    submit_dispatch: "Submit Dispatch",
+    submitting: "Submitting...",
+    complete_required_fields: "Please complete all required fields",
+    photo_required: "Photo required",
+    vehicle_required: "Vehicle number required",
+    material_required: "Material type required",
+    camera_error: "Could not access camera",
+    location_error: "Could not access location",
+    coming_soon_title: "Coming Soon",
+    submission_coming_soon: "Dispatch submission will be connected next.",
+
     // LANGUAGE
     language_english: "English",
     language_hindi: "हिंदी",
@@ -120,6 +180,36 @@ export const translations: Record<Language, TranslationDictionary> = {
     logging_out: "लॉगआउट हो रहा है...",
     logout_failed: "लॉगआउट विफल",
     unable_to_logout: "लॉगआउट करने में असमर्थ",
+
+    // DISPATCH
+    back: "वापस",
+    take_photo: "फोटो लें",
+    retake_photo: "फोटो बदलें",
+    vehicle_number: "वाहन नंबर",
+    enter_vehicle_number: "वाहन नंबर दर्ज करें",
+    material_type: "सामग्री का प्रकार",
+    select_material: "सामग्री चुनें",
+    scrap_metal: "स्क्रेप धातु",
+    ferrous_metal: "लोहे की धातु",
+    non_ferrous_metal: "गैर-लोहे की धातु",
+    other: "अन्य",
+    current_location: "वर्तमान स्थान",
+    location_captured: "स्थान मिल गया",
+    getting_location: "स्थान खोजा जा रहा है...",
+    location_unavailable: "स्थान नहीं मिला",
+    date_time: "दिनांक और समय",
+    auto_captured: "स्वचालित रूप से लिया गया",
+    review_dispatch: "डिस्पैच की समीक्षा",
+    submit_dispatch: "डिस्पैच जमा करें",
+    submitting: "जमा हो रहा है...",
+    complete_required_fields: "कृपया सभी जरूरी जानकारी भरें",
+    photo_required: "फोटो जरूरी है",
+    vehicle_required: "वाहन नंबर जरूरी है",
+    material_required: "सामग्री चुनना जरूरी है",
+    camera_error: "कैमरा चालू नहीं हो सका",
+    location_error: "स्थान की अनुमति नहीं मिली",
+    coming_soon_title: "जल्द आ रहा है",
+    submission_coming_soon: "डिस्पैच जमा करने की सुविधा जल्द जोड़ी जाएगी।",
 
     // LANGUAGE
     language_english: "English",
