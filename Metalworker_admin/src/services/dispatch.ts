@@ -42,7 +42,10 @@ export async function fetchDispatchById(
     data?: Dispatch;
     error?: string;
   }>("get-admin-dispatches", {
-    body: { id },
+    body: {
+  action: "get",
+  id,
+},
   });
 
   if (error) return { ok: false, error: error.message };
