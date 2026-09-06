@@ -14,9 +14,14 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import type { Session } from "@supabase/supabase-js";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { theme } from "../constants/theme";
-import { fetchAdminDispatches, getMaterialLabel, getStatusColor } from "../services/dispatch";
+import {
+  fetchAdminDispatches,
+  getMaterialLabel,
+  getStatusColor,
+} from "../services/dispatch";
 import { supabase } from "../services/supabase";
 import type { Dispatch, DispatchStatus } from "../types/dispatch";
 
@@ -27,7 +32,7 @@ export default function DispatchScreen() {
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  
+
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<DispatchStatus | "all">("all");
   const [selectedDispatch, setSelectedDispatch] = useState<Dispatch | null>(null);
@@ -53,7 +58,8 @@ export default function DispatchScreen() {
         }
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Failed to load dispatches.";
+      const msg =
+        error instanceof Error ? error.message : "Failed to load dispatches.";
       if (Platform.OS === "web") {
         window.alert(msg);
       } else {
@@ -92,16 +98,22 @@ export default function DispatchScreen() {
 
   if (!session) {
     return (
-      <View style={styles.loadingContainer}>
+      <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
+      </SafeAreaView>
     );
   }
 
-  const filterOptions: (DispatchStatus | "all")[] = ["all", "submitted", "reviewed", "approved", "rejected"];
+  const filterOptions: (DispatchStatus | "all")[] = [
+    "all",
+    "submitted",
+    "reviewed",
+    "approved",
+    "rejected",
+  ];
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -109,41 +121,58 @@ export default function DispatchScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back to Dashboard</Text>
+            <Text style={styles.backText}>←</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>Dispatch Management</Text>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Dispatch Management</Text>
+            <Text style={styles.headerSubtitle}>
+              {filteredDispatches.length} dispatches
+            </Text>
+          </View>
+          <View style={styles.headerSpacer} />
         </View>
 
         {/* SEARCH & FILTER */}
-        <View style={styles.searchRow}>
+        <View style={styles.searchSection}>
           <Input
             placeholder="Search username or vehicle..."
             value={search}
             onChangeText={setSearch}
             autoCapitalize="none"
           />
-        </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-          {filterOptions.map((f) => (
-            <Pressable
-              key={f}
-              style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
-              onPress={() => setFilter(f)}
-            >
-              <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterRow}
+            contentContainerStyle={styles.filterContent}
+          >
+            {filterOptions.map((f) => (
+              <Pressable
+                key={f}
+                style={[
+                  styles.filterBtn,
+                  filter === f && styles.filterBtnActive,
+                ]}
+                onPress={() => setFilter(f)}
+              >
+                <Text
+                  style={[
+                    styles.filterText,
+                    filter === f && styles.filterTextActive,
+                  ]}
+                >
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
 
         {/* DISPATCH LIST */}
         <View style={styles.listCard}>
           <View style={styles.listHeader}>
-            <Text style={styles.cardTitle}>
-              Dispatches ({filteredDispatches.length})
-            </Text>
+            <Text style={styles.cardTitle}>Recent Dispatches</Text>
             <Pressable onPress={onRefresh} disabled={refreshing}>
               <Text style={styles.refreshText}>
                 {refreshing ? "Refreshing..." : "Refresh"}
@@ -162,23 +191,45 @@ export default function DispatchScreen() {
                 : "No dispatches found."}
             </Text>
           ) : (
-            filteredDispatches.map((dispatch) => (
+            filteredDispatches.map((dispatch, index) => (
               <Pressable
                 key={dispatch.id}
-                style={styles.dispatchRow}
+                style={[
+                  styles.dispatchRow,
+                  index === filteredDispatches.length - 1 && styles.dispatchRowLast,
+                ]}
                 onPress={() => setSelectedDispatch(dispatch)}
               >
                 <View style={styles.dispatchInfo}>
-                  <Text style={styles.dispatchUsername}>{dispatch.worker_username}</Text>
-                  <Text style={styles.dispatchVehicle}>{dispatch.vehicle_number}</Text>
+                  <View style={styles.dispatchMainRow}>
+                    <Text style={styles.dispatchUsername}>
+                      {dispatch.worker_username}
+                    </Text>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: getStatusColor(dispatch.status) + "20" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusText,
+                          { color: getStatusColor(dispatch.status) },
+                        ]}
+                      >
+                        {dispatch.status.toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.dispatchVehicle}>
+                    🚛 {dispatch.vehicle_number}
+                  </Text>
                   <Text style={styles.dispatchDate}>
-                    {new Date(dispatch.submitted_at).toLocaleString()}
+                    📅 {new Date(dispatch.submitted_at).toLocaleString()}
                   </Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(dispatch.status) + "20" }]}>
-                  <Text style={[styles.statusText, { color: getStatusColor(dispatch.status) }]}>
-                    {dispatch.status.toUpperCase()}
-                  </Text>
+                <View style={styles.chevron}>
+                  <Text style={styles.chevronText}>›</Text>
                 </View>
               </Pressable>
             ))
@@ -187,116 +238,450 @@ export default function DispatchScreen() {
       </ScrollView>
 
       {/* DISPATCH DETAIL MODAL */}
-      <Modal visible={!!selectedDispatch} animationType="slide" presentationStyle="pageSheet">
-        <KeyboardAvoidingView
-          style={styles.modalScreen}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            {selectedDispatch && (
-              <>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Dispatch Details</Text>
-                  <Pressable onPress={() => setSelectedDispatch(null)}>
-                    <Text style={styles.closeBtn}>Close</Text>
-                  </Pressable>
-                </View>
-
-                <Image
-                  source={{ uri: selectedDispatch.photo_url }}
-                  style={styles.dispatchPhoto}
-                  resizeMode="cover"
-                />
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Worker</Text>
-                  <Text style={styles.detailValue}>{selectedDispatch.worker_username}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Vehicle Number</Text>
-                  <Text style={styles.detailValue}>{selectedDispatch.vehicle_number}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Material</Text>
-                  <Text style={styles.detailValue}>{getMaterialLabel(selectedDispatch.material_type)}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Location</Text>
-                  <Text style={styles.detailValue}>{selectedDispatch.location_name || "Unknown"}</Text>
-                  {selectedDispatch.latitude && selectedDispatch.longitude && (
-                    <Text style={styles.detailSubValue}>
-                      {selectedDispatch.latitude.toFixed(4)}, {selectedDispatch.longitude.toFixed(4)}
-                    </Text>
-                  )}
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Submitted At</Text>
-                  <Text style={styles.detailValue}>{new Date(selectedDispatch.submitted_at).toLocaleString()}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Status</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedDispatch.status) + "20" }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(selectedDispatch.status) }]}>
-                      {selectedDispatch.status.toUpperCase()}
-                    </Text>
+      <Modal
+        visible={!!selectedDispatch}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboard}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <ScrollView contentContainerStyle={styles.modalContent}>
+              {selectedDispatch && (
+                <>
+                  <View style={styles.modalHeader}>
+                    <View style={styles.modalHeaderSpacer} />
+                    <Text style={styles.modalTitle}>Dispatch Details</Text>
+                    <Pressable
+                      onPress={() => setSelectedDispatch(null)}
+                      style={styles.closeBtn}
+                    >
+                      <Text style={styles.closeBtnText}>✕</Text>
+                    </Pressable>
                   </View>
-                </View>
-              </>
-            )}
-          </ScrollView>
-        </KeyboardAvoidingView>
+
+                  <Image
+                    source={{ uri: selectedDispatch.photo_url }}
+                    style={styles.dispatchPhoto}
+                    resizeMode="cover"
+                  />
+
+                  <View style={styles.detailCard}>
+                    <View style={styles.detailSection}>
+                      <Text style={styles.detailSectionTitle}>
+                        Dispatch Information
+                      </Text>
+
+                      <View style={styles.detailRow}>
+                        <View style={styles.detailLabelContainer}>
+                          <Text style={styles.detailIcon}>👤</Text>
+                          <Text style={styles.detailLabel}>Worker</Text>
+                        </View>
+                        <Text style={styles.detailValue}>
+                          {selectedDispatch.worker_username}
+                        </Text>
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={styles.detailLabelContainer}>
+                          <Text style={styles.detailIcon}>🚛</Text>
+                          <Text style={styles.detailLabel}>Vehicle Number</Text>
+                        </View>
+                        <Text style={styles.detailValue}>
+                          {selectedDispatch.vehicle_number}
+                        </Text>
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={styles.detailLabelContainer}>
+                          <Text style={styles.detailIcon}>📦</Text>
+                          <Text style={styles.detailLabel}>Material</Text>
+                        </View>
+                        <Text style={styles.detailValue}>
+                          {getMaterialLabel(selectedDispatch.material_type)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={styles.detailLabelContainer}>
+                          <Text style={styles.detailIcon}>📍</Text>
+                          <Text style={styles.detailLabel}>Location</Text>
+                        </View>
+                        <View style={styles.detailValueContainer}>
+                          <Text style={styles.detailValue}>
+                            {selectedDispatch.location_name || "Unknown"}
+                          </Text>
+                          {selectedDispatch.latitude &&
+                            selectedDispatch.longitude && (
+                              <Text style={styles.detailSubValue}>
+                                {selectedDispatch.latitude.toFixed(4)},{" "}
+                                {selectedDispatch.longitude.toFixed(4)}
+                              </Text>
+                            )}
+                        </View>
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={styles.detailLabelContainer}>
+                          <Text style={styles.detailIcon}>🕒</Text>
+                          <Text style={styles.detailLabel}>Submitted At</Text>
+                        </View>
+                        <Text style={styles.detailValue}>
+                          {new Date(selectedDispatch.submitted_at).toLocaleString()}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.statusCard}>
+                    <View style={styles.detailLabelContainer}>
+                      <Text style={styles.detailIcon}>✓</Text>
+                      <Text style={styles.detailLabel}>Status</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.statusBadgeLarge,
+                        {
+                          backgroundColor:
+                            getStatusColor(selectedDispatch.status) + "20",
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusTextLarge,
+                          { color: getStatusColor(selectedDispatch.status) },
+                        ]}
+                      >
+                        {selectedDispatch.status.toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: theme.colors.background },
-  screen: { flex: 1, backgroundColor: theme.colors.background },
-  content: { padding: theme.spacing.lg, paddingBottom: theme.spacing.xl },
-  header: { marginBottom: theme.spacing.lg },
-  backBtn: { marginBottom: theme.spacing.sm },
-  backText: { color: theme.colors.primary, fontSize: theme.textSizes.md, fontWeight: "600" },
-  headerTitle: { color: theme.colors.text, fontSize: theme.textSizes.xl, fontWeight: "700" },
-  
-  searchRow: { marginBottom: theme.spacing.md },
-  filterRow: { marginBottom: theme.spacing.lg },
-  filterBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: theme.radius.md, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, alignItems: "center", marginRight: theme.spacing.sm },
-  filterBtnActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  filterText: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm, fontWeight: "600" },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: theme.colors.background,
+  },
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  content: {
+    padding: theme.spacing.lg,
+    paddingBottom: theme.spacing.xl,
+  },
+
+  /* HEADER */
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.xl,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  backText: {
+    color: theme.colors.primary,
+    fontSize: 20,
+    fontWeight: "600",
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: "center",
+  },
+  headerTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.lg,
+    fontWeight: "700",
+  },
+  headerSubtitle: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    marginTop: 2,
+  },
+  headerSpacer: {
+    width: 40,
+  },
+
+  /* SEARCH & FILTER */
+  searchSection: {
+    marginBottom: theme.spacing.lg,
+  },
+  filterRow: {
+    marginTop: theme.spacing.md,
+  },
+  filterContent: {
+    paddingRight: theme.spacing.sm,
+  },
+  filterBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginRight: theme.spacing.sm,
+  },
+  filterBtnActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  filterText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
   filterTextActive: { color: "#FFFFFF" },
 
-  listCard: { backgroundColor: theme.colors.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: theme.spacing.md, marginTop: theme.spacing.md },
-  listHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing.md },
-  cardTitle: { color: theme.colors.text, fontSize: theme.textSizes.md, fontWeight: "700" },
-  refreshText: { color: theme.colors.primary, fontSize: theme.textSizes.sm, fontWeight: "600" },
+  /* LIST CARD */
+  listCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  listHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
+  },
+  cardTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+  },
+  refreshText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
   emptyState: { paddingVertical: theme.spacing.xl, alignItems: "center" },
-  emptyText: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm, textAlign: "center", paddingVertical: theme.spacing.lg },
+  emptyText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    textAlign: "center",
+    paddingVertical: theme.spacing.lg,
+  },
 
-  dispatchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  dispatchInfo: { flex: 1 },
-  dispatchUsername: { color: theme.colors.text, fontSize: theme.textSizes.md, fontWeight: "700" },
-  dispatchVehicle: { color: theme.colors.text, fontSize: theme.textSizes.sm, fontWeight: "600", marginTop: 2 },
-  dispatchDate: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs, marginTop: 4 },
-  
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
+  /* DISPATCH ROW */
+  dispatchRow: {
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dispatchRowLast: {
+    borderBottomWidth: 0,
+  },
+  dispatchInfo: {
+    flex: 1,
+  },
+  dispatchMainRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: theme.spacing.xs,
+  },
+  dispatchUsername: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    flex: 1,
+  },
+  dispatchVehicle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  dispatchDate: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+  },
+  chevron: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: theme.colors.primary + "15",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: theme.spacing.sm,
+  },
+  chevronText: {
+    color: theme.colors.primary,
+    fontSize: 20,
+    fontWeight: "700",
+  },
 
-  modalScreen: { flex: 1, backgroundColor: theme.colors.background },
-  modalContent: { padding: theme.spacing.lg, flexGrow: 1 },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: theme.spacing.lg },
-  modalTitle: { color: theme.colors.text, fontSize: theme.textSizes.lg, fontWeight: "700" },
-  closeBtn: { color: theme.colors.primary, fontSize: theme.textSizes.md, fontWeight: "600" },
-  
-  dispatchPhoto: { width: "100%", height: 250, borderRadius: theme.radius.lg, backgroundColor: theme.colors.border, marginBottom: theme.spacing.lg },
-  
-  detailRow: { marginBottom: theme.spacing.md },
-  detailLabel: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs, fontWeight: "600", textTransform: "uppercase", marginBottom: 4 },
-  detailValue: { color: theme.colors.text, fontSize: theme.textSizes.md, fontWeight: "600" },
-  detailSubValue: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm, marginTop: 2 },
+  /* STATUS BADGE */
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+
+  /* MODAL */
+  modalScreen: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  modalKeyboard: {
+    flex: 1,
+  },
+  modalContent: {
+    padding: theme.spacing.lg,
+    flexGrow: 1,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.lg,
+  },
+  modalHeaderSpacer: {
+    width: 40,
+  },
+  modalTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.lg,
+    fontWeight: "700",
+    flex: 1,
+    textAlign: "center",
+  },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeBtnText: {
+    color: theme.colors.text,
+    fontSize: 18,
+    fontWeight: "600",
+  },
+
+  /* DISPATCH PHOTO */
+  dispatchPhoto: {
+    width: "100%",
+    height: 250,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+  },
+
+  /* DETAIL CARD */
+  detailCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
+  },
+  detailSection: {
+    marginBottom: 0,
+  },
+  detailSectionTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    marginBottom: theme.spacing.md,
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: theme.spacing.md,
+  },
+  detailLabelContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  detailIcon: {
+    fontSize: 16,
+    marginRight: theme.spacing.xs,
+  },
+  detailLabel: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+  detailValue: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    flex: 1,
+    textAlign: "right",
+  },
+  detailValueContainer: {
+    flex: 1,
+    alignItems: "flex-end",
+  },
+  detailSubValue: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+    marginTop: 2,
+  },
+
+  /* STATUS CARD */
+  statusCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.lg,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  statusBadgeLarge: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  statusTextLarge: {
+    fontSize: 14,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
 });

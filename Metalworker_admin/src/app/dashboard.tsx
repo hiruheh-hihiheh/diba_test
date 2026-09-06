@@ -13,8 +13,9 @@ import {
   Text,
   View,
 } from "react-native";
-import { useRouter } from "expo-router"; // Added for navigation
+import { useRouter } from "expo-router";
 import type { Session } from "@supabase/supabase-js";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { theme } from "../constants/theme";
 import {
@@ -73,13 +74,18 @@ function StatCard({
   title,
   value,
   color,
+  icon,
 }: {
   title: string;
   value: number;
   color: string;
+  icon: string;
 }) {
   return (
     <View style={[styles.statCard, { borderLeftColor: color }]}>
+      <View style={[styles.statIcon, { backgroundColor: color + "15" }]}>
+        <Text style={[styles.statIconText, { color }]}>{icon}</Text>
+      </View>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statTitle}>{title}</Text>
     </View>
@@ -97,39 +103,53 @@ function WorkerRow({
 }) {
   return (
     <View style={styles.workerRow}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>
-          {worker.username.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-
-      <View style={styles.workerInfo}>
-        <View style={styles.workerNameRow}>
-          <Text style={styles.workerName}>{worker.username}</Text>
-          <View
-            style={[
-              styles.statusBadge,
-              worker.is_active ? styles.statusActive : styles.statusInactive,
-            ]}
-          >
-            <Text style={styles.statusText}>
-              {worker.is_active ? "Active" : "Inactive"}
-            </Text>
-          </View>
+      <View style={styles.workerRowMain}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {worker.username.charAt(0).toUpperCase()}
+          </Text>
         </View>
 
-        {worker.full_name ? (
-          <Text style={styles.muted}>{worker.full_name}</Text>
-        ) : null}
+        <View style={styles.workerInfo}>
+          <View style={styles.workerNameRow}>
+            <Text style={styles.workerName} numberOfLines={1}>
+              {worker.username}
+            </Text>
+            <View
+              style={[
+                styles.statusBadge,
+                worker.is_active ? styles.statusActive : styles.statusInactive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusText,
+                  worker.is_active ? styles.statusTextActive : styles.statusTextInactive,
+                ]}
+              >
+                {worker.is_active ? "Active" : "Inactive"}
+              </Text>
+            </View>
+          </View>
 
-        <Text style={styles.mutedSmall}>
-          Created {new Date(worker.created_at).toLocaleDateString()} •{" "}
-          {formatLastLogin(worker.last_login_at)}
-        </Text>
+          {worker.full_name ? (
+            <Text style={styles.muted} numberOfLines={1}>
+              {worker.full_name}
+            </Text>
+          ) : null}
+
+          <Text style={styles.mutedSmall}>
+            Created {new Date(worker.created_at).toLocaleDateString()} •{" "}
+            {formatLastLogin(worker.last_login_at)}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.workerActions}>
-        <Pressable onPress={() => onEdit(worker)} style={styles.actionBtn}>
+        <Pressable
+          onPress={() => onEdit(worker)}
+          style={styles.actionBtn}
+        >
           <Text style={styles.actionText}>Edit</Text>
         </Pressable>
         <Pressable
@@ -143,6 +163,27 @@ function WorkerRow({
   );
 }
 
+function DispatchNavCard({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={styles.dispatchCard}>
+      <View style={styles.dispatchCardContent}>
+        <View style={styles.dispatchCardIcon}>
+          <Text style={styles.dispatchCardIconText}>📦</Text>
+        </View>
+        <View style={styles.dispatchCardText}>
+          <Text style={styles.dispatchCardTitle}>Dispatch Management</Text>
+          <Text style={styles.dispatchCardSubtitle}>
+            View and manage submitted dispatches
+          </Text>
+        </View>
+        <View style={styles.dispatchCardArrow}>
+          <Text style={styles.dispatchCardArrowText}>→</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 /*
   ============================
   MAIN SCREEN
@@ -150,8 +191,9 @@ function WorkerRow({
 */
 
 export default function DashboardScreen() {
-  const router = useRouter(); // Added router instance
+  const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
 
   const [workers, setWorkers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,9 +233,32 @@ export default function DashboardScreen() {
   */
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    let mounted = true;
+
+    const initializeSession = async () => {
+      const { data } = await supabase.auth.getSession();
+
+      if (mounted) {
+        setSession(data.session);
+        setSessionLoading(false);
+      }
+    };
+
+    initializeSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (mounted) {
+        setSession(newSession);
+        setSessionLoading(false);
+      }
     });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadWorkers = useCallback(async () => {
@@ -243,7 +308,7 @@ export default function DashboardScreen() {
       result = result.filter(
         (w) =>
           w.username.toLowerCase().includes(q) ||
-          w.full_name.toLowerCase().includes(q)
+          (w.full_name ?? "").toLowerCase().includes(q)
       );
     }
     return result;
@@ -322,7 +387,7 @@ export default function DashboardScreen() {
 
   function openEdit(worker: Profile) {
     setEditingWorker(worker);
-    setEditFullName(worker.full_name);
+    setEditFullName(worker.full_name ?? "");
     setEditUsername(worker.username);
     setEditIsActive(worker.is_active);
     setEditMessage(null);
@@ -350,7 +415,7 @@ export default function DashboardScreen() {
       }
 
       const cleanUsername = editUsername.trim().toLowerCase();
-      if (cleanUsername !== editingWorker.username) {
+      if (cleanUsername !== editingWorker.username.toLowerCase()) {
         const usernameRes = await updateWorkerUsername(
           editingWorker.id,
           cleanUsername
@@ -367,7 +432,7 @@ export default function DashboardScreen() {
 
       setEditMessage({ type: "success", text: "Worker updated successfully." });
       await loadWorkers();
-      
+
       setTimeout(() => {
         setShowEditModal(false);
         setEditMessage(null);
@@ -388,70 +453,88 @@ export default function DashboardScreen() {
     ============================
   */
 
- function handleDelete(worker: Profile) {
-  const performDelete = async () => {
-    try {
-      const res = await deleteWorker(worker.id);
+  function handleDelete(worker: Profile) {
+    const performDelete = async () => {
+      try {
+        const res = await deleteWorker(worker.id);
 
-      if (res.ok) {
-        await loadWorkers();
-      } else {
-        if (Platform.OS === "web") {
-          window.alert(res.error || "Failed to delete worker.");
+        if (res.ok) {
+          await loadWorkers();
         } else {
-          Alert.alert("Error", res.error || "Failed to delete worker.");
+          if (Platform.OS === "web") {
+            window.alert(res.error || "Failed to delete worker.");
+          } else {
+            Alert.alert("Error", res.error || "Failed to delete worker.");
+          }
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to delete worker.";
+
+        if (Platform.OS === "web") {
+          window.alert(message);
+        } else {
+          Alert.alert("Error", message);
         }
       }
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to delete worker.";
+    };
 
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Error", message);
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        `Are you sure you want to delete "${worker.username}"?\n\nThis will permanently remove their account and authentication credentials.`
+      );
+
+      if (confirmed) {
+        performDelete();
       }
-    }
-  };
 
-  if (Platform.OS === "web") {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${worker.username}"?\n\nThis will permanently remove their account and authentication credentials.`
+      return;
+    }
+
+    Alert.alert(
+      "Delete Worker",
+      `Are you sure you want to delete "${worker.username}"? This will permanently remove their account and authentication credentials.`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: performDelete,
+        },
+      ]
     );
-
-    if (confirmed) {
-      performDelete();
-    }
-
-    return;
   }
-
-  Alert.alert(
-    "Delete Worker",
-    `Are you sure you want to delete "${worker.username}"? This will permanently remove their account and authentication credentials.`,
-    [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: performDelete,
-      },
-    ]
-  );
-}
 
   /*
     ============================
     LOGOUT
     ============================
   */
-
   async function handleLogout() {
-    const { error } = await supabase.auth.signOut();
-    if (error) Alert.alert("Logout Failed", error.message);
+    try {
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        Alert.alert("Logout Failed", error.message);
+        return;
+      }
+
+      setSession(null);
+      setWorkers([]);
+
+      router.dismissAll();
+      router.replace("/login");
+    } catch (error) {
+      Alert.alert(
+        "Logout Failed",
+        error instanceof Error
+          ? error.message
+          : "Unable to logout. Please try again."
+      );
+    }
   }
 
   /*
@@ -459,17 +542,22 @@ export default function DashboardScreen() {
     RENDER
     ============================
   */
+  useEffect(() => {
+    if (!sessionLoading && !session) {
+      router.replace("/login");
+    }
+  }, [session, sessionLoading, router]);
 
-  if (!session) {
+  if (sessionLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -478,60 +566,79 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View style={styles.headerInfo}>
             <Text style={styles.headerTitle}>Worker Management</Text>
-            <Text style={styles.headerSub}>Signed in as {adminUsername}</Text>
+            <Text style={styles.headerSub}>
+              Signed in as{" "}
+              <Text style={styles.headerSubBold}>{adminUsername}</Text>
+            </Text>
           </View>
-          <Button title="Logout" variant="ghost" onPress={handleLogout} />
+          <Pressable onPress={handleLogout} style={styles.logoutBtn}>
+            <Text style={styles.logoutText}>Logout</Text>
+          </Pressable>
         </View>
 
-        {/* DISPATCH NAVIGATION BUTTON */}
-        <View style={{ marginBottom: theme.spacing.lg }}>
-          <Button 
-            title="View Dispatch Management →" 
-            onPress={() => router.push("/dispatch")} 
-          />
-        </View>
+        {/* DISPATCH NAVIGATION CARD */}
+        <DispatchNavCard onPress={() => router.push("/dispatch")} />
 
         {/* STATS */}
         <View style={styles.statsRow}>
-          <StatCard title="Total" value={stats.total} color={theme.colors.primary} />
-          <StatCard title="Active" value={stats.active} color={theme.colors.success} />
-          <StatCard title="Inactive" value={stats.inactive} color={theme.colors.danger} />
+          <StatCard
+            title="Total"
+            value={stats.total}
+            color={theme.colors.primary}
+            icon="👥"
+          />
+          <StatCard
+            title="Active"
+            value={stats.active}
+            color={theme.colors.success}
+            icon="✓"
+          />
+          <StatCard
+            title="Inactive"
+            value={stats.inactive}
+            color={theme.colors.danger}
+            icon="✕"
+          />
         </View>
 
         {/* SEARCH & FILTER */}
-        <View style={styles.searchRow}>
+        <View style={styles.searchSection}>
           <Input
             placeholder="Search workers..."
             value={search}
             onChangeText={setSearch}
             autoCapitalize="none"
           />
-        </View>
 
-        <View style={styles.filterRow}>
-          {(["all", "active", "inactive"] as const).map((f) => (
-            <Pressable
-              key={f}
-              style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
-              onPress={() => setFilter(f)}
-            >
-              <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+          <View style={styles.filterRow}>
+            {(["all", "active", "inactive"] as const).map((f) => (
+              <Pressable
+                key={f}
+                style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
+                onPress={() => setFilter(f)}
+              >
+                <Text
+                  style={[
+                    styles.filterText,
+                    filter === f && styles.filterTextActive,
+                  ]}
+                >
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
-        {/* ADD WORKER BUTTON */}
-        <Button
-          title="+ Add New Worker"
-          onPress={() => {
-            setAddMessage(null);
-            setAddUsername("");
-            setAddPassword("");
-            setShowAddModal(true);
-          }}
-        />
+          <Button
+            title="+ Add New Worker"
+            onPress={() => {
+              setAddMessage(null);
+              setAddUsername("");
+              setAddPassword("");
+              setShowAddModal(true);
+            }}
+          />
+        </View>
 
         {/* WORKER LIST */}
         <View style={styles.listCard}>
@@ -577,120 +684,132 @@ export default function DashboardScreen() {
       </ScrollView>
 
       {/* ADD MODAL */}
-      <Modal visible={showAddModal} animationType="slide" presentationStyle="pageSheet">
-        <KeyboardAvoidingView
-          style={styles.modalScreen}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add Worker</Text>
-            <Text style={styles.modalDesc}>
-              Create a new username and password for a worker.
-            </Text>
-
-            <Input
-              label="USERNAME"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={addUsername}
-              onChangeText={setAddUsername}
-              placeholder="e.g. raju"
-            />
-            <Input
-              label="PASSWORD"
-              secureTextEntry
-              value={addPassword}
-              onChangeText={setAddPassword}
-              placeholder="Minimum 6 characters"
-            />
-
-            {addMessage && (
-              <Text
-                style={
-                  addMessage.type === "success" ? styles.success : styles.error
-                }
-              >
-                {addMessage.text}
+      <Modal
+        visible={showAddModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboard}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <ScrollView contentContainerStyle={styles.modalContent}>
+              <Text style={styles.modalTitle}>Add Worker</Text>
+              <Text style={styles.modalDesc}>
+                Create a new username and password for a worker.
               </Text>
-            )}
 
-            <Button
-              title="Create Worker"
-              loading={addLoading}
-              onPress={handleCreate}
-            />
-            <Button
-              title="Cancel"
-              variant="ghost"
-              onPress={() => setShowAddModal(false)}
-            />
-          </ScrollView>
-        </KeyboardAvoidingView>
+              <Input
+                label="USERNAME"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={addUsername}
+                onChangeText={setAddUsername}
+                placeholder="e.g. raju"
+              />
+              <Input
+                label="PASSWORD"
+                secureTextEntry
+                value={addPassword}
+                onChangeText={setAddPassword}
+                placeholder="Minimum 6 characters"
+              />
+
+              {addMessage && (
+                <Text
+                  style={
+                    addMessage.type === "success" ? styles.success : styles.error
+                  }
+                >
+                  {addMessage.text}
+                </Text>
+              )}
+
+              <Button
+                title="Create Worker"
+                loading={addLoading}
+                onPress={handleCreate}
+              />
+              <Button
+                title="Cancel"
+                variant="ghost"
+                onPress={() => setShowAddModal(false)}
+              />
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
 
       {/* EDIT MODAL */}
-      <Modal visible={showEditModal} animationType="slide" presentationStyle="pageSheet">
-        <KeyboardAvoidingView
-          style={styles.modalScreen}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Worker</Text>
+      <Modal
+        visible={showEditModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboard}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <ScrollView contentContainerStyle={styles.modalContent}>
+              <Text style={styles.modalTitle}>Edit Worker</Text>
 
-            <Input
-              label="FULL NAME"
-              value={editFullName}
-              onChangeText={setEditFullName}
-              placeholder="e.g. Raju Sharma"
-            />
-            <Input
-              label="USERNAME"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={editUsername}
-              onChangeText={setEditUsername}
-              placeholder="e.g. raju"
-            />
+              <Input
+                label="FULL NAME"
+                value={editFullName}
+                onChangeText={setEditFullName}
+                placeholder="e.g. Raju Sharma"
+              />
+              <Input
+                label="USERNAME"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={editUsername}
+                onChangeText={setEditUsername}
+                placeholder="e.g. raju"
+              />
 
-            <View style={styles.toggleContainer}>
-              <Text style={styles.label}>STATUS</Text>
-              <Pressable
-                style={[
-                  styles.toggleBtn,
-                  editIsActive ? styles.toggleActive : styles.toggleInactive,
-                ]}
-                onPress={() => setEditIsActive(!editIsActive)}
-              >
-                <Text style={styles.toggleText}>
-                  {editIsActive ? "Active" : "Inactive"}
+              <View style={styles.toggleContainer}>
+                <Text style={styles.label}>STATUS</Text>
+                <Pressable
+                  style={[
+                    styles.toggleBtn,
+                    editIsActive ? styles.toggleActive : styles.toggleInactive,
+                  ]}
+                  onPress={() => setEditIsActive(!editIsActive)}
+                >
+                  <Text style={styles.toggleText}>
+                    {editIsActive ? "Active" : "Inactive"}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {editMessage && (
+                <Text
+                  style={
+                    editMessage.type === "success" ? styles.success : styles.error
+                  }
+                >
+                  {editMessage.text}
                 </Text>
-              </Pressable>
-            </View>
+              )}
 
-            {editMessage && (
-              <Text
-                style={
-                  editMessage.type === "success" ? styles.success : styles.error
-                }
-              >
-                {editMessage.text}
-              </Text>
-            )}
-
-            <Button
-              title="Save Changes"
-              loading={editLoading}
-              onPress={handleEditSave}
-            />
-            <Button
-              title="Cancel"
-              variant="ghost"
-              onPress={() => setShowEditModal(false)}
-            />
-          </ScrollView>
-        </KeyboardAvoidingView>
+              <Button
+                title="Save Changes"
+                loading={editLoading}
+                onPress={handleEditSave}
+              />
+              <Button
+                title="Cancel"
+                variant="ghost"
+                onPress={() => setShowEditModal(false)}
+              />
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -715,63 +834,157 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
   },
+
+  /* HEADER */
   header: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing.xl,
   },
-  headerInfo: { flex: 1, marginRight: theme.spacing.sm },
+  headerInfo: { flex: 1, marginRight: theme.spacing.md },
   headerTitle: {
     color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
+    fontSize: theme.textSizes.xl,
+    fontWeight: "800",
+    marginBottom: 4,
   },
   headerSub: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    marginTop: 3,
+  },
+  headerSubBold: {
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+  logoutBtn: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  logoutText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+
+  /* DISPATCH NAV CARD */
+  dispatchCard: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.lg,
+    marginBottom: theme.spacing.xl,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  dispatchCardContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dispatchCardIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFFFFF30",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: theme.spacing.md,
+  },
+  dispatchCardIconText: {
+    fontSize: 28,
+  },
+  dispatchCardText: {
+    flex: 1,
+  },
+  dispatchCardTitle: {
+    color: "#FFFFFF",
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  dispatchCardSubtitle: {
+    color: "#FFFFFFCC",
+    fontSize: theme.textSizes.sm,
+  },
+  dispatchCardArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF30",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dispatchCardArrowText: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "700",
   },
 
   /* STATS */
   statsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing.xl,
     gap: theme.spacing.sm,
   },
   statCard: {
     flex: 1,
     backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
+    borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderLeftWidth: 4,
     padding: theme.spacing.md,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  statIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: theme.spacing.sm,
+  },
+  statIconText: {
+    fontSize: 16,
+    fontWeight: "700",
   },
   statValue: {
     color: theme.colors.text,
     fontSize: theme.textSizes.xl,
     fontWeight: "800",
+    marginBottom: 2,
   },
   statTitle: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.xs,
     fontWeight: "600",
     textTransform: "uppercase",
-    marginTop: 4,
   },
 
   /* SEARCH & FILTER */
+  searchSection: {
+    marginBottom: theme.spacing.xl,
+  },
   searchRow: { marginBottom: theme.spacing.md },
   filterRow: {
     flexDirection: "row",
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
     gap: theme.spacing.sm,
   },
   filterBtn: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -796,7 +1009,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
-    marginTop: theme.spacing.md,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   workerHeader: {
     flexDirection: "row",
@@ -824,63 +1041,100 @@ const styles = StyleSheet.create({
 
   /* WORKER ROW */
   workerRow: {
-    flexDirection: "row",
-    alignItems: "center",
     paddingVertical: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  workerRowMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: theme.spacing.sm,
+  },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: theme.colors.primary,
     alignItems: "center",
     justifyContent: "center",
     marginRight: theme.spacing.md,
   },
-  avatarText: { color: "#FFFFFF", fontWeight: "700", fontSize: 17 },
+  avatarText: { color: "#FFFFFF", fontWeight: "700", fontSize: 18 },
   workerInfo: { flex: 1 },
-  workerNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  workerNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
   workerName: {
     color: theme.colors.text,
     fontSize: theme.textSizes.md,
-    fontWeight: "600",
+    fontWeight: "700",
+    flex: 1,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 12,
   },
   statusActive: { backgroundColor: theme.colors.success + "20" },
   statusInactive: { backgroundColor: theme.colors.danger + "20" },
-  statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
-  muted: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  statusTextActive: { color: theme.colors.success },
+  statusTextInactive: { color: theme.colors.danger },
+  muted: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    marginBottom: 2,
+  },
   mutedSmall: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.xs,
-    marginTop: 2,
   },
-  workerActions: { flexDirection: "row", gap: 8, marginLeft: 8 },
+  workerActions: {
+    flexDirection: "row",
+    gap: theme.spacing.sm,
+    justifyContent: "flex-end",
+  },
   actionBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.primary + "15",
+    minWidth: 70,
+    alignItems: "center",
   },
-  actionText: { color: theme.colors.primary, fontSize: 12, fontWeight: "600" },
+  actionText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
   actionBtnDanger: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.danger + "15",
+    minWidth: 70,
+    alignItems: "center",
   },
-  actionTextDanger: { color: theme.colors.danger, fontSize: 12, fontWeight: "600" },
+  actionTextDanger: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
 
   /* MODALS */
   modalScreen: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  modalKeyboard: {
+    flex: 1,
   },
   modalContent: {
     padding: theme.spacing.lg,
@@ -906,7 +1160,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   toggleBtn: {
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: theme.radius.md,
     alignItems: "center",
     borderWidth: 1,
