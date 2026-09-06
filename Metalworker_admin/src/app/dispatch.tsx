@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import type { Session } from "@supabase/supabase-js";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -73,9 +73,13 @@ export default function DispatchScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    if (session) loadDispatches();
-  }, [session, loadDispatches]);
+useFocusEffect(
+  useCallback(() => {
+    if (session) {
+      void loadDispatches();
+    }
+  }, [session, loadDispatches])
+);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
