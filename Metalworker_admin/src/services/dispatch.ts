@@ -17,21 +17,15 @@ export async function fetchAdminDispatches(): Promise<{
     data?: Dispatch[];
     error?: string;
   }>("get-admin-dispatches", {
-    body: {},
+    body: { action: "list" },
   });
 
-  if (error) {
-    return { ok: false, error: error.message };
+  if (error) return { ok: false, error: error.message };
+  if (!data?.ok) {
+    return { ok: false, error: data?.error || "Failed to load dispatches." };
   }
 
-  if (data?.error) {
-    return { ok: false, error: data.error };
-  }
-
-  return {
-    ok: true,
-    data: data?.data || [],
-  };
+  return { ok: true, data: data.data || [] };
 }
 
 export async function fetchDispatchById(
@@ -42,15 +36,12 @@ export async function fetchDispatchById(
     data?: Dispatch;
     error?: string;
   }>("get-admin-dispatches", {
-    body: {
-  action: "get",
-  id,
-},
+    body: { action: "get", id },
   });
 
   if (error) return { ok: false, error: error.message };
   if (!data?.ok || !data.data) {
-    return { ok: false, error: data?.error || "Dispatch not found" };
+    return { ok: false, error: data?.error || "Dispatch not found." };
   }
 
   return { ok: true, data: data.data };
@@ -64,17 +55,10 @@ export async function updateDispatch(
     ok: boolean;
     error?: string;
   }>("get-admin-dispatches", {
-    body: {
-      action: "update",
-      id,
-      input,
-    },
+    body: { action: "update", id, input },
   });
 
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
+  if (error) return { ok: false, error: error.message };
   if (!data?.ok) {
     return { ok: false, error: data?.error || "Failed to update dispatch." };
   }
@@ -84,22 +68,17 @@ export async function updateDispatch(
 
 export async function deleteDispatch(
   id: string
-): Promise<{
-  ok: boolean;
-  error?: string;
-}> {
-  const { error } = await supabase
-    .from("dispatches")
-    .delete()
-    .eq("id", id);
+): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    error?: string;
+  }>("get-admin-dispatches", {
+    body: { action: "delete", id },
+  });
 
-  if (error) {
-    console.error("Delete dispatch error:", error);
-
-    return {
-      ok: false,
-      error: error.message,
-    };
+  if (error) return { ok: false, error: error.message };
+  if (!data?.ok) {
+    return { ok: false, error: data?.error || "Failed to delete dispatch." };
   }
 
   return { ok: true };
