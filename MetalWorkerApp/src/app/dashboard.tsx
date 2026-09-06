@@ -49,12 +49,13 @@ export default function DashboardScreen() {
         return;
       }
 
+      // Priority: full_name from metadata > email username > "Worker"
+      const fullName = session.user.user_metadata?.full_name;
       const email = session.user.email ?? "";
-      const workerUsername = email.split("@")[0];
-
-      if (workerUsername) {
-        setUsername(workerUsername);
-      }
+      const emailUsername = email.split("@")[0];
+      
+      const displayName = fullName || emailUsername || "Worker";
+      setUsername(displayName);
 
       setLoading(false);
     }
@@ -113,6 +114,36 @@ export default function DashboardScreen() {
     );
   }
 
+  // Helper function to format date nicely
+  function formatDispatchDate(dateStr: string): string {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dispatchDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    const timeStr = date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    if (dispatchDate.getTime() === today.getTime()) {
+      return `${language === "hi" ? "आज" : "Today"} • ${timeStr}`;
+    }
+    
+    if (dispatchDate.getTime() === yesterday.getTime()) {
+      return `${language === "hi" ? "कल" : "Yesterday"} • ${timeStr}`;
+    }
+
+const formattedDate = date.toLocaleDateString([], {
+  month: "short",
+  day: "numeric",
+});
+
+return `${formattedDate} • ${timeStr}`;
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -129,49 +160,56 @@ export default function DashboardScreen() {
     >
       {/* HEADER */}
       <View style={styles.header}>
-        <View style={styles.userInfo}>
-          <Text style={styles.greeting}>{t.good_morning},</Text>
-          <Text style={styles.username}>{username}</Text>
-        </View>
-
-        <View style={styles.headerRight}>
-          <View style={styles.langSwitch}>
-            <TouchableOpacity
-              style={[styles.langBtn, language === "en" && styles.langBtnActive]}
-              onPress={() => setLanguage("en")}
-            >
-              <Text style={[styles.langText, language === "en" && styles.langTextActive]}>
-                EN
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.langBtn, language === "hi" && styles.langBtnActive]}
-              onPress={() => setLanguage("hi")}
-            >
-              <Text style={[styles.langText, language === "hi" && styles.langTextActive]}>
-                हिं
-              </Text>
-            </TouchableOpacity>
+        <View style={styles.headerTop}>
+          <View style={styles.userInfo}>
+            <Text style={styles.greeting}>{t.good_morning},</Text>
+            <Text style={styles.username} numberOfLines={1} ellipsizeMode="tail">
+              {username}
+            </Text>
           </View>
 
-          <TouchableOpacity
-            onPress={handleLogout}
-            disabled={loggingOut}
-            style={styles.logoutButton}
-          >
-            <Text style={styles.logoutText}>
-              {loggingOut ? t.logging_out : t.logout}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <View style={styles.langSwitch}>
+              <TouchableOpacity
+                style={[styles.langBtn, language === "en" && styles.langBtnActive]}
+                onPress={() => setLanguage("en")}
+              >
+                <Text style={[styles.langText, language === "en" && styles.langTextActive]}>
+                  EN
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.langBtn, language === "hi" && styles.langBtnActive]}
+                onPress={() => setLanguage("hi")}
+              >
+                <Text style={[styles.langText, language === "hi" && styles.langTextActive]}>
+                  हिं
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
+
+        <TouchableOpacity
+          onPress={handleLogout}
+          disabled={loggingOut}
+          style={styles.logoutButton}
+        >
+          <Text style={styles.logoutText}>
+            {loggingOut ? t.logging_out : t.logout}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* STATUS */}
       <View style={styles.statusCard}>
-        <View style={styles.statusIndicator}>
+        <View style={styles.statusHeader}>
           <View style={styles.statusDot} />
-          <Text style={styles.statusText}>{t.active_online}</Text>
+          <Text style={styles.statusLabel}>
+            {language === "hi" ? "स्थिति" : "STATUS"}
+          </Text>
         </View>
+        <Text style={styles.statusText}>{t.active_online}</Text>
         <Text style={styles.statusSub}>{t.ready_to_log}</Text>
       </View>
 
@@ -229,29 +267,51 @@ export default function DashboardScreen() {
 
       {loadingDispatches ? (
         <View style={styles.emptyCard}>
-          <ActivityIndicator color={theme.colors.primary} />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
       ) : recentDispatches.length === 0 ? (
         <View style={styles.emptyCard}>
+          <Text style={styles.emptyIcon}>📭</Text>
           <Text style={styles.emptyText}>{t.no_recent_dispatches}</Text>
           <Text style={styles.emptySub}>{t.submitted_logs_appear_here}</Text>
         </View>
       ) : (
         <View style={styles.listCard}>
-          {recentDispatches.map((d) => (
-            <View key={d.id} style={styles.dispatchRow}>
+          {recentDispatches.map((d, index) => (
+            <View
+              key={d.id}
+              style={[
+                styles.dispatchRow,
+                index === recentDispatches.length - 1 && styles.dispatchRowLast,
+              ]}
+            >
               <View style={styles.dispatchInfo}>
-                <Text style={styles.dispatchVehicle}>{d.vehicle_number}</Text>
-                <Text style={styles.dispatchMaterial}>
+                <View style={styles.dispatchHeader}>
+                  <Text
+                    style={styles.dispatchVehicle}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {d.vehicle_number}
+                  </Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(d.status) + "20" }]}>
+                    <Text
+                      style={[styles.statusTextBadge, { color: getStatusColor(d.status) }]}
+                      numberOfLines={1}
+                    >
+                      {t[getStatusLabelKey(d.status)]}
+                    </Text>
+                  </View>
+                </View>
+                <Text
+                  style={styles.dispatchMaterial}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
                   {t[getMaterialLabelKey(d.material_type)]}
                 </Text>
                 <Text style={styles.dispatchDate}>
-                  {new Date(d.submitted_at).toLocaleString()}
-                </Text>
-              </View>
-              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(d.status) + "20" }]}>
-                <Text style={[styles.statusTextBadge, { color: getStatusColor(d.status) }]}>
-                  {t[getStatusLabelKey(d.status)]}
+                  {formatDispatchDate(d.submitted_at)}
                 </Text>
               </View>
             </View>
@@ -283,11 +343,15 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: theme.spacing.lg,
     marginTop: theme.spacing.sm,
+  },
+
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
   },
 
   userInfo: {
@@ -298,20 +362,19 @@ const styles = StyleSheet.create({
   greeting: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    fontWeight: "500",
+    fontWeight: "600",
+    marginBottom: 4,
   },
 
   username: {
     color: theme.colors.text,
     fontSize: theme.textSizes.xl,
     fontWeight: "800",
-    marginTop: 2,
     textTransform: "capitalize",
   },
 
-  headerRight: {
+  headerActions: {
     alignItems: "flex-end",
-    gap: theme.spacing.sm,
   },
 
   langSwitch: {
@@ -320,13 +383,15 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    padding: 2,
+    padding: 3,
   },
 
   langBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: theme.radius.sm,
+    minWidth: 44,
+    alignItems: "center",
   },
 
   langBtnActive: {
@@ -344,14 +409,15 @@ const styles = StyleSheet.create({
   },
 
   logoutButton: {
-    backgroundColor: "#FEF2F2",
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.surface,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: theme.radius.md,
     borderWidth: 1,
-    borderColor: "#FECACA",
+    borderColor: theme.colors.border,
     minHeight: 44,
     justifyContent: "center",
+    alignItems: "center",
   },
 
   logoutText: {
@@ -361,37 +427,47 @@ const styles = StyleSheet.create({
   },
 
   statusCard: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.primaryLight,
     borderRadius: theme.radius.lg,
     padding: theme.spacing.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
     marginBottom: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.primary + "30",
   },
 
-  statusIndicator: {
+  statusHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: theme.spacing.xs,
+    marginBottom: theme.spacing.sm,
   },
 
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: theme.colors.primary,
     marginRight: theme.spacing.sm,
   },
 
+  statusLabel: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.xs,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+
   statusText: {
     color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
+    fontSize: theme.textSizes.lg,
+    fontWeight: "800",
+    marginBottom: 4,
   },
 
   statusSub: {
-    color: theme.colors.textMuted,
+    color: theme.colors.text,
     fontSize: theme.textSizes.sm,
+    opacity: 0.8,
   },
 
   sectionTitle: {
@@ -418,6 +494,12 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xl,
   },
 
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: theme.spacing.md,
+    opacity: 0.6,
+  },
+
   emptyText: {
     color: theme.colors.text,
     fontSize: theme.textSizes.md,
@@ -439,41 +521,59 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
   },
+  
   dispatchRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     paddingVertical: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  
+  dispatchRowLast: {
+    borderBottomWidth: 0,
+  },
+  
   dispatchInfo: {
     flex: 1,
   },
+  
+  dispatchHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  
   dispatchVehicle: {
     fontSize: theme.textSizes.md,
     fontWeight: "700",
     color: theme.colors.text,
+    flex: 1,
+    marginRight: theme.spacing.sm,
   },
+  
   dispatchMaterial: {
     fontSize: theme.textSizes.sm,
     color: theme.colors.textMuted,
-    marginTop: 2,
+    marginBottom: 4,
   },
+  
   dispatchDate: {
     fontSize: theme.textSizes.xs,
     color: theme.colors.textMuted,
-    marginTop: 4,
+    marginTop: 2,
   },
+  
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
-    marginLeft: theme.spacing.md,
+    maxWidth: 100,
   },
+  
   statusTextBadge: {
     fontSize: 10,
     fontWeight: "700",
     textTransform: "uppercase",
+    letterSpacing: 0.3,
   },
 });
