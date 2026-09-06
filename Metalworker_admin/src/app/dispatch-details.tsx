@@ -42,8 +42,7 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
   const [editVehicleNumber, setEditVehicleNumber] = useState("");
   const [editMaterialType, setEditMaterialType] = useState<MaterialType>("scrap");
   const [editLocationName, setEditLocationName] = useState("");
-  const [editLatitude, setEditLatitude] = useState("");
-  const [editLongitude, setEditLongitude] = useState("");
+
   const [editStatus, setEditStatus] = useState<DispatchStatus>("submitted");
 
   useEffect(() => {
@@ -65,8 +64,7 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
         setEditVehicleNumber(res.data.vehicle_number);
         setEditMaterialType(res.data.material_type);
         setEditLocationName(res.data.location_name || "");
-        setEditLatitude(res.data.latitude?.toString() || "");
-        setEditLongitude(res.data.longitude?.toString() || "");
+
         setEditStatus(res.data.status);
       } else {
         setError(res.error || "Failed to load dispatch");
@@ -87,8 +85,7 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
       setEditVehicleNumber(dispatch.vehicle_number);
       setEditMaterialType(dispatch.material_type);
       setEditLocationName(dispatch.location_name || "");
-      setEditLatitude(dispatch.latitude?.toString() || "");
-      setEditLongitude(dispatch.longitude?.toString() || "");
+
       setEditStatus(dispatch.status);
     }
     setIsEditing(false);
@@ -103,28 +100,15 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
       return;
     }
 
-    const lat = editLatitude.trim() ? parseFloat(editLatitude) : null;
-    const lon = editLongitude.trim() ? parseFloat(editLongitude) : null;
 
-    if (editLatitude.trim() && isNaN(lat!)) {
-      Alert.alert("Validation Error", "Latitude must be a valid number");
-      return;
-    }
-
-    if (editLongitude.trim() && isNaN(lon!)) {
-      Alert.alert("Validation Error", "Longitude must be a valid number");
-      return;
-    }
 
     try {
       setSaving(true);
       const updateData: UpdateDispatchInput = {
         vehicle_number: trimmedVehicle,
         material_type: editMaterialType,
-        location_name: editLocationName.trim() || null,
-        latitude: lat,
-        longitude: lon,
-        status: editStatus,
+location_name: editLocationName.trim() || null,
+status: editStatus,
       };
 
       const res = await updateDispatch(dispatchId, updateData);
@@ -461,31 +445,6 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
                     placeholder="Enter location name"
                     placeholderTextColor={theme.colors.textMuted}
                   />
-                </View>
-
-                <View style={styles.formRow}>
-                  <View style={[styles.formField, { flex: 1, marginRight: 8 }]}>
-                    <Text style={styles.formLabel}>Latitude</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      value={editLatitude}
-                      onChangeText={setEditLatitude}
-                      placeholder="e.g. 19.0760"
-                      placeholderTextColor={theme.colors.textMuted}
-                      keyboardType="numeric"
-                    />
-                  </View>
-                  <View style={[styles.formField, { flex: 1, marginLeft: 8 }]}>
-                    <Text style={styles.formLabel}>Longitude</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      value={editLongitude}
-                      onChangeText={setEditLongitude}
-                      placeholder="e.g. 72.8777"
-                      placeholderTextColor={theme.colors.textMuted}
-                      keyboardType="numeric"
-                    />
-                  </View>
                 </View>
               </View>
 
