@@ -27,7 +27,9 @@ import {
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
 
 export default function DispatchDetailsScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id?: string | string[] }>();
+const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
+
   const [dispatch, setDispatch] = useState<Dispatch | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,18 +47,18 @@ export default function DispatchDetailsScreen() {
   const [editStatus, setEditStatus] = useState<DispatchStatus>("submitted");
 
   useEffect(() => {
-    if (id) {
+    if (dispatchId) {
       loadDispatch();
     }
-  }, [id]);
+  }, [dispatchId]);
 
   const loadDispatch = async () => {
-    if (!id) return;
+    if (!dispatchId) return;
 
     try {
       setLoading(true);
       setError(null);
-      const res = await fetchDispatchById(id);
+      const res = await fetchDispatchById(dispatchId);
 
       if (res.ok && res.data) {
         setDispatch(res.data);
@@ -93,7 +95,7 @@ export default function DispatchDetailsScreen() {
   };
 
   const saveChanges = async () => {
-    if (!dispatch || !id) return;
+    if (!dispatch || !dispatchId) return;
 
     const trimmedVehicle = editVehicleNumber.trim();
     if (!trimmedVehicle) {
@@ -125,7 +127,7 @@ export default function DispatchDetailsScreen() {
         status: editStatus,
       };
 
-      const res = await updateDispatch(id, updateData);
+      const res = await updateDispatch(dispatchId, updateData);
 
       if (res.ok) {
         Alert.alert("Success", "Dispatch updated successfully", [
@@ -169,11 +171,11 @@ export default function DispatchDetailsScreen() {
   };
 
   const performDelete = async () => {
-    if (!id) return;
+    if (!dispatchId) return;
 
     try {
       setDeleting(true);
-      const res = await deleteDispatch(id);
+      const res = await deleteDispatch(dispatchId);
 
       if (res.ok) {
         Alert.alert("Success", "Dispatch deleted successfully", [
