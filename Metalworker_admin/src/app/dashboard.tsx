@@ -25,8 +25,14 @@ import {
   updateWorkerProfile,
   updateWorkerUsername,
 } from "../services/admin";
+import {
+  fetchAdminDispatches,
+  getMaterialLabel,
+  getStatusColor,
+} from "../services/dispatch";
 import { supabase } from "../services/supabase";
 import type { Profile } from "../types/profile";
+import type { Dispatch } from "../types/dispatch";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -64,6 +70,24 @@ function formatLastLogin(dateStr?: string | null): string {
   });
 }
 
+function formatDispatchDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return "—";
+
+  const timeStr = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const dateFormatted = date.toLocaleDateString([], {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `${dateFormatted}, ${timeStr}`;
+}
+
 /*
   ============================
   SUB-COMPONENTS
@@ -89,6 +113,43 @@ function StatCard({
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statTitle}>{title}</Text>
     </View>
+  );
+}
+
+function DispatchRow({
+  dispatch,
+  onPress,
+}: {
+  dispatch: Dispatch;
+  onPress: (d: Dispatch) => void;
+}) {
+  const statusColor = getStatusColor(dispatch.status);
+  return (
+    <Pressable onPress={() => onPress(dispatch)} style={styles.dispatchRow}>
+      <View style={styles.dispatchRowTop}>
+        <View style={styles.dispatchRowInfo}>
+          <Text style={styles.dispatchWorkerName} numberOfLines={1}>
+            {dispatch.worker_username}
+          </Text>
+          <Text style={styles.dispatchMeta} numberOfLines={1}>
+            {dispatch.vehicle_number} • {getMaterialLabel(dispatch.material_type)}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.dispatchStatusBadge,
+            { backgroundColor: statusColor + "20" },
+          ]}
+        >
+          <Text style={[styles.dispatchStatusText, { color: statusColor }]}>
+            {dispatch.status.toUpperCase()}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.dispatchDate}>
+        {formatDispatchDate(dispatch.submitted_at)}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -163,24 +224,25 @@ function WorkerRow({
   );
 }
 
-function DispatchNavCard({ onPress }: { onPress: () => void }) {
+function SectionHeader({
+  title,
+  subtitle,
+  rightElement,
+}: {
+  title: string;
+  subtitle?: string;
+  rightElement?: React.ReactNode;
+}) {
   return (
-    <Pressable onPress={onPress} style={styles.dispatchCard}>
-      <View style={styles.dispatchCardContent}>
-        <View style={styles.dispatchCardIcon}>
-          <Text style={styles.dispatchCardIconText}>📦</Text>
-        </View>
-        <View style={styles.dispatchCardText}>
-          <Text style={styles.dispatchCardTitle}>Dispatch Management</Text>
-          <Text style={styles.dispatchCardSubtitle}>
-            View and manage submitted dispatches
-          </Text>
-        </View>
-        <View style={styles.dispatchCardArrow}>
-          <Text style={styles.dispatchCardArrowText}>→</Text>
-        </View>
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeaderLeft}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {subtitle ? (
+          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+        ) : null}
       </View>
-    </Pressable>
+      {rightElement}
+    </View>
   );
 }
 
@@ -198,6 +260,11 @@ export default function DashboardScreen() {
   const [workers, setWorkers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Dispatch data
+  const [dispatches, setDispatches] = useState<Dispatch[]>([]);
+  const [dispatchLoading, setDispatchLoading] = useState(true);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
@@ -276,15 +343,37 @@ export default function DashboardScreen() {
     }
   }, []);
 
+  const loadDispatches = useCallback(async () => {
+    try {
+      setDispatchLoading(true);
+      setDispatchError(null);
+      const res = await fetchAdminDispatches();
+      if (res.ok && res.data) {
+        setDispatches(res.data);
+      } else {
+        setDispatchError(res.error || "Failed to load dispatches.");
+      }
+    } catch (error) {
+      setDispatchError(
+        error instanceof Error ? error.message : "Failed to load dispatches."
+      );
+    } finally {
+      setDispatchLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (session) loadWorkers();
-  }, [session, loadWorkers]);
+    if (session) {
+      loadWorkers();
+      loadDispatches();
+    }
+  }, [session, loadWorkers, loadDispatches]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadWorkers();
+    await Promise.all([loadWorkers(), loadDispatches()]);
     setRefreshing(false);
-  }, [loadWorkers]);
+  }, [loadWorkers, loadDispatches]);
 
   /*
     ============================
@@ -292,11 +381,41 @@ export default function DashboardScreen() {
     ============================
   */
 
-  const stats = useMemo(() => {
+  const workerStats = useMemo(() => {
     const total = workers.length;
     const active = workers.filter((w) => w.is_active).length;
     return { total, active, inactive: total - active };
   }, [workers]);
+
+  const dispatchStats = useMemo(() => {
+    const total = dispatches.length;
+    const submitted = dispatches.filter((d) => d.status === "submitted").length;
+    const reviewed = dispatches.filter((d) => d.status === "reviewed").length;
+    const approved = dispatches.filter((d) => d.status === "approved").length;
+    const rejected = dispatches.filter((d) => d.status === "rejected").length;
+    return { total, submitted, reviewed, approved, rejected };
+  }, [dispatches]);
+
+  const needsAttention = useMemo(() => {
+    return dispatches
+      .filter((d) => d.status === "submitted")
+      .sort(
+        (a, b) =>
+          new Date(b.submitted_at).getTime() -
+          new Date(a.submitted_at).getTime()
+      )
+      .slice(0, 5);
+  }, [dispatches]);
+
+  const recentDispatches = useMemo(() => {
+    return [...dispatches]
+      .sort(
+        (a, b) =>
+          new Date(b.submitted_at).getTime() -
+          new Date(a.submitted_at).getTime()
+      )
+      .slice(0, 5);
+  }, [dispatches]);
 
   const filteredWorkers = useMemo(() => {
     let result = workers;
@@ -313,6 +432,16 @@ export default function DashboardScreen() {
     }
     return result;
   }, [workers, filter, search]);
+
+  /*
+    ============================
+    DISPATCH ROW NAVIGATION
+    ============================
+  */
+
+  function handleDispatchPress(dispatch: Dispatch) {
+    router.push({ pathname: "/dispatch-details", params: { id: dispatch.id } });
+  }
 
   /*
     ============================
@@ -561,11 +690,19 @@ export default function DashboardScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
-        {/* HEADER */}
+        {/* ==============================
+            SECTION 1 — HEADER
+            ============================== */}
         <View style={styles.header}>
           <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>Worker Management</Text>
+            <Text style={styles.headerTitle}>MetalWorker Admin</Text>
+            <Text style={styles.headerSubtitleLine}>
+              Dispatch & Workforce Overview
+            </Text>
             <Text style={styles.headerSub}>
               Signed in as{" "}
               <Text style={styles.headerSubBold}>{adminUsername}</Text>
@@ -576,30 +713,221 @@ export default function DashboardScreen() {
           </Pressable>
         </View>
 
-        {/* DISPATCH NAVIGATION CARD */}
-        <DispatchNavCard onPress={() => router.push("/dispatch")} />
+        {/* ==============================
+            SECTION 2 — OVERVIEW STATISTICS
+            ============================== */}
+        <SectionHeader title="Overview" />
 
-        {/* STATS */}
-        <View style={styles.statsRow}>
+        <View style={styles.overviewGrid}>
           <StatCard
-            title="Total"
-            value={stats.total}
+            title="Total Workers"
+            value={workerStats.total}
             color={theme.colors.primary}
             icon="👥"
           />
           <StatCard
-            title="Active"
-            value={stats.active}
+            title="Active Workers"
+            value={workerStats.active}
             color={theme.colors.success}
             icon="✓"
           />
           <StatCard
-            title="Inactive"
-            value={stats.inactive}
+            title="Total Dispatches"
+            value={dispatchStats.total}
+            color={theme.colors.primary}
+            icon="📦"
+          />
+          <StatCard
+            title="Needs Review"
+            value={dispatchStats.submitted}
+            color="#F59E0B"
+            icon="⏳"
+          />
+          <StatCard
+            title="Approved"
+            value={dispatchStats.approved}
+            color={theme.colors.success}
+            icon="✓"
+          />
+          <StatCard
+            title="Rejected"
+            value={dispatchStats.rejected}
             color={theme.colors.danger}
             icon="✕"
           />
         </View>
+
+        {dispatchLoading && (
+          <View style={styles.inlineLoader}>
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.primary}
+            />
+            <Text style={styles.inlineLoaderText}>
+              Loading dispatch data...
+            </Text>
+          </View>
+        )}
+
+        {dispatchError && !dispatchLoading && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>
+              ⚠ {dispatchError}
+            </Text>
+            <Pressable onPress={loadDispatches}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* ==============================
+            SECTION 3 — NEEDS ATTENTION
+            ============================== */}
+        <SectionHeader
+          title="Needs Attention"
+          subtitle="Dispatches awaiting review"
+        />
+
+        <View style={styles.sectionCard}>
+          {dispatchLoading ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator color={theme.colors.primary} />
+            </View>
+          ) : needsAttention.length === 0 ? (
+            <View style={styles.emptyStateCard}>
+              <Text style={styles.emptyStateIcon}>✓</Text>
+              <Text style={styles.emptyStateTitle}>All Clear</Text>
+              <Text style={styles.emptyStateText}>
+                No dispatches require attention.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {needsAttention.map((d) => (
+                <DispatchRow
+                  key={d.id}
+                  dispatch={d}
+                  onPress={handleDispatchPress}
+                />
+              ))}
+            </>
+          )}
+
+          <Pressable
+            style={styles.viewAllBtn}
+            onPress={() => router.push("/dispatch")}
+          >
+            <Text style={styles.viewAllText}>View All Dispatches →</Text>
+          </Pressable>
+        </View>
+
+        {/* ==============================
+            SECTION 4 — RECENT DISPATCHES
+            ============================== */}
+        <SectionHeader
+          title="Recent Dispatches"
+          subtitle="Latest activity"
+        />
+
+        <View style={styles.sectionCard}>
+          {dispatchLoading ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator color={theme.colors.primary} />
+            </View>
+          ) : recentDispatches.length === 0 ? (
+            <View style={styles.emptyStateCard}>
+              <Text style={styles.emptyStateIcon}>📦</Text>
+              <Text style={styles.emptyStateTitle}>No Dispatches Yet</Text>
+              <Text style={styles.emptyStateText}>
+                Dispatch records will appear here once workers submit them.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {recentDispatches.map((d) => (
+                <DispatchRow
+                  key={d.id}
+                  dispatch={d}
+                  onPress={handleDispatchPress}
+                />
+              ))}
+            </>
+          )}
+
+          <Pressable
+            style={styles.viewAllBtn}
+            onPress={() => router.push("/dispatch")}
+          >
+            <Text style={styles.viewAllText}>View All Dispatches →</Text>
+          </Pressable>
+        </View>
+
+        {/* ==============================
+            SECTION 5 — QUICK ACTIONS
+            ============================== */}
+        <SectionHeader title="Quick Actions" />
+
+        <View style={styles.quickActionsRow}>
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/dispatch")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: theme.colors.primary + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>📦</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>View Dispatches</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => {
+              setAddMessage(null);
+              setAddUsername("");
+              setAddPassword("");
+              setShowAddModal(true);
+            }}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: theme.colors.success + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>+</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Add Worker</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={onRefresh}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#F59E0B" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>↻</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Refresh All</Text>
+          </Pressable>
+        </View>
+
+        {/* ==============================
+            SECTION 6 — WORKER MANAGEMENT
+            ============================== */}
+        <View style={styles.divider} />
+
+        <SectionHeader
+          title="Worker Management"
+          subtitle={`${workerStats.total} Workers`}
+        />
 
         {/* SEARCH & FILTER */}
         <View style={styles.searchSection}>
@@ -675,9 +1003,6 @@ export default function DashboardScreen() {
                 />
               )}
               scrollEnabled={false}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-              }
             />
           )}
         </View>
@@ -847,7 +1172,13 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: theme.textSizes.xl,
     fontWeight: "800",
-    marginBottom: 4,
+    marginBottom: 2,
+  },
+  headerSubtitleLine: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    marginBottom: 6,
   },
   headerSub: {
     color: theme.colors.textMuted,
@@ -859,7 +1190,7 @@ const styles = StyleSheet.create({
   },
   logoutBtn: {
     paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
+    paddingVertical: theme.spacing.xs + 4,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -871,70 +1202,42 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  /* DISPATCH NAV CARD */
-  dispatchCard: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.xl,
-    shadowColor: theme.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  dispatchCardContent: {
+  /* SECTION HEADERS */
+  sectionHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: theme.spacing.md,
+    marginTop: theme.spacing.sm,
   },
-  dispatchCardIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#FFFFFF30",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: theme.spacing.md,
-  },
-  dispatchCardIconText: {
-    fontSize: 28,
-  },
-  dispatchCardText: {
+  sectionHeaderLeft: {
     flex: 1,
   },
-  dispatchCardTitle: {
-    color: "#FFFFFF",
-    fontSize: theme.textSizes.md,
+  sectionTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.lg,
     fontWeight: "700",
-    marginBottom: 2,
   },
-  dispatchCardSubtitle: {
-    color: "#FFFFFFCC",
-    fontSize: theme.textSizes.sm,
+  sectionSubtitle: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+    marginTop: 2,
   },
-  dispatchCardArrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#FFFFFF30",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dispatchCardArrowText: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
+
+  /* OVERVIEW GRID */
+  overviewGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.lg,
   },
 
   /* STATS */
-  statsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.xl,
-    gap: theme.spacing.sm,
-  },
   statCard: {
-    flex: 1,
+    width: "48%" as unknown as number,
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: "47%" as unknown as number,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
@@ -972,11 +1275,194 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
+  /* INLINE LOADER */
+  inlineLoader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
+  },
+  inlineLoaderText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+
+  /* ERROR BANNER */
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: theme.colors.danger + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+  },
+  errorBannerText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  retryText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
+  },
+
+  /* SECTION CARD */
+  sectionCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.xl,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  /* DISPATCH ROW */
+  dispatchRow: {
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  dispatchRowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  dispatchRowInfo: {
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  dispatchWorkerName: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  dispatchMeta: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+  dispatchStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  dispatchStatusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  dispatchDate: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+    marginTop: 2,
+  },
+
+  /* EMPTY STATES */
+  emptyState: { paddingVertical: theme.spacing.xl, alignItems: "center" },
+  emptyStateCard: {
+    alignItems: "center",
+    paddingVertical: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.lg,
+  },
+  emptyStateIcon: {
+    fontSize: 32,
+    marginBottom: theme.spacing.sm,
+  },
+  emptyStateTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  emptyStateText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    textAlign: "center",
+  },
+  emptyText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    textAlign: "center",
+    paddingVertical: theme.spacing.lg,
+  },
+
+  /* VIEW ALL BTN */
+  viewAllBtn: {
+    marginTop: theme.spacing.md,
+    paddingVertical: theme.spacing.sm + 4,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.primary + "15",
+    alignItems: "center",
+  },
+  viewAllText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
+  },
+
+  /* QUICK ACTIONS */
+  quickActionsRow: {
+    flexDirection: "row",
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.xl,
+  },
+  quickActionCard: {
+    flex: 1,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  quickActionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: theme.spacing.sm,
+  },
+  quickActionIconText: {
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  quickActionLabel: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.xs,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+
+  /* DIVIDER */
+  divider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+  },
+
   /* SEARCH & FILTER */
   searchSection: {
     marginBottom: theme.spacing.xl,
   },
-  searchRow: { marginBottom: theme.spacing.md },
   filterRow: {
     flexDirection: "row",
     marginBottom: theme.spacing.md,
@@ -1030,13 +1516,6 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
-  },
-  emptyState: { paddingVertical: theme.spacing.xl, alignItems: "center" },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-    paddingVertical: theme.spacing.lg,
   },
 
   /* WORKER ROW */
