@@ -920,6 +920,104 @@ export default function DashboardScreen() {
         </View>
 
         {/* ==============================
+            SECTION 5B — ADMIN NAVIGATION
+            ============================== */}
+        <View style={styles.divider} />
+
+        <SectionHeader
+          title="Stock"
+          subtitle="Manage stock records"
+        />
+        <View style={styles.quickActionsRow}>
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/stock-owner")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#3B82F6" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>🏠</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Stock by Owner</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/stock-company")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#8B5CF6" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>🏭</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Stock by Company</Text>
+          </Pressable>
+        </View>
+
+        <SectionHeader
+          title="Documents"
+          subtitle="Bills & drawings"
+        />
+        <View style={styles.quickActionsRow}>
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/group-bills")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#F59E0B" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>📄</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Group Bill</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/group-drawings")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: theme.colors.success + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>✏️</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Group Drawing</Text>
+          </Pressable>
+        </View>
+
+        <SectionHeader
+          title="Folders"
+          subtitle="Organize items"
+        />
+        <View style={styles.quickActionsRow}>
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/folders")}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: theme.colors.primary + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>📁</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Manage Folders</Text>
+          </Pressable>
+        </View>
+
+        {/* ==============================
             SECTION 6 — WORKER MANAGEMENT
             ============================== */}
         <View style={styles.divider} />
