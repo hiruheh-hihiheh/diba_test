@@ -108,12 +108,17 @@ export default function DispatchScreen() {
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        setPhotoAsset(asset);
-        setPhotoUri(asset.uri);
-        setErrorMessage(null);
-      }
+if (!result.canceled && result.assets && result.assets.length > 0) {
+  const asset = result.assets[0];
+
+  console.log("PHOTO ASSET:", asset);
+  console.log("PHOTO URI:", asset.uri);
+  console.log("PHOTO FILE:", asset.file);
+
+  setPhotoAsset(asset);
+  setPhotoUri(asset.uri);
+  setErrorMessage(null);
+}
     } catch {
       setErrorMessage(t.camera_error);
     }

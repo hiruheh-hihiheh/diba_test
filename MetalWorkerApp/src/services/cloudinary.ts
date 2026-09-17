@@ -1,3 +1,6 @@
+import { File } from "expo-file-system";
+import { fetch as expoFetch } from "expo/fetch";
+
 export interface CloudinaryUploadResult {
   secureUrl: string;
   publicId: string;
@@ -14,47 +17,53 @@ export async function uploadDispatchPhoto(
   }
 
   const formData = new FormData();
+
   formData.append("upload_preset", uploadPreset);
 
   if (typeof source === "string") {
-    // Native (React Native)
-    formData.append("file", {
-      uri: source,
-      type: "image/jpeg",
-      name: "dispatch-photo.jpg",
-    } as any);
+    // Expo / React Native
+    const file = new File(source);
+
+    if (!file.exists) {
+      throw new Error("Selected image file does not exist");
+    }
+
+    formData.append("file", file);
   } else {
-    // Web (File/Blob object)
+    // Web
     formData.append("file", source, "dispatch-photo.jpg");
   }
 
-  const response = await fetch(
+  const response = await expoFetch(
     `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
     {
       method: "POST",
       body: formData,
-      // IMPORTANT: Do NOT manually set "Content-Type": "multipart/form-data".
-      // The browser/runtime will automatically set it with the correct boundary.
     }
   );
 
   if (!response.ok) {
-    let errorMessage = `HTTP error! status: ${response.status}`;
+    let errorMessage = `Cloudinary upload failed. HTTP status: ${response.status}`;
+
     try {
       const errorData = await response.json();
+
       console.error("Cloudinary error response:", errorData);
+
       if (errorData?.error?.message) {
         errorMessage = errorData.error.message;
       }
     } catch {
-      // Ignore JSON parse errors
+      // Ignore JSON parsing errors.
     }
+
     throw new Error(errorMessage);
   }
 
   const data = await response.json();
 
   if (!data.secure_url || !data.public_id) {
+    console.error("Invalid Cloudinary response:", data);
     throw new Error("Invalid response from Cloudinary");
   }
 
