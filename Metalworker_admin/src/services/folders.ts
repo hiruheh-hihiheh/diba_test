@@ -119,83 +119,146 @@ export async function removeItemFromFolder(
   return { ok: true };
 }
 
+/**
+ * Batch-update positions for folder items.
+ * Uses Promise.all instead of sequential updates (performance fix).
+ */
 export async function reorderFolderItems(
   items: { id: string; position: number }[]
 ): Promise<{ ok: boolean; error?: string }> {
-  for (const item of items) {
-    const { error } = await supabase
-      .from("folder_items")
-      .update({ position: item.position })
-      .eq("id", item.id);
+  const results = await Promise.all(
+    items.map((item) =>
+      supabase
+        .from("folder_items")
+        .update({ position: item.position })
+        .eq("id", item.id)
+    )
+  );
 
-    if (error) return { ok: false, error: error.message };
-  }
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { ok: false, error: failed.error.message };
   return { ok: true };
 }
 
+/* ──────────────────────────────────────────────
+   LABEL HELPERS
+   ────────────────────────────────────────────── */
+
+/** Build a display label for an owner_stock record */
+function buildOwnerStockLabel(data: {
+  folder_no?: string | null;
+  folio_number?: string | null;
+  source_of_metal?: string | null;
+  id?: string;
+}, fallbackId: string): string {
+  let label = `Owner Stock ${data.folder_no || ""}${data.folio_number ? " - " + data.folio_number : ""}`.trim();
+  if (label === "Owner Stock") {
+    label = `Owner Stock (${data.source_of_metal || fallbackId.slice(0, 8)})`;
+  }
+  return label;
+}
+
+/** Build a display label for a company_stock record */
+function buildCompanyStockLabel(data: {
+  folder_no?: string | null;
+  company_name?: string | null;
+  product_name?: string | null;
+  id?: string;
+}, fallbackId: string): string {
+  let label = `Company Stock ${data.folder_no || ""}${data.company_name ? " - " + data.company_name : ""}`.trim();
+  if (label === "Company Stock") {
+    label = `Company Stock (${data.product_name || fallbackId.slice(0, 8)})`;
+  }
+  return label;
+}
+
+/* ──────────────────────────────────────────────
+   BATCHED LABEL RESOLUTION  (fixes N+1 queries)
+   ────────────────────────────────────────────── */
+
 /**
- * Resolve display labels for folder items by looking up the referenced records.
+ * Resolve display labels for folder items using batched queries.
+ *
+ * Instead of one query per item (N+1), this groups items by type and
+ * performs at most 4 parallel queries using `.in("id", [...])`.
  */
 export async function resolveFolderItemLabels(
   items: FolderItem[]
 ): Promise<FolderItemDisplay[]> {
-  const result: FolderItemDisplay[] = [];
+  if (items.length === 0) return [];
 
-  for (const item of items) {
+  // Group item IDs by type
+  const ownerIds = items.filter((i) => i.item_type === "owner_stock").map((i) => i.item_id);
+  const companyIds = items.filter((i) => i.item_type === "company_stock").map((i) => i.item_id);
+  const billIds = items.filter((i) => i.item_type === "bill_group").map((i) => i.item_id);
+  const drawingIds = items.filter((i) => i.item_type === "drawing_group").map((i) => i.item_id);
+
+  // Batch fetch all types in parallel (max 4 queries)
+  const [ownerData, companyData, billData, drawingData] = await Promise.all([
+    ownerIds.length > 0
+      ? supabase
+          .from("owner_stock")
+          .select("id, folder_no, folio_number, source_of_metal")
+          .in("id", ownerIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
+    companyIds.length > 0
+      ? supabase
+          .from("company_stock")
+          .select("id, folder_no, company_name, product_name")
+          .in("id", companyIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
+    billIds.length > 0
+      ? supabase
+          .from("bill_groups")
+          .select("id, name, group_date")
+          .in("id", billIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
+    drawingIds.length > 0
+      ? supabase
+          .from("drawing_groups")
+          .select("id, name, group_date")
+          .in("id", drawingIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
+  ]);
+
+  // Build lookup maps
+  const ownerMap = new Map(ownerData.map((d: any) => [d.id, d]));
+  const companyMap = new Map(companyData.map((d: any) => [d.id, d]));
+  const billMap = new Map(billData.map((d: any) => [d.id, d]));
+  const drawingMap = new Map(drawingData.map((d: any) => [d.id, d]));
+
+  return items.map((item) => {
     let label = `${item.item_type} (${item.item_id.slice(0, 8)})`;
 
-    try {
-      if (item.item_type === "owner_stock") {
-        const { data } = await supabase
-          .from("owner_stock")
-          .select("folder_no, folio_number, source_of_metal")
-          .eq("id", item.item_id)
-          .single();
-        if (data) {
-          label = `Owner Stock ${data.folder_no || ""}${data.folio_number ? " - " + data.folio_number : ""}`.trim();
-          if (label === "Owner Stock") label = `Owner Stock (${data.source_of_metal || item.item_id.slice(0, 8)})`;
-        }
-      } else if (item.item_type === "company_stock") {
-        const { data } = await supabase
-          .from("company_stock")
-          .select("folder_no, company_name, product_name")
-          .eq("id", item.item_id)
-          .single();
-        if (data) {
-          label = `Company Stock ${data.folder_no || ""}${data.company_name ? " - " + data.company_name : ""}`.trim();
-          if (label === "Company Stock") label = `Company Stock (${data.product_name || item.item_id.slice(0, 8)})`;
-        }
-      } else if (item.item_type === "bill_group") {
-        const { data } = await supabase
-          .from("bill_groups")
-          .select("name, group_date")
-          .eq("id", item.item_id)
-          .single();
-        if (data) {
-          label = `Bill Group - ${data.name}`;
-        }
-      } else if (item.item_type === "drawing_group") {
-        const { data } = await supabase
-          .from("drawing_groups")
-          .select("name, group_date")
-          .eq("id", item.item_id)
-          .single();
-        if (data) {
-          label = `Drawing Group - ${data.name}`;
-        }
-      }
-    } catch {
-      // Use fallback label
+    if (item.item_type === "owner_stock") {
+      const data = ownerMap.get(item.item_id);
+      if (data) label = buildOwnerStockLabel(data, item.item_id);
+    } else if (item.item_type === "company_stock") {
+      const data = companyMap.get(item.item_id);
+      if (data) label = buildCompanyStockLabel(data, item.item_id);
+    } else if (item.item_type === "bill_group") {
+      const data = billMap.get(item.item_id);
+      if (data) label = `Bill Group - ${data.name}`;
+    } else if (item.item_type === "drawing_group") {
+      const data = drawingMap.get(item.item_id);
+      if (data) label = `Drawing Group - ${data.name}`;
     }
 
-    result.push({ ...item, label });
-  }
-
-  return result;
+    return { ...item, label };
+  });
 }
+
+/* ──────────────────────────────────────────────
+   AVAILABLE ITEMS  (for a specific folder)
+   ────────────────────────────────────────────── */
 
 /**
  * Fetch all items available for adding to a folder (items not already in this folder).
+ * Queries all 4 item types in parallel for performance.
  */
 export async function fetchAvailableItems(
   folderId: string
@@ -208,57 +271,118 @@ export async function fetchAvailableItems(
 
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
+  // Fetch all item types in parallel
+  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+    supabase
+      .from("owner_stock")
+      .select("id, folder_no, folio_number, source_of_metal")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("company_stock")
+      .select("id, folder_no, company_name, product_name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("bill_groups")
+      .select("id, name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("drawing_groups")
+      .select("id, name")
+      .order("created_at", { ascending: false }),
+  ]);
+
   const available: { type: FolderItemType; id: string; label: string }[] = [];
 
-  // Owner stocks
-  const { data: ownerStocks } = await supabase
-    .from("owner_stock")
-    .select("id, folder_no, folio_number, source_of_metal")
-    .order("created_at", { ascending: false });
-
-  for (const s of ownerStocks ?? []) {
+  for (const s of ownerRes.data ?? []) {
     if (!existingIds.has(s.id)) {
-      const label = `Owner Stock ${s.folder_no || ""}${s.folio_number ? " - " + s.folio_number : ""}`.trim() || `Owner Stock (${s.source_of_metal || s.id.slice(0, 8)})`;
-      available.push({ type: "owner_stock", id: s.id, label });
+      available.push({
+        type: "owner_stock",
+        id: s.id,
+        label: buildOwnerStockLabel(s, s.id),
+      });
     }
   }
 
-  // Company stocks
-  const { data: companyStocks } = await supabase
-    .from("company_stock")
-    .select("id, folder_no, company_name, product_name")
-    .order("created_at", { ascending: false });
-
-  for (const s of companyStocks ?? []) {
+  for (const s of companyRes.data ?? []) {
     if (!existingIds.has(s.id)) {
-      const label = `Company Stock ${s.folder_no || ""}${s.company_name ? " - " + s.company_name : ""}`.trim() || `Company Stock (${s.product_name || s.id.slice(0, 8)})`;
-      available.push({ type: "company_stock", id: s.id, label });
+      available.push({
+        type: "company_stock",
+        id: s.id,
+        label: buildCompanyStockLabel(s, s.id),
+      });
     }
   }
 
-  // Bill groups
-  const { data: billGroups } = await supabase
-    .from("bill_groups")
-    .select("id, name")
-    .order("created_at", { ascending: false });
-
-  for (const g of billGroups ?? []) {
+  for (const g of billRes.data ?? []) {
     if (!existingIds.has(g.id)) {
       available.push({ type: "bill_group", id: g.id, label: `Bill Group - ${g.name}` });
     }
   }
 
-  // Drawing groups
-  const { data: drawingGroups } = await supabase
-    .from("drawing_groups")
-    .select("id, name")
-    .order("created_at", { ascending: false });
-
-  for (const g of drawingGroups ?? []) {
+  for (const g of drawingRes.data ?? []) {
     if (!existingIds.has(g.id)) {
       available.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
     }
   }
 
   return available;
+}
+
+/* ──────────────────────────────────────────────
+   ALL ITEMS  (for the folders overview page)
+   ────────────────────────────────────────────── */
+
+/**
+ * Fetch every item across all types (no folder filtering).
+ * Used on the folders overview page where items can be dragged into any folder.
+ */
+export async function fetchAllItems(): Promise<
+  { type: FolderItemType; id: string; label: string }[]
+> {
+  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+    supabase
+      .from("owner_stock")
+      .select("id, folder_no, folio_number, source_of_metal")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("company_stock")
+      .select("id, folder_no, company_name, product_name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("bill_groups")
+      .select("id, name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("drawing_groups")
+      .select("id, name")
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const items: { type: FolderItemType; id: string; label: string }[] = [];
+
+  for (const s of ownerRes.data ?? []) {
+    items.push({
+      type: "owner_stock",
+      id: s.id,
+      label: buildOwnerStockLabel(s, s.id),
+    });
+  }
+
+  for (const s of companyRes.data ?? []) {
+    items.push({
+      type: "company_stock",
+      id: s.id,
+      label: buildCompanyStockLabel(s, s.id),
+    });
+  }
+
+  for (const g of billRes.data ?? []) {
+    items.push({ type: "bill_group", id: g.id, label: `Bill Group - ${g.name}` });
+  }
+
+  for (const g of drawingRes.data ?? []) {
+    items.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
+  }
+
+  return items;
 }

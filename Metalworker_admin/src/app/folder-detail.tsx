@@ -1,9 +1,10 @@
 // src/app/folder-detail.tsx
+// Shows folder contents with drag-and-drop.
+// Header is fixed; FolderContents manages its own scroll + DnD provider.
 
 import { useEffect, useState } from "react";
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -44,25 +45,23 @@ export default function FolderDetailScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backBtnText}>← Back to Folders</Text>
-          </Pressable>
-          <View style={styles.headerRow}>
-            <View style={styles.folderIconWrap}>
-              <Text style={styles.folderIcon}>📁</Text>
-            </View>
-            <Text style={styles.headerTitle} numberOfLines={2}>
-              {folderName || "Folder"}
-            </Text>
+      {/* ── Fixed Header ── */}
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Text style={styles.backBtnText}>← Back to Folders</Text>
+        </Pressable>
+        <View style={styles.headerRow}>
+          <View style={styles.folderIconWrap}>
+            <Text style={styles.folderIcon}>📁</Text>
           </View>
+          <Text style={styles.headerTitle} numberOfLines={2}>
+            {folderName || "Folder"}
+          </Text>
         </View>
+      </View>
 
-        {/* Folder Contents */}
-        <FolderContents folderId={folderId} />
-      </ScrollView>
+      {/* ── Folder Contents (manages its own scroll + drag-drop) ── */}
+      <FolderContents folderId={folderId} />
     </SafeAreaView>
   );
 }
@@ -72,12 +71,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
   header: {
-    marginBottom: theme.spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   backBtn: {
     marginBottom: theme.spacing.md,
