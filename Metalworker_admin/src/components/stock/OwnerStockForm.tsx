@@ -16,6 +16,7 @@ import { theme } from "../../constants/theme";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { StockPhotoUploader } from "./StockPhotoUploader";
+import { DateTimeField } from "./DateTimeField";
 import type { OwnerStock, OwnerStockInput } from "../../types/ownerStock";
 
 interface OwnerStockFormProps {
@@ -61,20 +62,19 @@ export function OwnerStockForm({
     editingItem?.metal_photo_public_id ?? ""
   );
 
-  // Date/time state
   const [recordedTime, setRecordedTime] = useState(
     editingItem?.recorded_time
-      ? new Date(editingItem.recorded_time).toISOString().slice(0, 16)
+      ? new Date(editingItem.recorded_time).toISOString()
       : ""
   );
   const [processingStart, setProcessingStart] = useState(
     editingItem?.processing_start
-      ? new Date(editingItem.processing_start).toISOString().slice(0, 16)
+      ? new Date(editingItem.processing_start).toISOString()
       : ""
   );
   const [processingEnd, setProcessingEnd] = useState(
     editingItem?.processing_end
-      ? new Date(editingItem.processing_end).toISOString().slice(0, 16)
+      ? new Date(editingItem.processing_end).toISOString()
       : ""
   );
 
@@ -226,27 +226,27 @@ export function OwnerStockForm({
 
             {/* Date/Time Fields */}
             <View style={styles.dateSection}>
-              <Text style={styles.dateLabel}>RECORDED TIME</Text>
-              <Input
+              <DateTimeField
+                label="RECORDED TIME"
                 value={recordedTime}
-                onChangeText={setRecordedTime}
-                placeholder="YYYY-MM-DDTHH:MM"
+                onChange={setRecordedTime}
+                placeholder="Select recorded time"
               />
             </View>
 
             <View style={styles.dateSection}>
               <Text style={styles.sectionLabel}>PROCESSING TIMELINE</Text>
-              <Input
+              <DateTimeField
                 label="START"
                 value={processingStart}
-                onChangeText={setProcessingStart}
-                placeholder="YYYY-MM-DDTHH:MM"
+                onChange={setProcessingStart}
+                placeholder="Select start date & time"
               />
-              <Input
+              <DateTimeField
                 label="END"
                 value={processingEnd}
-                onChangeText={setProcessingEnd}
-                placeholder="YYYY-MM-DDTHH:MM"
+                onChange={setProcessingEnd}
+                placeholder="Select end date & time"
               />
             </View>
 
