@@ -186,20 +186,18 @@ Deno.serve(async (req) => {
       body?.password ?? ""
     );
 
-    const roleInput = String(
-      body?.role ?? "worker"
-    )
+    const roleInput = String(body?.role ?? "")
       .trim()
       .toLowerCase();
 
     if (roleInput !== "worker" && roleInput !== "processor") {
       return json(
-        { error: "Invalid role specified." },
+        { error: "A valid role is required: worker or processor." },
         400
       );
     }
     
-    const validatedRole = roleInput;
+    const validatedRole = roleInput as "worker" | "processor";
 
     // =====================================
     // VALIDATE USERNAME
@@ -300,6 +298,8 @@ Deno.serve(async (req) => {
     const email =
       `${username}@metalworker.local`;
 
+    console.log(`Creating user: username=${username}, role=${validatedRole}`);
+
     const {
       data: createdData,
       error: createError,
@@ -379,7 +379,7 @@ Deno.serve(async (req) => {
     // =====================================
 
     console.log(
-      `User created successfully: ${username} (${validatedRole})`
+      `Profile created: username=${username}, role=${validatedRole}`
     );
 
     return json({
