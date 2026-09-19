@@ -157,13 +157,15 @@ function WorkerRow({
   worker,
   onEdit,
   onDelete,
+  isLast,
 }: {
   worker: Profile;
   onEdit: (w: Profile) => void;
   onDelete: (w: Profile) => void;
+  isLast?: boolean;
 }) {
   return (
-    <View style={styles.workerRow}>
+    <View style={[styles.workerRow, isLast && styles.lastWorkerRow]}>
       <View style={styles.workerRowMain}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>
@@ -261,6 +263,59 @@ function SectionHeader({
   );
 }
 
+function FolderSection({
+  title,
+  users,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  title: string;
+  users: Profile[];
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: (w: Profile) => void;
+  onDelete: (w: Profile) => void;
+}) {
+  return (
+    <View style={styles.folderContainer}>
+      <Pressable style={styles.folderHeader} onPress={onToggle}>
+        <View style={styles.folderHeaderLeft}>
+          <Text style={styles.folderIcon}>📁</Text>
+          <Text style={styles.folderTitle}>{title}</Text>
+          <View style={styles.folderCountBadge}>
+            <Text style={styles.folderCountText}>{users.length}</Text>
+          </View>
+        </View>
+        <Text style={styles.folderToggleIcon}>
+          {isExpanded ? "▲" : "▼"}
+        </Text>
+      </Pressable>
+
+      {isExpanded && (
+        <View style={styles.folderContent}>
+          {users.length === 0 ? (
+            <View style={styles.emptyFolder}>
+              <Text style={styles.emptyFolderText}>No {title.toLowerCase()} users yet.</Text>
+            </View>
+          ) : (
+            users.map((item, index) => (
+              <WorkerRow
+                key={item.id}
+                worker={item}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                isLast={index === users.length - 1}
+              />
+            ))
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 /*
   ============================
   MAIN SCREEN
@@ -283,6 +338,9 @@ export default function DashboardScreen() {
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
+
+  const [labourExpanded, setLabourExpanded] = useState(true);
+  const [processorExpanded, setProcessorExpanded] = useState(false);
 
   // Add Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -448,6 +506,9 @@ export default function DashboardScreen() {
     }
     return result;
   }, [workers, filter, search]);
+
+  const labourUsers = useMemo(() => filteredWorkers.filter(w => w.role === "worker"), [filteredWorkers]);
+  const processorUsers = useMemo(() => filteredWorkers.filter(w => w.role === "processor"), [filteredWorkers]);
 
   /*
     ============================
@@ -1134,25 +1195,25 @@ export default function DashboardScreen() {
             <View style={styles.emptyState}>
               <ActivityIndicator color={theme.colors.primary} />
             </View>
-          ) : filteredWorkers.length === 0 ? (
-            <Text style={styles.emptyText}>
-              {search || filter !== "all"
-                ? "No workers match your search or filter."
-                : "No workers yet. Add your first worker above."}
-            </Text>
           ) : (
-            <FlatList
-              data={filteredWorkers}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <WorkerRow
-                  worker={item}
-                  onEdit={openEdit}
-                  onDelete={handleDelete}
-                />
-              )}
-              scrollEnabled={false}
-            />
+            <View style={styles.foldersWrapper}>
+              <FolderSection
+                title="LABOUR"
+                users={labourUsers}
+                isExpanded={labourExpanded}
+                onToggle={() => setLabourExpanded(!labourExpanded)}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+              />
+              <FolderSection
+                title="PROCESSOR"
+                users={processorUsers}
+                isExpanded={processorExpanded}
+                onToggle={() => setProcessorExpanded(!processorExpanded)}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+              />
+            </View>
           )}
         </View>
       </ScrollView>
@@ -1693,6 +1754,71 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
+  },
+
+  /* FOLDER STYLES */
+  foldersWrapper: {
+    gap: theme.spacing.md,
+  },
+  folderContainer: {
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+  },
+  folderHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: theme.spacing.md,
+    backgroundColor: theme.colors.surface,
+  },
+  folderHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+  },
+  folderIcon: {
+    fontSize: 20,
+  },
+  folderTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+  },
+  folderCountBadge: {
+    backgroundColor: theme.colors.primary + "15",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    marginLeft: theme.spacing.xs,
+  },
+  folderCountText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.xs,
+    fontWeight: "700",
+  },
+  folderToggleIcon: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+  },
+  folderContent: {
+    paddingHorizontal: theme.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+  },
+  emptyFolder: {
+    paddingVertical: theme.spacing.lg,
+    alignItems: "center",
+  },
+  emptyFolderText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+  lastWorkerRow: {
+    borderBottomWidth: 0,
   },
 
   /* WORKER ROW */
