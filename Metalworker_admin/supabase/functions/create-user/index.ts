@@ -186,6 +186,21 @@ Deno.serve(async (req) => {
       body?.password ?? ""
     );
 
+    const roleInput = String(
+      body?.role ?? "worker"
+    )
+      .trim()
+      .toLowerCase();
+
+    if (roleInput !== "worker" && roleInput !== "processor") {
+      return json(
+        { error: "Invalid role specified." },
+        400
+      );
+    }
+    
+    const validatedRole = roleInput;
+
     // =====================================
     // VALIDATE USERNAME
     // =====================================
@@ -198,6 +213,20 @@ Deno.serve(async (req) => {
           error:
             "Username must be 3-30 characters and can only contain letters, numbers, dots, underscores, or hyphens.",
         },
+        400
+      );
+    }
+
+    if (validatedRole === "processor" && !username.endsWith("_processor")) {
+      return json(
+        { error: "Processor usernames must end with _processor." },
+        400
+      );
+    }
+
+    if (validatedRole === "worker" && username.endsWith("_processor")) {
+      return json(
+        { error: "Worker usernames cannot end with _processor." },
         400
       );
     }
@@ -280,7 +309,7 @@ Deno.serve(async (req) => {
       email_confirm: true,
       user_metadata: {
         username,
-        role: "worker",
+        role: validatedRole,
       },
     });
 
@@ -315,7 +344,7 @@ Deno.serve(async (req) => {
         {
           id: workerId,
           username,
-          role: "worker",
+          role: validatedRole,
           is_active: true,
         },
         {
@@ -350,17 +379,17 @@ Deno.serve(async (req) => {
     // =====================================
 
     console.log(
-      `Worker created successfully: ${username}`
+      `User created successfully: ${username} (${validatedRole})`
     );
 
     return json({
       ok: true,
       message:
-        "Worker created successfully.",
+        "User created successfully.",
       worker: {
         id: workerId,
         username,
-        role: "worker",
+        role: validatedRole,
         is_active: true,
       },
     });

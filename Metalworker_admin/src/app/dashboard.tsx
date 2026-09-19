@@ -179,6 +179,21 @@ function WorkerRow({
             <View
               style={[
                 styles.statusBadge,
+                worker.role === "processor" ? { backgroundColor: theme.colors.primary + "20" } : { backgroundColor: "#8B5CF620" }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusText,
+                  worker.role === "processor" ? { color: theme.colors.primary } : { color: "#8B5CF6" }
+                ]}
+              >
+                {worker.role === "processor" ? "PROCESSOR" : "LABOUR"}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.statusBadge,
                 worker.is_active ? styles.statusActive : styles.statusInactive,
               ]}
             >
@@ -273,6 +288,7 @@ export default function DashboardScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [addUsername, setAddUsername] = useState("");
   const [addPassword, setAddPassword] = useState("");
+  const [addRole, setAddRole] = useState<"worker" | "processor">("worker");
   const [addLoading, setAddLoading] = useState(false);
   const [addMessage, setAddMessage] = useState<{
     type: "success" | "error";
@@ -479,9 +495,25 @@ export default function DashboardScreen() {
       return;
     }
 
+    if (addRole === "processor" && !cleanUsername.endsWith("_processor")) {
+      setAddMessage({
+        type: "error",
+        text: "Processor usernames must end with _processor.",
+      });
+      return;
+    }
+
+    if (addRole === "worker" && cleanUsername.endsWith("_processor")) {
+      setAddMessage({
+        type: "error",
+        text: "Worker usernames cannot end with _processor.",
+      });
+      return;
+    }
+
     try {
       setAddLoading(true);
-      const result = await createWorkerUser(cleanUsername, addPassword);
+      const result = await createWorkerUser(cleanUsername, addPassword, addRole);
 
       if (!result.ok) {
         setAddMessage({
@@ -493,10 +525,11 @@ export default function DashboardScreen() {
 
       setAddMessage({
         type: "success",
-        text: `Worker "${cleanUsername}" created successfully.`,
+        text: `User "${cleanUsername}" created successfully.`,
       });
       setAddUsername("");
       setAddPassword("");
+      setAddRole("worker");
       await loadWorkers();
     } catch (error) {
       setAddMessage({
@@ -545,6 +578,24 @@ export default function DashboardScreen() {
 
       const cleanUsername = editUsername.trim().toLowerCase();
       if (cleanUsername !== editingWorker.username.toLowerCase()) {
+        if (editingWorker.role === "processor" && !cleanUsername.endsWith("_processor")) {
+          setEditMessage({
+            type: "error",
+            text: "Processor usernames must end with _processor.",
+          });
+          setEditLoading(false);
+          return;
+        }
+
+        if (editingWorker.role === "worker" && cleanUsername.endsWith("_processor")) {
+          setEditMessage({
+            type: "error",
+            text: "Worker usernames cannot end with _processor.",
+          });
+          setEditLoading(false);
+          return;
+        }
+
         const usernameRes = await updateWorkerUsername(
           editingWorker.id,
           cleanUsername
@@ -559,7 +610,7 @@ export default function DashboardScreen() {
         }
       }
 
-      setEditMessage({ type: "success", text: "Worker updated successfully." });
+      setEditMessage({ type: "success", text: "User updated successfully." });
       await loadWorkers();
 
       setTimeout(() => {
@@ -1139,6 +1190,32 @@ export default function DashboardScreen() {
                 placeholder="Minimum 6 characters"
               />
 
+              <View style={styles.toggleContainer}>
+                <Text style={styles.label}>ROLE</Text>
+                <View style={{ flexDirection: "row", marginTop: 8 }}>
+                  <Pressable
+                    style={[
+                      styles.toggleBtn,
+                      addRole === "worker" ? styles.toggleActive : styles.toggleInactive,
+                      { flex: 1, marginRight: 8 },
+                    ]}
+                    onPress={() => setAddRole("worker")}
+                  >
+                    <Text style={styles.toggleText}>Labour</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.toggleBtn,
+                      addRole === "processor" ? styles.toggleActive : styles.toggleInactive,
+                      { flex: 1 },
+                    ]}
+                    onPress={() => setAddRole("processor")}
+                  >
+                    <Text style={styles.toggleText}>Processor</Text>
+                  </Pressable>
+                </View>
+              </View>
+
               {addMessage && (
                 <Text
                   style={
@@ -1150,7 +1227,7 @@ export default function DashboardScreen() {
               )}
 
               <Button
-                title="Create Worker"
+                title={addRole === "processor" ? "Create Processor" : "Create Labour"}
                 loading={addLoading}
                 onPress={handleCreate}
               />
@@ -1176,7 +1253,9 @@ export default function DashboardScreen() {
             behavior={Platform.OS === "ios" ? "padding" : undefined}
           >
             <ScrollView contentContainerStyle={styles.modalContent}>
-              <Text style={styles.modalTitle}>Edit Worker</Text>
+              <Text style={styles.modalTitle}>
+                Edit {editingWorker?.role === "processor" ? "Processor" : "Labour"}
+              </Text>
 
               <Input
                 label="FULL NAME"

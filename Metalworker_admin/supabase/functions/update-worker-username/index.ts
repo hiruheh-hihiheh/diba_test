@@ -114,14 +114,32 @@ Deno.serve(async (req) => {
     }
 
     const id = String(body?.id ?? "").trim();
+    const newUsername = String(body?.newUsername ?? "")
+      .trim()
+      .toLowerCase();
 
-    if (!id) {
-      return json({ ok: false, error: "Missing 'id' in request body" }, 400);
+    if (!id || !newUsername) {
+      return json({ ok: false, error: "Missing 'id' or 'newUsername' in request body" }, 400);
     }
 
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(id)) {
       return json({ ok: false, error: "Invalid UUID format" }, 400);
+    }
+
+    if (!/^[a-z0-9._-]{3,30}$/.test(newUsername)) {
+      return json(
+        {
+          ok: false,
+          error:
+            "Username must be 3-30 characters and can only contain letters, numbers, dots, underscores, or hyphens.",
+        },
+        400
+      );
+    }
+
+    if (newUsername === "admin") {
+      return json({ ok: false, error: "This username is reserved." }, 400);
     }
 
     // =====================================
@@ -144,29 +162,74 @@ Deno.serve(async (req) => {
     }
 
     if (targetProfile.role === "admin") {
-      return json({ ok: false, error: "Cannot delete an admin account" }, 409);
+      return json({ ok: false, error: "Cannot modify an admin account username." }, 409);
     }
 
-    if (targetProfile.role !== "worker" && targetProfile.role !== "processor") {
-      return json({ ok: false, error: "Can only delete worker or processor accounts" }, 409);
+    if (targetProfile.role === "processor" && !newUsername.endsWith("_processor")) {
+      return json({ ok: false, error: "Processor usernames must end with _processor." }, 400);
+    }
+
+    if (targetProfile.role === "worker" && newUsername.endsWith("_processor")) {
+      return json({ ok: false, error: "Worker usernames cannot end with _processor." }, 400);
     }
 
     // =====================================
-    // DELETE AUTH USER (CASCADES TO PROFILE)
+    // CHECK IF NEW USERNAME EXISTS
     // =====================================
 
-    const { error: deleteError } = await adminClient.auth.admin.deleteUser(id);
+    const { data: existingProfile, error: existingError } = await adminClient
+      .from("profiles")
+      .select("id")
+      .eq("username", newUsername)
+      .neq("id", id)
+      .maybeSingle();
 
-    if (deleteError) {
-      console.error("Delete user error:", deleteError);
-      return json({ ok: false, error: "Failed to delete worker: " + deleteError.message }, 500);
+    if (existingError) {
+      console.error("Username check error:", existingError);
+      return json({ ok: false, error: existingError.message }, 500);
+    }
+
+    if (existingProfile) {
+      return json({ ok: false, error: "Username already exists." }, 409);
+    }
+
+    // =====================================
+    // UPDATE AUTH USER EMAIL AND METADATA
+    // =====================================
+
+    const newEmail = `${newUsername}@metalworker.local`;
+
+    const { error: updateAuthError } = await adminClient.auth.admin.updateUserById(id, {
+      email: newEmail,
+      user_metadata: {
+        username: newUsername,
+      },
+    });
+
+    if (updateAuthError) {
+      console.error("Update auth user error:", updateAuthError);
+      return json({ ok: false, error: "Failed to update auth credentials: " + updateAuthError.message }, 500);
+    }
+
+    // =====================================
+    // UPDATE PROFILE USERNAME
+    // =====================================
+
+    const { error: updateProfileError } = await adminClient
+      .from("profiles")
+      .update({ username: newUsername })
+      .eq("id", id);
+
+    if (updateProfileError) {
+      console.error("Update profile error:", updateProfileError);
+      return json({ ok: false, error: "Failed to update profile username: " + updateProfileError.message }, 500);
     }
 
     // =====================================
     // SUCCESS
     // =====================================
 
-    console.log(`User deleted successfully: ${id} (${targetProfile.role})`);
+    console.log(`Username updated successfully: ${id} to ${newUsername}`);
 
     return json({ ok: true });
 

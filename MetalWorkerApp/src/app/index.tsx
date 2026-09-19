@@ -38,17 +38,25 @@ export default function Index() {
 
 
       if (session) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, is_active")
+          .eq("id", session.user.id)
+          .single();
 
-        router.replace(
-          "/dashboard"
-        );
-
+        if (!profile || !profile.is_active) {
+          await supabase.auth.signOut();
+          router.replace("/login");
+        } else if (profile.role === "processor") {
+          router.replace("/processor-dashboard");
+        } else if (profile.role === "worker") {
+          router.replace("/dashboard");
+        } else {
+          await supabase.auth.signOut();
+          router.replace("/login");
+        }
       } else {
-
-        router.replace(
-          "/login"
-        );
-
+        router.replace("/login");
       }
 
       setLoading(false);

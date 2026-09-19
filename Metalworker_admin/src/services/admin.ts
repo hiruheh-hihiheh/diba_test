@@ -3,14 +3,15 @@ import type { Profile } from "../types/profile";
 
 export async function createWorkerUser(
   username: string,
-  password: string
+  password: string,
+  role: "worker" | "processor" = "worker"
 ): Promise<{ ok: boolean; error?: string }> {
   const { data, error } = await supabase.functions.invoke<{
     ok?: boolean;
     username?: string;
     error?: string;
   }>("create-user", {
-    body: { username, password },
+    body: { username, password, role },
   });
 
   if (error) return { ok: false, error: error.message };
@@ -22,7 +23,7 @@ export async function fetchWorkers(): Promise<Profile[]> {
   const { data, error } = await supabase
     .from("profiles")
     .select("*")
-    .eq("role", "worker")
+    .in("role", ["worker", "processor"])
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);

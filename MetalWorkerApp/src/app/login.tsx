@@ -43,17 +43,51 @@ export default function LoginScreen() {
 
     setLoading(true);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
       email: usernameToEmail(cleanUsername),
       password,
     });
 
-    if (signInError) {
-      const isInvalidCreds = signInError.message
-        .toLowerCase()
+    if (signInError || !authData.user) {
+      const isInvalidCreds = signInError?.message
+        ?.toLowerCase()
         .includes("invalid login credentials");
       
       setError(isInvalidCreds ? t.wrong_credentials : t.something_went_wrong);
+      setLoading(false);
+      return;
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role, is_active")
+      .eq("id", authData.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      await supabase.auth.signOut();
+      setError(t.something_went_wrong || "Profile not found.");
+      setLoading(false);
+      return;
+    }
+
+    if (!profile.is_active) {
+      await supabase.auth.signOut();
+      setError(language === "hi" ? "आपका खाता निष्क्रिय है।" : "Your account is inactive.");
+      setLoading(false);
+      return;
+    }
+
+    if (profile.role === "admin") {
+      await supabase.auth.signOut();
+      setError(language === "hi" ? "प्रशासक लॉगिन यहाँ समर्थित नहीं है।" : "Admin login is not supported here.");
+      setLoading(false);
+      return;
+    }
+
+    if (profile.role !== "worker" && profile.role !== "processor") {
+      await supabase.auth.signOut();
+      setError(t.something_went_wrong || "Invalid user role.");
       setLoading(false);
       return;
     }
@@ -64,7 +98,12 @@ export default function LoginScreen() {
       console.warn("Failed to update last_login_at:", err);
     });
 
-    router.replace("/dashboard");
+    if (profile.role === "processor") {
+      router.replace("/processor-dashboard");
+    } else {
+      router.replace("/dashboard");
+    }
+    
     setLoading(false);
   }
 

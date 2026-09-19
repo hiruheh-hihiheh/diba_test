@@ -16,13 +16,6 @@ import { theme } from "../constants/theme";
 import { supabase } from "../services/supabase";
 import { getTranslations, type Language } from "../constants/translations";
 import { ActionCard } from "../components/dashboard/ActionCard";
-import {
-  fetchMyRecentDispatches,
-  getMaterialLabelKey,
-  getStatusLabelKey,
-  getStatusColor,
-  type Dispatch,
-} from "../services/dispatch";
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -34,9 +27,8 @@ export default function DashboardScreen() {
   const [username, setUsername] = useState("Worker");
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Recent Dispatches State
-  const [recentDispatches, setRecentDispatches] = useState<Dispatch[]>([]);
-  const [loadingDispatches, setLoadingDispatches] = useState(true);
+  // State for processor
+  // TODO: add processor specific data if needed
 
   useEffect(() => {
     async function loadUser() {
@@ -61,8 +53,8 @@ export default function DashboardScreen() {
         return;
       }
 
-      if (profile.role === "processor") {
-        router.replace("/processor-dashboard");
+      if (profile.role === "worker") {
+        router.replace("/dashboard");
         return;
       }
 
@@ -70,7 +62,7 @@ export default function DashboardScreen() {
       const fullName = session.user.user_metadata?.full_name;
       const email = session.user.email ?? "";
       const emailUsername = email.split("@")[0];
-      
+
       const displayName = fullName || emailUsername || "Worker";
       setUsername(displayName);
 
@@ -80,30 +72,7 @@ export default function DashboardScreen() {
     loadUser();
   }, [router]);
 
-  // Fetch recent dispatches every time the screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      let isActive = true;
-      
-      async function loadRecent() {
-        setLoadingDispatches(true);
-        const res = await fetchMyRecentDispatches(5);
-        
-        if (isActive && res.ok && res.data) {
-          setRecentDispatches(res.data);
-        }
-        if (isActive) {
-          setLoadingDispatches(false);
-        }
-      }
-      
-      loadRecent();
-      
-      return () => {
-        isActive = false;
-      };
-    }, [])
-  );
+  // Processors may need to fetch their assigned tasks here.
 
   async function handleLogout() {
     try {
@@ -131,35 +100,7 @@ export default function DashboardScreen() {
     );
   }
 
-  // Helper function to format date nicely
-  function formatDispatchDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dispatchDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
-    const timeStr = date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    if (dispatchDate.getTime() === today.getTime()) {
-      return `${language === "hi" ? "आज" : "Today"} • ${timeStr}`;
-    }
-    
-    if (dispatchDate.getTime() === yesterday.getTime()) {
-      return `${language === "hi" ? "कल" : "Yesterday"} • ${timeStr}`;
-    }
-
-const formattedDate = date.toLocaleDateString([], {
-  month: "short",
-  day: "numeric",
-});
-
-return `${formattedDate} • ${timeStr}`;
-  }
 
   if (loading) {
     return (
@@ -231,41 +172,11 @@ return `${formattedDate} • ${timeStr}`;
       </View>
 
       {/* QUICK ACTIONS */}
-      <Text style={styles.sectionTitle}>{t.quick_actions}</Text>
+      <Text style={styles.sectionTitle}>
+        {language === "hi" ? "त्वरित कार्रवाइयां" : "QUICK ACTIONS"}
+      </Text>
 
       <View style={styles.grid}>
-        <ActionCard
-          title={t.new_dispatch}
-          subtitle={t.log_new_sale}
-          icon="🚛"
-          primary
-          onPress={() => router.push("/dispatch")}
-        />
-
-        <ActionCard
-          title={t.my_history}
-          subtitle={t.view_past_logs}
-          icon="📋"
-          onPress={() =>
-            showComingSoon(
-              "Your dispatch history will appear here.",
-              "आपकी पुरानी एंट्री यहाँ दिखाई देंगी।"
-            )
-          }
-        />
-
-        <ActionCard
-          title={t.scan_qr}
-          subtitle={t.scan_truck_item}
-          icon="📷"
-          onPress={() =>
-            showComingSoon(
-              "QR scanning will be available soon.",
-              "QR स्कैन की सुविधा जल्द उपलब्ध होगी।"
-            )
-          }
-        />
-
         <ActionCard
           title={t.profile}
           subtitle={t.settings_info}
@@ -279,63 +190,6 @@ return `${formattedDate} • ${timeStr}`;
         />
       </View>
 
-      {/* ACTIVITY */}
-      <Text style={styles.sectionTitle}>{t.recent_activity}</Text>
-
-      {loadingDispatches ? (
-        <View style={styles.emptyCard}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
-      ) : recentDispatches.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>📭</Text>
-          <Text style={styles.emptyText}>{t.no_recent_dispatches}</Text>
-          <Text style={styles.emptySub}>{t.submitted_logs_appear_here}</Text>
-        </View>
-      ) : (
-        <View style={styles.listCard}>
-          {recentDispatches.map((d, index) => (
-            <View
-              key={d.id}
-              style={[
-                styles.dispatchRow,
-                index === recentDispatches.length - 1 && styles.dispatchRowLast,
-              ]}
-            >
-              <View style={styles.dispatchInfo}>
-                <View style={styles.dispatchHeader}>
-                  <Text
-                    style={styles.dispatchVehicle}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {d.vehicle_number}
-                  </Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(d.status) + "20" }]}>
-                    <Text
-                      style={[styles.statusTextBadge, { color: getStatusColor(d.status) }]}
-                      numberOfLines={1}
-                    >
-                      {t[getStatusLabelKey(d.status)]}
-                    </Text>
-                  </View>
-                </View>
-                <Text
-                  style={styles.dispatchMaterial}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {t[getMaterialLabelKey(d.material_type)]}
-                </Text>
-                <Text style={styles.dispatchDate}>
-                  {formatDispatchDate(d.submitted_at)}
-                </Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
-      
       <View style={{ height: 40 }} />
     </ScrollView>
   );
@@ -538,28 +392,28 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
   },
-  
+
   dispatchRow: {
     paddingVertical: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  
+
   dispatchRowLast: {
     borderBottomWidth: 0,
   },
-  
+
   dispatchInfo: {
     flex: 1,
   },
-  
+
   dispatchHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 6,
   },
-  
+
   dispatchVehicle: {
     fontSize: theme.textSizes.md,
     fontWeight: "700",
@@ -567,26 +421,26 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: theme.spacing.sm,
   },
-  
+
   dispatchMaterial: {
     fontSize: theme.textSizes.sm,
     color: theme.colors.textMuted,
     marginBottom: 4,
   },
-  
+
   dispatchDate: {
     fontSize: theme.textSizes.xs,
     color: theme.colors.textMuted,
     marginTop: 2,
   },
-  
+
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
     maxWidth: 100,
   },
-  
+
   statusTextBadge: {
     fontSize: 10,
     fontWeight: "700",
