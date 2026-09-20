@@ -119,6 +119,54 @@ export async function removeItemFromFolder(
   return { ok: true };
 }
 
+export async function addMultipleItemsToFolder(
+  folderId: string,
+  items: { type: FolderItemType; id: string }[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (items.length === 0) return { ok: true };
+
+  // Get the next position
+  const { data: existing } = await supabase
+    .from("folder_items")
+    .select("position")
+    .eq("folder_id", folderId)
+    .order("position", { ascending: false })
+    .limit(1);
+
+  let nextPosition =
+    existing && existing.length > 0 ? existing[0].position + 1 : 0;
+
+  const insertData = items.map((item) => {
+    const data = {
+      folder_id: folderId,
+      item_type: item.type,
+      item_id: item.id,
+      position: nextPosition,
+    };
+    nextPosition++;
+    return data;
+  });
+
+  const { error } = await supabase.from("folder_items").insert(insertData);
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function removeMultipleItemsFromFolder(
+  folderItemIds: string[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (folderItemIds.length === 0) return { ok: true };
+
+  const { error } = await supabase
+    .from("folder_items")
+    .delete()
+    .in("id", folderItemIds);
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 /**
  * Batch-update positions for folder items.
  * Uses Promise.all instead of sequential updates (performance fix).

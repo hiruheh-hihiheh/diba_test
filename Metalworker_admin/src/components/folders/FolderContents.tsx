@@ -19,9 +19,11 @@ import { theme } from "../../constants/theme";
 import type { FolderItemDisplay, FolderItemType } from "../../types/folder";
 import {
   addItemToFolder,
+  addMultipleItemsToFolder,
   fetchAvailableItems,
   fetchFolderItems,
   removeItemFromFolder,
+  removeMultipleItemsFromFolder,
   reorderFolderItems,
   resolveFolderItemLabels,
 } from "../../services/folders";
@@ -60,6 +62,11 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     id: string;
     label: string;
   } | null>(null);
+
+  // Organization modes
+  const [organizationMode, setOrganizationMode] = useState<"drag" | "select">("drag");
+  const [selectedFolderItemIds, setSelectedFolderItemIds] = useState<Set<string>>(new Set());
+  const [selectedAvailableItemIds, setSelectedAvailableItemIds] = useState<Set<string>>(new Set());
 
   /** Screen-relative Y of each folder item row (for reorder insertion) */
   const itemYPositions = useRef<
@@ -180,6 +187,125 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       }
     } else {
       Alert.alert("Remove Item", "Remove this item from the folder?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: doRemove },
+      ]);
+    }
+  }
+
+  // --- Bulk Handlers ---
+
+  function toggleMode(mode: "drag" | "select") {
+    setOrganizationMode(mode);
+    if (mode === "drag") {
+      setSelectedFolderItemIds(new Set());
+      setSelectedAvailableItemIds(new Set());
+    }
+  }
+
+  function toggleFolderItemSelection(id: string) {
+    setSelectedFolderItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    // Clear available selection
+    setSelectedAvailableItemIds(new Set());
+  }
+
+  function toggleAvailableItemSelection(id: string) {
+    setSelectedAvailableItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    // Clear folder selection
+    setSelectedFolderItemIds(new Set());
+  }
+
+  function toggleSelectAllAvailable() {
+    if (selectedAvailableItemIds.size === available.length && available.length > 0) {
+      setSelectedAvailableItemIds(new Set());
+    } else {
+      setSelectedAvailableItemIds(new Set(available.map(a => a.id)));
+    }
+    setSelectedFolderItemIds(new Set());
+  }
+  
+  function toggleSelectAllFolderItems() {
+    if (selectedFolderItemIds.size === items.length && items.length > 0) {
+      setSelectedFolderItemIds(new Set());
+    } else {
+      setSelectedFolderItemIds(new Set(items.map(i => i.id)));
+    }
+    setSelectedAvailableItemIds(new Set());
+  }
+
+  async function handleBulkAdd() {
+    if (selectedAvailableItemIds.size === 0) return;
+    const itemsToAdd = available.filter(a => selectedAvailableItemIds.has(a.id));
+    
+    // optimistic UI
+    const prevItems = items;
+    const prevAvailable = available;
+    
+    const optimisticAdded = itemsToAdd.map((a, i) => ({
+      id: `temp-${Date.now()}-${i}`,
+      folder_id: folderId,
+      item_type: a.type,
+      item_id: a.id,
+      position: items.length + i,
+      created_at: new Date().toISOString(),
+      label: a.label,
+    }));
+    
+    setItems((prev) => [...prev, ...optimisticAdded]);
+    setAvailable((prev) => prev.filter((a) => !selectedAvailableItemIds.has(a.id)));
+    setSelectedAvailableItemIds(new Set());
+    
+    const res = await addMultipleItemsToFolder(folderId, itemsToAdd.map(a => ({ type: a.type, id: a.id })));
+    if (!res.ok) {
+      setItems(prevItems);
+      setAvailable(prevAvailable);
+      const msg = res.error || "Failed to add items.";
+      if (Platform.OS === "web") window.alert(msg);
+      else Alert.alert("Error", msg);
+      return;
+    }
+    await loadData();
+  }
+
+  async function handleBulkRemove() {
+    if (selectedFolderItemIds.size === 0) return;
+    
+    const doRemove = async () => {
+      // optimistic UI
+      const prevItems = items;
+      setItems((prev) => prev.filter((i) => !selectedFolderItemIds.has(i.id)));
+      
+      const idsToRemove = Array.from(selectedFolderItemIds);
+      setSelectedFolderItemIds(new Set());
+      
+      const res = await removeMultipleItemsFromFolder(idsToRemove);
+      if (!res.ok) {
+        setItems(prevItems);
+        const msg = res.error || "Failed to remove items.";
+        if (Platform.OS === "web") window.alert(msg);
+        else Alert.alert("Error", msg);
+        return;
+      }
+      await loadData();
+    };
+
+    const count = selectedFolderItemIds.size;
+    if (Platform.OS === "web") {
+      if (window.confirm(`Remove ${count} selected items from this folder?`)) {
+        await doRemove();
+      }
+    } else {
+      Alert.alert("Remove Items", `Remove ${count} selected items from this folder?`, [
         { text: "Cancel", style: "cancel" },
         { text: "Remove", style: "destructive", onPress: doRemove },
       ]);
@@ -320,6 +446,45 @@ export function FolderContents({ folderId }: FolderContentsProps) {
               Items in Folder ({items.length})
             </Text>
 
+            <View style={styles.organizeHeader}>
+              <Text style={styles.organizeTitle}>Organize</Text>
+              <View style={styles.modeToggleContainer}>
+                <Pressable
+                  style={[styles.modeBtn, organizationMode === "select" && styles.modeBtnActive]}
+                  onPress={() => toggleMode("select")}
+                >
+                  <Text style={[styles.modeBtnText, organizationMode === "select" && styles.modeBtnTextActive]}>
+                    Select Multiple
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modeBtn, organizationMode === "drag" && styles.modeBtnActive]}
+                  onPress={() => toggleMode("drag")}
+                >
+                  <Text style={[styles.modeBtnText, organizationMode === "drag" && styles.modeBtnTextActive]}>
+                    Drag & Drop
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.sectionHint}>
+                {organizationMode === "select"
+                  ? "Select several items and add them to the folder at once."
+                  : "Long-press and drag to move or reorder one item."}
+              </Text>
+              {organizationMode === "select" && items.length > 0 && (
+                <View style={styles.selectAllHeader}>
+                  <Pressable onPress={toggleSelectAllFolderItems} style={styles.selectAllBtn}>
+                    <Text style={styles.selectAllBtnText}>
+                      {selectedFolderItemIds.size === items.length ? "Deselect All" : "Select All"}
+                    </Text>
+                  </Pressable>
+                  <Text style={styles.selectionCount}>
+                    {selectedFolderItemIds.size} selected
+                  </Text>
+                </View>
+              )}
+            </View>
+
             {items.length === 0 ? (
               <View style={styles.emptyDropZone}>
                 <Text style={styles.emptyDropIcon}>📥</Text>
@@ -341,7 +506,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                       label: item.label,
                       folderItemId: item.id,
                     }}
-                    disabled={item.id.startsWith("temp-")}
+                    disabled={item.id.startsWith("temp-") || organizationMode === "select"}
                   >
                     <View
                       style={styles.itemRow}
@@ -362,10 +527,30 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                         );
                       }}
                     >
-                      <Text style={styles.dragHandle}>⠿</Text>
+                      {organizationMode === "drag" && (
+                        <Text style={styles.dragHandle}>⠿</Text>
+                      )}
+                      
+                      {organizationMode === "select" && (
+                        <Pressable 
+                          style={styles.checkboxContainer}
+                          onPress={() => toggleFolderItemSelection(item.id)}
+                        >
+                          <View style={[styles.checkbox, selectedFolderItemIds.has(item.id) && styles.checkboxChecked]}>
+                            {selectedFolderItemIds.has(item.id) && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                          </View>
+                        </Pressable>
+                      )}
+
                       <Pressable 
                         style={styles.itemInfoContainer}
-                        onPress={() => setPreviewItem({ type: item.item_type, id: item.item_id, label: item.label })}
+                        onPress={() => {
+                          if (organizationMode === "select") {
+                            toggleFolderItemSelection(item.id);
+                          } else {
+                            setPreviewItem({ type: item.item_type, id: item.item_id, label: item.label });
+                          }
+                        }}
                       >
                         <View
                           style={[
@@ -386,35 +571,38 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                           {item.label}
                         </Text>
                       </Pressable>
-                      <View style={styles.itemActions}>
-                        <Pressable
-                          onPress={() => handleMoveItem(index, "up")}
-                          disabled={index === 0}
-                          style={[
-                            styles.moveBtn,
-                            index === 0 && styles.moveBtnDisabled,
-                          ]}
-                        >
-                          <Text style={styles.moveBtnText}>↑</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleMoveItem(index, "down")}
-                          disabled={index === items.length - 1}
-                          style={[
-                            styles.moveBtn,
-                            index === items.length - 1 &&
-                              styles.moveBtnDisabled,
-                          ]}
-                        >
-                          <Text style={styles.moveBtnText}>↓</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleRemoveItem(item.id)}
-                          style={styles.removeBtn}
-                        >
-                          <Text style={styles.removeBtnText}>✕</Text>
-                        </Pressable>
-                      </View>
+                      
+                      {organizationMode === "drag" && (
+                        <View style={styles.itemActions}>
+                          <Pressable
+                            onPress={() => handleMoveItem(index, "up")}
+                            disabled={index === 0}
+                            style={[
+                              styles.moveBtn,
+                              index === 0 && styles.moveBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.moveBtnText}>↑</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleMoveItem(index, "down")}
+                            disabled={index === items.length - 1}
+                            style={[
+                              styles.moveBtn,
+                              index === items.length - 1 &&
+                                styles.moveBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.moveBtnText}>↓</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleRemoveItem(item.id)}
+                            style={styles.removeBtn}
+                          >
+                            <Text style={styles.removeBtnText}>✕</Text>
+                          </Pressable>
+                        </View>
+                      )}
                     </View>
                   </DraggableItem>
                 );
@@ -426,13 +614,28 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         {/* ── Available Items ── */}
         <View style={styles.sectionCard}>
           <View style={styles.availableHeader}>
-            <Text style={styles.sectionTitle}>
-              Available Items ({available.length})
-            </Text>
-            <Text style={styles.sectionHint}>
-              Long-press & drag into folder above
-            </Text>
+            <View>
+              <Text style={styles.sectionTitle}>
+                Available Items ({available.length})
+              </Text>
+              <Text style={styles.sectionHint}>
+                {organizationMode === "select" ? "Select items to add them to the folder." : "Long-press & drag into folder above"}
+              </Text>
+            </View>
           </View>
+          
+          {organizationMode === "select" && available.length > 0 && (
+            <View style={styles.selectAllHeader}>
+              <Pressable onPress={toggleSelectAllAvailable} style={styles.selectAllBtn}>
+                <Text style={styles.selectAllBtnText}>
+                  {selectedAvailableItemIds.size === available.length ? "Deselect All" : "Select All"}
+                </Text>
+              </Pressable>
+              <Text style={styles.selectionCount}>
+                {selectedAvailableItemIds.size} selected
+              </Text>
+            </View>
+          )}
 
           {available.length === 0 ? (
             <Text style={styles.emptyText}>
@@ -449,12 +652,33 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                     id: item.id,
                     label: item.label,
                   }}
+                  disabled={organizationMode === "select"}
                 >
                   <View style={styles.availableRow}>
-                    <Text style={styles.dragHandle}>⠿</Text>
+                    {organizationMode === "drag" && (
+                      <Text style={styles.dragHandle}>⠿</Text>
+                    )}
+                    
+                    {organizationMode === "select" && (
+                      <Pressable 
+                        style={styles.checkboxContainer}
+                        onPress={() => toggleAvailableItemSelection(item.id)}
+                      >
+                        <View style={[styles.checkbox, selectedAvailableItemIds.has(item.id) && styles.checkboxChecked]}>
+                          {selectedAvailableItemIds.has(item.id) && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                        </View>
+                      </Pressable>
+                    )}
+
                     <Pressable 
                       style={styles.itemInfoContainer}
-                      onPress={() => setPreviewItem({ type: item.type, id: item.id, label: item.label })}
+                      onPress={() => {
+                        if (organizationMode === "select") {
+                          toggleAvailableItemSelection(item.id);
+                        } else {
+                          setPreviewItem({ type: item.type, id: item.id, label: item.label });
+                        }
+                      }}
                     >
                       <View
                         style={[
@@ -475,15 +699,17 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                         {item.label}
                       </Text>
                     </Pressable>
-                    {/* Tap fallback: quick-add button */}
-                    <Pressable
-                      onPress={() =>
-                        handleAddItem(item.type, item.id, item.label)
-                      }
-                      style={styles.addBtn}
-                    >
-                      <Text style={styles.addBtnText}>+ Add</Text>
-                    </Pressable>
+                    
+                    {organizationMode === "drag" && (
+                      <Pressable
+                        onPress={() =>
+                          handleAddItem(item.type, item.id, item.label)
+                        }
+                        style={styles.addBtn}
+                      >
+                        <Text style={styles.addBtnText}>+ Add</Text>
+                      </Pressable>
+                    )}
                   </View>
                 </DraggableItem>
               );
@@ -500,6 +726,34 @@ export function FolderContents({ folderId }: FolderContentsProps) {
           itemId={previewItem.id}
           label={previewItem.label}
         />
+      )}
+
+      {(selectedAvailableItemIds.size > 0 || selectedFolderItemIds.size > 0) && (
+        <View style={styles.stickyActionBar}>
+          <View style={styles.stickyActionHeader}>
+            <Text style={styles.stickyActionCount}>
+              {selectedAvailableItemIds.size > 0 ? selectedAvailableItemIds.size : selectedFolderItemIds.size} selected
+            </Text>
+            <Pressable onPress={() => {
+              setSelectedAvailableItemIds(new Set());
+              setSelectedFolderItemIds(new Set());
+            }}>
+              <Text style={styles.stickyActionClear}>Clear</Text>
+            </Pressable>
+          </View>
+          
+          {selectedAvailableItemIds.size > 0 && (
+            <Pressable style={styles.bulkAddBtn} onPress={handleBulkAdd}>
+              <Text style={styles.bulkAddBtnText}>Add to Folder</Text>
+            </Pressable>
+          )}
+          
+          {selectedFolderItemIds.size > 0 && (
+            <Pressable style={styles.bulkRemoveBtn} onPress={handleBulkRemove}>
+              <Text style={styles.bulkRemoveBtnText}>Remove from Folder</Text>
+            </Pressable>
+          )}
+        </View>
       )}
     </DragDropProvider>
   );
@@ -671,5 +925,145 @@ const styles = StyleSheet.create({
     color: theme.colors.success,
     fontSize: theme.textSizes.xs,
     fontWeight: "700",
+  },
+  
+  /* ── Organization Mode ── */
+  organizeHeader: {
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  organizeTitle: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    marginBottom: theme.spacing.sm,
+  },
+  modeToggleContainer: {
+    flexDirection: "row",
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.radius.md,
+    padding: 2,
+    marginBottom: theme.spacing.sm,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: theme.spacing.sm,
+    alignItems: "center",
+    borderRadius: theme.radius.sm,
+  },
+  modeBtnActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  modeBtnText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+  modeBtnTextActive: {
+    color: "#fff",
+  },
+  selectAllHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  selectAllBtn: {
+    paddingVertical: 4,
+  },
+  selectAllBtnText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+  selectionCount: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+  
+  /* ── Checkbox ── */
+  checkboxContainer: {
+    padding: 4,
+    marginRight: 4,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: theme.colors.textMuted,
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  checkboxCheckmark: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "bold",
+    marginTop: -2,
+  },
+  
+  /* ── Sticky Action Bar ── */
+  stickyActionBar: {
+    position: "absolute",
+    bottom: theme.spacing.xl,
+    left: theme.spacing.lg,
+    right: theme.spacing.lg,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing.md,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  stickyActionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: theme.spacing.md,
+  },
+  stickyActionCount: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+  },
+  stickyActionClear: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
+  bulkAddBtn: {
+    backgroundColor: theme.colors.success,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.radius.md,
+    alignItems: "center",
+  },
+  bulkAddBtnText: {
+    color: "#fff",
+    fontSize: theme.textSizes.md,
+    fontWeight: "600",
+  },
+  bulkRemoveBtn: {
+    backgroundColor: theme.colors.danger,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.radius.md,
+    alignItems: "center",
+  },
+  bulkRemoveBtnText: {
+    color: "#fff",
+    fontSize: theme.textSizes.md,
+    fontWeight: "600",
   },
 });
