@@ -24,6 +24,17 @@ export async function fetchDrawingGroups(): Promise<DrawingGroup[]> {
   return (data ?? []) as DrawingGroup[];
 }
 
+export async function fetchDrawingGroup(id: string): Promise<DrawingGroup> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as DrawingGroup;
+}
+
 export async function createDrawingGroup(
   input: DrawingGroupInput
 ): Promise<{ ok: boolean; data?: DrawingGroup; error?: string }> {

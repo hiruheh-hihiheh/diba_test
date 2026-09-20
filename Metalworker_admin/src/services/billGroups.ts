@@ -24,6 +24,17 @@ export async function fetchBillGroups(): Promise<BillGroup[]> {
   return (data ?? []) as BillGroup[];
 }
 
+export async function fetchBillGroup(id: string): Promise<BillGroup> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as BillGroup;
+}
+
 export async function createBillGroup(
   input: BillGroupInput
 ): Promise<{ ok: boolean; data?: BillGroup; error?: string }> {

@@ -15,6 +15,17 @@ export async function fetchOwnerStocks(): Promise<OwnerStock[]> {
   return (data ?? []) as OwnerStock[];
 }
 
+export async function fetchOwnerStock(id: string): Promise<OwnerStock> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as OwnerStock;
+}
+
 export async function createOwnerStock(
   input: OwnerStockInput
 ): Promise<{ ok: boolean; data?: OwnerStock; error?: string }> {

@@ -31,6 +31,7 @@ import type { DrawingGroup, DrawingGroupInput } from "../types/drawingGroup";
 import { Button } from "../components/ui/Button";
 import { DrawingGroupForm } from "../components/documents/DrawingGroupForm";
 import type { GroupPhoto } from "../components/documents/GroupPhotoUploader";
+import { GroupPhotoPreviewModal } from "../components/documents/GroupPhotoPreviewModal";
 
 export default function GroupDrawingsScreen() {
   const [groups, setGroups] = useState<DrawingGroup[]>([]);
@@ -40,6 +41,8 @@ export default function GroupDrawingsScreen() {
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<DrawingGroup | null>(null);
   const [editingPhotos, setEditingPhotos] = useState<GroupPhoto[]>([]);
+
+  const [viewingItem, setViewingItem] = useState<DrawingGroup | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -216,6 +219,12 @@ export default function GroupDrawingsScreen() {
               </View>
               <View style={styles.groupActions}>
                 <Pressable
+                  onPress={() => setViewingItem(item)}
+                  style={styles.actionBtnSecondary}
+                >
+                  <Text style={styles.actionTextSecondary}>View</Text>
+                </Pressable>
+                <Pressable
                   onPress={() => handleEdit(item)}
                   style={styles.actionBtn}
                 >
@@ -244,6 +253,16 @@ export default function GroupDrawingsScreen() {
         editingItem={editingItem}
         existingPhotos={editingPhotos}
       />
+
+      {viewingItem && (
+        <GroupPhotoPreviewModal
+          visible={!!viewingItem}
+          onClose={() => setViewingItem(null)}
+          title={viewingItem.name}
+          date={viewingItem.group_date}
+          fetchPhotos={() => fetchDrawingGroupPhotos(viewingItem.id)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -352,6 +371,19 @@ const styles = StyleSheet.create({
   },
   actionText: {
     color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+  },
+  actionBtnSecondary: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.border,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  actionTextSecondary: {
+    color: theme.colors.text,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
   },

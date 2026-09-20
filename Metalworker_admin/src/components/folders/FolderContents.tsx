@@ -28,6 +28,7 @@ import {
 import { DragDropProvider, type DragData } from "./DragDropProvider";
 import { DraggableItem } from "./DraggableItem";
 import { FolderDropTarget } from "./FolderDropTarget";
+import { ItemPreviewModal } from "./ItemPreviewModal";
 
 /* ─── Constants ─── */
 
@@ -54,6 +55,11 @@ export function FolderContents({ folderId }: FolderContentsProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [previewItem, setPreviewItem] = useState<{
+    type: FolderItemType;
+    id: string;
+    label: string;
+  } | null>(null);
 
   /** Screen-relative Y of each folder item row (for reorder insertion) */
   const itemYPositions = useRef<
@@ -357,24 +363,29 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                       }}
                     >
                       <Text style={styles.dragHandle}>⠿</Text>
-                      <View
-                        style={[
-                          styles.typeBadge,
-                          { backgroundColor: badge.color + "20" },
-                        ]}
+                      <Pressable 
+                        style={styles.itemInfoContainer}
+                        onPress={() => setPreviewItem({ type: item.item_type, id: item.item_id, label: item.label })}
                       >
-                        <Text
+                        <View
                           style={[
-                            styles.typeBadgeText,
-                            { color: badge.color },
+                            styles.typeBadge,
+                            { backgroundColor: badge.color + "20" },
                           ]}
                         >
-                          {badge.label}
+                          <Text
+                            style={[
+                              styles.typeBadgeText,
+                              { color: badge.color },
+                            ]}
+                          >
+                            {badge.label}
+                          </Text>
+                        </View>
+                        <Text style={styles.itemLabel} numberOfLines={1}>
+                          {item.label}
                         </Text>
-                      </View>
-                      <Text style={styles.itemLabel} numberOfLines={1}>
-                        {item.label}
-                      </Text>
+                      </Pressable>
                       <View style={styles.itemActions}>
                         <Pressable
                           onPress={() => handleMoveItem(index, "up")}
@@ -441,24 +452,29 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                 >
                   <View style={styles.availableRow}>
                     <Text style={styles.dragHandle}>⠿</Text>
-                    <View
-                      style={[
-                        styles.typeBadge,
-                        { backgroundColor: badge.color + "20" },
-                      ]}
+                    <Pressable 
+                      style={styles.itemInfoContainer}
+                      onPress={() => setPreviewItem({ type: item.type, id: item.id, label: item.label })}
                     >
-                      <Text
+                      <View
                         style={[
-                          styles.typeBadgeText,
-                          { color: badge.color },
+                          styles.typeBadge,
+                          { backgroundColor: badge.color + "20" },
                         ]}
                       >
-                        {badge.label}
+                        <Text
+                          style={[
+                            styles.typeBadgeText,
+                            { color: badge.color },
+                          ]}
+                        >
+                          {badge.label}
+                        </Text>
+                      </View>
+                      <Text style={styles.availableLabel} numberOfLines={1}>
+                        {item.label}
                       </Text>
-                    </View>
-                    <Text style={styles.availableLabel} numberOfLines={1}>
-                      {item.label}
-                    </Text>
+                    </Pressable>
                     {/* Tap fallback: quick-add button */}
                     <Pressable
                       onPress={() =>
@@ -475,6 +491,16 @@ export function FolderContents({ folderId }: FolderContentsProps) {
           )}
         </View>
       </ScrollView>
+
+      {previewItem && (
+        <ItemPreviewModal
+          visible={!!previewItem}
+          onClose={() => setPreviewItem(null)}
+          itemType={previewItem.type}
+          itemId={previewItem.id}
+          label={previewItem.label}
+        />
+      )}
     </DragDropProvider>
   );
 }
@@ -560,6 +586,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     width: 20,
     textAlign: "center",
+  },
+  itemInfoContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
   },
   typeBadge: {
     paddingHorizontal: 8,
