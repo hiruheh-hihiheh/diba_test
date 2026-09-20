@@ -1,7 +1,7 @@
 // src/app/folders.tsx
 // Folders overview: shows available items (draggable) + folders (drop targets)
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -35,6 +35,8 @@ import {
 } from "../components/folders/DragDropProvider";
 import { DraggableItem } from "../components/folders/DraggableItem";
 import { FolderDropTarget } from "../components/folders/FolderDropTarget";
+import { ItemPreviewModal } from "../components/folders/ItemPreviewModal";
+import { Input } from "../components/ui/Input";
 
 /* ─── Type badge config ─── */
 
@@ -53,11 +55,20 @@ export default function FoldersScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [previewItem, setPreviewItem] = useState<{
+    type: FolderItemType;
+    id: string;
+    label: string;
+  } | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<AdminFolder | null>(
     null
   );
+  const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [itemTypeFilter, setItemTypeFilter] = useState<FolderItemType | "all">("all");
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -70,12 +81,21 @@ export default function FoldersScreen() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [folderList, items] = await Promise.all([
+      const [folderList, items, countsRes] = await Promise.all([
         fetchFolders(),
         fetchAllItems(),
+        supabase.from("folder_items").select("folder_id"),
       ]);
       setFolders(folderList);
       setAllItems(items);
+
+      const counts: Record<string, number> = {};
+      if (countsRes.data) {
+        for (const row of countsRes.data) {
+          counts[row.folder_id] = (counts[row.folder_id] || 0) + 1;
+        }
+      }
+      setFolderCounts(counts);
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Failed to load folders.";
@@ -95,6 +115,18 @@ export default function FoldersScreen() {
     await loadData();
     setRefreshing(false);
   }, [loadData]);
+
+  const filteredItems = useMemo(() => {
+    let result = allItems;
+    if (itemTypeFilter !== "all") {
+      result = result.filter((item) => item.type === itemTypeFilter);
+    }
+    if (searchQuery.trim()) {
+      const lowerQuery = searchQuery.trim().toLowerCase();
+      result = result.filter((item) => item.label.toLowerCase().includes(lowerQuery));
+    }
+    return result;
+  }, [allItems, searchQuery, itemTypeFilter]);
 
   /* ── Folder CRUD (existing, unchanged) ── */
 
@@ -181,6 +213,11 @@ export default function FoldersScreen() {
     }
 
     // Success feedback
+    setFolderCounts((prev) => ({
+      ...prev,
+      [zoneId]: (prev[zoneId] || 0) + 1,
+    }));
+    
     const successMsg = `Added to "${folder.name}"`;
     if (Platform.OS === "web") {
       // Brief non-blocking feedback — using a simple approach
@@ -238,54 +275,105 @@ export default function FoldersScreen() {
                 <View style={styles.sectionCard}>
                   <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>
-                      Available Items ({allItems.length})
+                      Available Items {allItems.length !== filteredItems.length ? `(${filteredItems.length} of ${allItems.length})` : `(${allItems.length})`}
                     </Text>
                     <Text style={styles.sectionHint}>
                       Long-press & drag into a folder
                     </Text>
                   </View>
-
-                  <ScrollView
-                    style={styles.itemsScroll}
-                    nestedScrollEnabled
-                    scrollEnabled={!isDragActive}
-                  >
-                    {allItems.map((item) => {
-                      const badge = TYPE_BADGES[item.type];
-                      return (
-                        <DraggableItem
-                          key={`${item.type}-${item.id}`}
-                          data={{
-                            type: item.type,
-                            id: item.id,
-                            label: item.label,
-                          }}
+                  
+                  <View style={styles.searchSection}>
+                    <View style={styles.searchInputWrapper}>
+                      <Input
+                        placeholder="Search items..."
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        autoCapitalize="none"
+                      />
+                      {searchQuery.length > 0 && (
+                        <Pressable onPress={() => setSearchQuery("")} style={styles.clearSearchBtn}>
+                          <Text style={styles.clearSearchText}>✕</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+                      <View style={styles.filterRow}>
+                        <Pressable
+                          style={[styles.filterBtn, itemTypeFilter === "all" && styles.filterBtnActive]}
+                          onPress={() => setItemTypeFilter("all")}
                         >
-                          <View style={styles.draggableRow}>
-                            <Text style={styles.dragHandle}>⠿</Text>
-                            <View
-                              style={[
-                                styles.typeBadge,
-                                { backgroundColor: badge.color + "20" },
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.typeBadgeText,
-                                  { color: badge.color },
-                                ]}
-                              >
-                                {badge.label}
-                              </Text>
-                            </View>
-                            <Text style={styles.itemLabel} numberOfLines={1}>
-                              {item.label}
+                          <Text style={[styles.filterBtnText, itemTypeFilter === "all" && styles.filterBtnTextActive]}>
+                            All
+                          </Text>
+                        </Pressable>
+                        {Object.entries(TYPE_BADGES).map(([type, badge]) => (
+                          <Pressable
+                            key={type}
+                            style={[styles.filterBtn, itemTypeFilter === type && styles.filterBtnActive]}
+                            onPress={() => setItemTypeFilter(type as FolderItemType)}
+                          >
+                            <Text style={[styles.filterBtnText, itemTypeFilter === type && styles.filterBtnTextActive]}>
+                              {badge.label}
                             </Text>
-                          </View>
-                        </DraggableItem>
-                      );
-                    })}
-                  </ScrollView>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+
+                  {filteredItems.length === 0 ? (
+                    <View style={styles.emptySearchState}>
+                      <Text style={styles.emptySearchTitle}>No matching items</Text>
+                      <Text style={styles.emptySearchText}>Try a different search or filter.</Text>
+                    </View>
+                  ) : (
+                    <ScrollView
+                      style={styles.itemsScroll}
+                      nestedScrollEnabled
+                      scrollEnabled={!isDragActive}
+                    >
+                      {filteredItems.map((item) => {
+                        const badge = TYPE_BADGES[item.type];
+                        return (
+                          <DraggableItem
+                            key={`${item.type}-${item.id}`}
+                            data={{
+                              type: item.type,
+                              id: item.id,
+                              label: item.label,
+                            }}
+                          >
+                            <View style={styles.draggableRow}>
+                              <Text style={styles.dragHandle}>⠿</Text>
+                              <Pressable 
+                                style={styles.itemInfoContainer}
+                                onPress={() => setPreviewItem({ type: item.type, id: item.id, label: item.label })}
+                              >
+                                <View
+                                  style={[
+                                    styles.typeBadge,
+                                    { backgroundColor: badge.color + "20" },
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.typeBadgeText,
+                                      { color: badge.color },
+                                    ]}
+                                  >
+                                    {badge.label}
+                                  </Text>
+                                </View>
+                                <Text style={styles.itemLabel} numberOfLines={1}>
+                                  {item.label}
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </DraggableItem>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
                 </View>
               )}
 
@@ -318,6 +406,9 @@ export default function FoldersScreen() {
                         <View style={styles.folderInfo}>
                           <Text style={styles.folderName} numberOfLines={1}>
                             {folder.name}
+                          </Text>
+                          <Text style={styles.folderCount}>
+                            {folderCounts[folder.id] || 0} item{(folderCounts[folder.id] || 0) !== 1 ? "s" : ""}
                           </Text>
                           <Text style={styles.folderDate}>
                             Created{" "}
@@ -361,6 +452,16 @@ export default function FoldersScreen() {
           )}
         </ScrollView>
       </DragDropProvider>
+
+      {previewItem && (
+        <ItemPreviewModal
+          visible={!!previewItem}
+          onClose={() => setPreviewItem(null)}
+          itemType={previewItem.type}
+          itemId={previewItem.id}
+          label={previewItem.label}
+        />
+      )}
 
       {/* ── Create Modal ── */}
       <CreateFolderModal
@@ -463,6 +564,76 @@ const styles = StyleSheet.create({
     fontSize: theme.textSizes.xs,
     fontStyle: "italic",
   },
+  searchSection: {
+    marginBottom: theme.spacing.md,
+  },
+  searchInputWrapper: {
+    position: "relative",
+    marginBottom: theme.spacing.sm,
+  },
+  clearSearchBtn: {
+    position: "absolute",
+    right: 12,
+    top: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearSearchText: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  filterScroll: {
+    flexGrow: 0,
+  },
+  filterRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingBottom: 4,
+  },
+  filterBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  filterBtnActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  filterBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.colors.textMuted,
+  },
+  filterBtnTextActive: {
+    color: "#fff",
+  },
+  emptySearchState: {
+    alignItems: "center",
+    paddingVertical: theme.spacing.xl,
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.radius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderStyle: "dashed",
+  },
+  emptySearchTitle: {
+    color: theme.colors.text,
+    fontSize: theme.textSizes.md,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  emptySearchText: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+  },
   itemsScroll: {
     maxHeight: 280,
   },
@@ -483,6 +654,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     width: 20,
     textAlign: "center",
+  },
+  itemInfoContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
   },
   typeBadge: {
     paddingHorizontal: 8,
@@ -556,6 +733,12 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: theme.textSizes.md,
     fontWeight: "700",
+    marginBottom: 2,
+  },
+  folderCount: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
     marginBottom: 2,
   },
   folderDate: {

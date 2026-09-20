@@ -455,10 +455,13 @@ export default function DashboardScreen() {
     ============================
   */
 
-  const workerStats = useMemo(() => {
+  const userStats = useMemo(() => {
     const total = workers.length;
+    const labour = workers.filter((w) => w.role === "worker").length;
+    const processor = workers.filter((w) => w.role === "processor").length;
     const active = workers.filter((w) => w.is_active).length;
-    return { total, active, inactive: total - active };
+    const inactive = total - active;
+    return { total, labour, processor, active, inactive };
   }, [workers]);
 
   const dispatchStats = useMemo(() => {
@@ -722,7 +725,7 @@ export default function DashboardScreen() {
 
     if (Platform.OS === "web") {
       const confirmed = window.confirm(
-        `Are you sure you want to delete "${worker.username}"?\n\nThis will permanently remove their account and authentication credentials.`
+        `Delete "${worker.username}"?\n\nThis will permanently remove the user's account and authentication credentials.`
       );
 
       if (confirmed) {
@@ -733,8 +736,8 @@ export default function DashboardScreen() {
     }
 
     Alert.alert(
-      "Delete Worker",
-      `Are you sure you want to delete "${worker.username}"? This will permanently remove their account and authentication credentials.`,
+      `Delete "${worker.username}"?`,
+      `This will permanently remove the user's account and authentication credentials.`,
       [
         {
           text: "Cancel",
@@ -832,16 +835,28 @@ export default function DashboardScreen() {
 
         <View style={styles.overviewGrid}>
           <StatCard
-            title="Total Workers"
-            value={workerStats.total}
-            color={theme.colors.primary}
-            icon="👥"
+            title="Labour"
+            value={userStats.labour}
+            color="#8B5CF6"
+            icon="🛠️"
           />
           <StatCard
-            title="Active Workers"
-            value={workerStats.active}
+            title="Processor"
+            value={userStats.processor}
+            color={theme.colors.primary}
+            icon="⚙️"
+          />
+          <StatCard
+            title="Active Users"
+            value={userStats.active}
             color={theme.colors.success}
             icon="✓"
+          />
+          <StatCard
+            title="Inactive Users"
+            value={userStats.inactive}
+            color={theme.colors.textMuted}
+            icon="✕"
           />
           <StatCard
             title="Total Dispatches"
@@ -1012,7 +1027,7 @@ export default function DashboardScreen() {
             >
               <Text style={styles.quickActionIconText}>+</Text>
             </View>
-            <Text style={styles.quickActionLabel}>Add Worker</Text>
+            <Text style={styles.quickActionLabel}>Add User</Text>
           </Pressable>
 
           <Pressable
@@ -1135,14 +1150,14 @@ export default function DashboardScreen() {
         <View style={styles.divider} />
 
         <SectionHeader
-          title="Worker Management"
-          subtitle={`${workerStats.total} Workers`}
+          title="User Management"
+          subtitle={`${userStats.total} Users`}
         />
 
         {/* SEARCH & FILTER */}
         <View style={styles.searchSection}>
           <Input
-            placeholder="Search workers..."
+            placeholder="Search users..."
             value={search}
             onChangeText={setSearch}
             autoCapitalize="none"
@@ -1168,7 +1183,7 @@ export default function DashboardScreen() {
           </View>
 
           <Button
-            title="+ Add New Worker"
+            title="+ Add New User"
             onPress={() => {
               setAddMessage(null);
               setAddUsername("");
@@ -1182,7 +1197,7 @@ export default function DashboardScreen() {
         <View style={styles.listCard}>
           <View style={styles.workerHeader}>
             <Text style={styles.cardTitle}>
-              Workers ({filteredWorkers.length})
+              Users ({filteredWorkers.length})
             </Text>
             <Pressable onPress={onRefresh} disabled={refreshing}>
               <Text style={styles.refreshText}>
@@ -1230,9 +1245,9 @@ export default function DashboardScreen() {
             behavior={Platform.OS === "ios" ? "padding" : undefined}
           >
             <ScrollView contentContainerStyle={styles.modalContent}>
-              <Text style={styles.modalTitle}>Add Worker</Text>
+              <Text style={styles.modalTitle}>Add User</Text>
               <Text style={styles.modalDesc}>
-                Create a new username and password for a worker.
+                Create a new username and password for a Labour or Processor.
               </Text>
 
               <Input
