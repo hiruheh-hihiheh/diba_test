@@ -32,6 +32,7 @@ const TYPE_TITLES: Record<FolderItemType, string> = {
   company_stock: "Company Stock",
   bill_group: "Bill Group",
   drawing_group: "Drawing Group",
+  job: "Job",
 };
 
 export function ItemPreviewModal({

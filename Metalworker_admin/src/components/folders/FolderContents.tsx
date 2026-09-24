@@ -43,6 +43,7 @@ const TYPE_BADGES: Record<FolderItemType, { label: string; color: string }> = {
   company_stock: { label: "Company", color: "#8B5CF6" },
   bill_group: { label: "Bill", color: "#F59E0B" },
   drawing_group: { label: "Drawing", color: "#10B981" },
+  job: { label: "Job", color: "#EF4444" },
 };
 
 const DROP_ZONE_ID = "folder-items";

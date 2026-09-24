@@ -70,6 +70,7 @@ const TYPE_COLORS: Record<FolderItemType, string> = {
   company_stock: "#8B5CF6",
   bill_group: "#F59E0B",
   drawing_group: "#10B981",
+  job: "#EF4444",
 };
 
 const TYPE_LABELS: Record<FolderItemType, string> = {
@@ -77,6 +78,7 @@ const TYPE_LABELS: Record<FolderItemType, string> = {
   company_stock: "Company",
   bill_group: "Bill",
   drawing_group: "Drawing",
+  job: "Job",
 };
 
 /* ─── Constants ─── */

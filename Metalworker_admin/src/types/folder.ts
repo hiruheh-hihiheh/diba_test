@@ -4,7 +4,8 @@ export type FolderItemType =
   | "owner_stock"
   | "company_stock"
   | "bill_group"
-  | "drawing_group";
+  | "drawing_group"
+  | "job";
 
 export interface AdminFolder {
   id: string;

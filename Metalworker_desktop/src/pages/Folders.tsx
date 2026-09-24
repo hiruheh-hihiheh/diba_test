@@ -33,6 +33,7 @@ function getItemIcon(type: FolderItemType) {
     case "company_stock": return <Building2 size={16} className="text-primary" />;
     case "bill_group": return <FileText size={16} className="text-warning" />;
     case "drawing_group": return <PenTool size={16} className="text-success" />;
+    case "job": return <Package size={16} className="text-red-500" />;
   }
 }
 
@@ -42,6 +43,7 @@ function getItemTypeLabel(type: FolderItemType) {
     case "company_stock": return "Company Stock";
     case "bill_group": return "Bill Group";
     case "drawing_group": return "Drawing Group";
+    case "job": return "Job";
   }
 }
 
