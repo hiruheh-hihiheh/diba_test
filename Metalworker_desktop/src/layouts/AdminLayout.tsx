@@ -35,7 +35,7 @@ function AdminLayoutInner() {
       <Sidebar />
 
       <div
-        className="transition-all duration-300 ease-in-out"
+        className="transition-[margin-left] duration-300 ease-in-out"
         style={{ marginLeft: collapsed ? 80 : 280 }}
       >
         <TopBar />

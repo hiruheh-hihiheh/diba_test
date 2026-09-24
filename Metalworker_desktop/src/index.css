@@ -29,39 +29,40 @@
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
 }
 
-/* ── BASE RESETS ─────────────────────────── */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  /* ── BASE RESETS ─────────────────────────── */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html {
-  font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: var(--color-bg);
-  color: var(--color-text);
-}
+  html {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+  }
 
-body {
-  min-height: 100vh;
-  background-color: var(--color-bg);
-}
+  body {
+    min-height: 100vh;
+    margin: 0;
+    background-color: var(--color-bg);
+  }
 
-#root {
-  min-height: 100vh;
-}
+  #root {
+    min-height: 100vh;
+  }
 
-/* ── TYPOGRAPHY SCALE ────────────────────── */
-h1 { font-size: 1.75rem; line-height: 1.3; font-weight: 800; letter-spacing: -0.02em; }
-h2 { font-size: 1.375rem; line-height: 1.35; font-weight: 700; letter-spacing: -0.01em; }
-h3 { font-size: 1.125rem; line-height: 1.4; font-weight: 700; }
-p  { font-size: 0.9375rem; line-height: 1.6; }
+  /* ── TYPOGRAPHY SCALE ────────────────────── */
+  h1 { font-size: 1.75rem; line-height: 1.3; font-weight: 800; letter-spacing: -0.02em; }
+  h2 { font-size: 1.375rem; line-height: 1.35; font-weight: 700; letter-spacing: -0.01em; }
+  h3 { font-size: 1.125rem; line-height: 1.4; font-weight: 700; }
+  p  { font-size: 0.9375rem; line-height: 1.6; }
+}
 
 /* ── SCROLLBAR ───────────────────────────── */
 ::-webkit-scrollbar {
@@ -140,26 +141,28 @@ th {
   100% { background-position: 200% 0; }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out both;
-}
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out both;
+  }
 
-.animate-slide-in-left {
-  animation: slideInLeft 0.4s ease-out both;
-}
+  .animate-slide-in-left {
+    animation: slideInLeft 0.4s ease-out both;
+  }
 
-.animate-slide-in-right {
-  animation: slideInRight 0.4s ease-out both;
-}
+  .animate-slide-in-right {
+    animation: slideInRight 0.4s ease-out both;
+  }
 
-.animate-scale-in {
-  animation: scaleIn 0.25s ease-out both;
-}
+  .animate-scale-in {
+    animation: scaleIn 0.25s ease-out both;
+  }
 
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
+  .animate-spin {
+    animation: spin 1s linear infinite;
+  }
 
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
 }

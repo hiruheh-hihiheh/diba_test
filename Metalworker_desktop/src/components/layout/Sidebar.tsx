@@ -92,7 +92,7 @@ export default function Sidebar() {
         fixed left-0 top-0 bottom-0 z-40
         flex flex-col
         bg-surface border-r border-border
-        transition-all duration-300 ease-in-out
+        transition-[width] duration-300 ease-in-out
         ${collapsed ? "w-[80px]" : "w-[280px]"}
       `}
     >
@@ -132,7 +132,7 @@ export default function Sidebar() {
                     title={collapsed ? item.label : undefined}
                     className={`
                       w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl
-                      text-[14px] font-semibold transition-all duration-200
+                      text-[14px] font-semibold transition-colors duration-200
                       cursor-pointer
                       ${
                         active
@@ -163,7 +163,7 @@ export default function Sidebar() {
             w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl
             text-[14px] font-semibold text-text-muted
             hover:text-text hover:bg-surface-hover
-            transition-all duration-200 cursor-pointer
+            transition-colors duration-200 cursor-pointer
             ${collapsed ? "justify-center px-0" : ""}
           `}
         >
@@ -178,7 +178,7 @@ export default function Sidebar() {
             w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl
             text-[14px] font-semibold text-danger
             hover:bg-danger-muted
-            transition-all duration-200 cursor-pointer
+            transition-colors duration-200 cursor-pointer
             ${collapsed ? "justify-center px-0" : ""}
           `}
         >
@@ -196,7 +196,7 @@ export default function Sidebar() {
           bg-surface border border-border
           flex items-center justify-center
           text-text-muted hover:text-text hover:bg-surface-hover
-          transition-all duration-200
+          transition-colors duration-200
           shadow-lg cursor-pointer z-50
         "
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}

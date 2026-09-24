@@ -70,7 +70,7 @@ export default function TopBar() {
             bg-surface-hover/50 border border-border
             flex items-center justify-center
             text-text-muted hover:text-text hover:bg-surface-hover
-            transition-all duration-200 cursor-pointer
+            transition-colors duration-200 cursor-pointer
             relative
           "
           title="Notifications"
