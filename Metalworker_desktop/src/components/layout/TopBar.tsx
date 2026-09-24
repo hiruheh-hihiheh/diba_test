@@ -46,13 +46,13 @@ export default function TopBar() {
   const breadcrumbs = getBreadcrumb(location.pathname);
 
   return (
-    <header className="h-[72px] bg-surface/80 backdrop-blur-xl border-b border-border flex items-center justify-between px-8 sticky top-0 z-30">
+    <header className="h-[72px] bg-surface/80 backdrop-blur-xl border-b border-border flex items-center justify-between px-8 sticky top-0 z-30 min-w-0">
       {/* Left side — title + breadcrumb */}
-      <div>
-        <h2 className="text-xl font-bold text-text leading-tight">{title}</h2>
+      <div className="min-w-0 overflow-hidden">
+        <h2 className="text-xl font-bold text-text leading-tight truncate">{title}</h2>
         <div className="flex items-center gap-2 text-[13px] text-text-muted mt-1">
           {breadcrumbs.map((crumb, i) => (
-            <span key={i} className="flex items-center gap-2">
+            <span key={i} className="flex items-center gap-2 whitespace-nowrap">
               {i > 0 && <span className="text-border">/</span>}
               <span className={i === breadcrumbs.length - 1 ? "text-text-secondary" : ""}>
                 {crumb}
@@ -63,7 +63,7 @@ export default function TopBar() {
       </div>
 
       {/* Right side — notifications + profile */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 shrink-0 ml-4">
         <button
           className="
             w-10 h-10 rounded-xl
@@ -79,11 +79,11 @@ export default function TopBar() {
         </button>
 
         <div className="flex items-center gap-3 pl-4 border-l border-border">
-          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
             <User size={18} className="text-primary" />
           </div>
-          <div>
-            <p className="text-[14px] font-bold text-text leading-tight capitalize">
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold text-text leading-tight capitalize truncate">
               {adminUsername}
             </p>
             <p className="text-[11px] text-text-muted font-semibold mt-0.5">

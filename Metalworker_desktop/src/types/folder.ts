@@ -11,6 +11,7 @@ export interface AdminFolder {
   name: string;
   created_at: string;
   updated_at: string;
+  itemCount?: number;
 }
 
 export interface FolderItem {

@@ -35,11 +35,11 @@ function AdminLayoutInner() {
       <Sidebar />
 
       <div
-        className="transition-[margin-left] duration-300 ease-in-out"
+        className="min-w-0 transition-[margin-left] duration-300 ease-in-out"
         style={{ marginLeft: collapsed ? 80 : 280 }}
       >
         <TopBar />
-        <main className="p-8">
+        <main className="p-8 min-w-0">
           <Outlet />
         </main>
       </div>

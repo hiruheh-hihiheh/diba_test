@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Package, Plus, Search, Edit3, Trash2, Loader2, RefreshCw, X,
-  AlertTriangle, Image, Eye,
+  AlertTriangle, Eye,
 } from "lucide-react";
 import { fetchOwnerStocks, createOwnerStock, updateOwnerStock, deleteOwnerStock } from "../services/ownerStock";
 import { uploadPhoto } from "../services/cloudinary";
@@ -223,7 +223,7 @@ export default function OwnerStockPage() {
           className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all" />
       </div>
 
-      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden overflow-x-auto">
         <table className="w-full">
           <thead><tr className="border-b border-border">
             <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Source</th>
