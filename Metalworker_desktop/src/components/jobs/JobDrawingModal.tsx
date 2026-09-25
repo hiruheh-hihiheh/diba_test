@@ -5,6 +5,7 @@ import type { JobDrawing } from "../../types/jobDrawing";
 import { fetchJobDrawings, createJobDrawing, deleteJobDrawing, setPrimaryDrawing } from "../../services/jobDrawings";
 import { uploadPhoto } from "../../services/cloudinary";
 import { getJobTypeLabel } from "../../types/job";
+import AdminModal from "../ui/AdminModal";
 
 interface Props {
   open: boolean;
@@ -109,8 +110,7 @@ export default function JobDrawingModal({ open, onClose, job }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <AdminModal open={open} onClose={onClose} zIndex={60}>
       <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-scale-in">
         
         {/* Header */}
@@ -240,6 +240,6 @@ export default function JobDrawingModal({ open, onClose, job }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </AdminModal>
   );
 }

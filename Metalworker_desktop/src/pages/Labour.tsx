@@ -1,4 +1,5 @@
 // src/pages/Labour.tsx
+import AdminModal from "../components/ui/AdminModal";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -72,14 +73,8 @@ function Modal({
   title: string;
   children: React.ReactNode;
 }) {
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
+    <AdminModal open={open} onClose={onClose}>
       <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-xl animate-scale-in">
         <div className="flex items-center justify-between px-7 py-5 border-b border-border">
           <h3 className="text-[18px] font-bold text-text">{title}</h3>
@@ -92,7 +87,7 @@ function Modal({
         </div>
         <div className="p-7">{children}</div>
       </div>
-    </div>
+    </AdminModal>
   );
 }
 

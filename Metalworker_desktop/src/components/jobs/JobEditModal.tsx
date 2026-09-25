@@ -3,6 +3,7 @@ import { X, Loader2, Save } from "lucide-react";
 import type { Job, JobInput } from "../../types/job";
 import { updateJob } from "../../services/jobs";
 import { getJobTypeLabel } from "../../types/job";
+import AdminModal from "../ui/AdminModal";
 
 interface Props {
   open: boolean;
@@ -62,8 +63,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
   const labelCls = "block text-xs font-semibold text-text-muted uppercase tracking-wider mb-1.5";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <AdminModal open={open} onClose={onClose}>
       <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col animate-scale-in">
         
         {/* Header */}
@@ -188,6 +188,6 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
         </div>
 
       </div>
-    </div>
+    </AdminModal>
   );
 }

@@ -5,6 +5,7 @@ import { parseExcelFile } from "../services/jobImportParser";
 import { processJobImport } from "../services/jobImport";
 import type { ParserResult, ParsedExcelRow, ImportResult } from "../types/jobImport";
 import { getJobTypeLabel } from "../types/job";
+import AdminModal from "../components/ui/AdminModal";
 
 export default function JobImportPage() {
   const [parsing, setParsing] = useState(false);
@@ -349,9 +350,7 @@ export default function JobImportPage() {
       )}
 
       {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowConfirm(false)} />
+      <AdminModal open={showConfirm} onClose={() => setShowConfirm(false)}>
           <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 flex flex-col animate-scale-in">
             <h2 className="text-xl font-extrabold text-text mb-4">Confirm Import</h2>
             <div className="space-y-3 mb-6">
@@ -396,13 +395,11 @@ export default function JobImportPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </AdminModal>
 
       {/* Import Result Modal */}
-      {importResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setImportResult(null)} />
+      <AdminModal open={!!importResult} onClose={() => setImportResult(null)}>
+        {importResult && (
           <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 flex flex-col animate-scale-in text-center">
             <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
               importResult.status === 'failed' ? 'bg-danger/10 text-danger' :
@@ -472,13 +469,12 @@ export default function JobImportPage() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </AdminModal>
 
       {/* Inspect Modal */}
-      {inspectRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setInspectRow(null)} />
+      <AdminModal open={!!inspectRow} onClose={() => setInspectRow(null)}>
+        {inspectRow && (
           <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
               <div>
@@ -509,8 +505,8 @@ export default function JobImportPage() {
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </AdminModal>
     </div>
   );
 }

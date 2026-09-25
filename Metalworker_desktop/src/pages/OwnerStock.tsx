@@ -8,20 +8,19 @@ import {
 import { fetchOwnerStocks, createOwnerStock, updateOwnerStock, deleteOwnerStock } from "../services/ownerStock";
 import { uploadPhoto } from "../services/cloudinary";
 import type { OwnerStock, OwnerStockInput } from "../types/ownerStock";
+import AdminModal from "../components/ui/AdminModal";
 
 function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-scale-in">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-surface z-10">
+    <AdminModal open={open} onClose={onClose}>
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-scale-in flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-surface z-10 shrink-0">
           <h3 className="text-lg font-bold text-text">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"><X size={18} /></button>
         </div>
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </AdminModal>
   );
 }
 

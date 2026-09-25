@@ -26,6 +26,7 @@ import {
   getStatusColor,
 } from "../services/dispatch";
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
+import AdminModal from "../components/ui/AdminModal";
 
 export default function DispatchDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -332,12 +333,9 @@ export default function DispatchDetailsPage() {
       </div>
 
       {/* Full-screen image overlay */}
-      {showFullImage && dispatch.photo_url && (
-        <div
-          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-pointer"
-          onClick={() => setShowFullImage(false)}
-        >
-          <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors cursor-pointer">
+      <AdminModal open={showFullImage && !!dispatch.photo_url} onClose={() => setShowFullImage(false)}>
+        <div className="relative max-w-full max-h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => setShowFullImage(false)} className="absolute -top-12 right-0 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors cursor-pointer">
             <X size={20} />
           </button>
           <img
@@ -347,7 +345,7 @@ export default function DispatchDetailsPage() {
             onClick={(e) => e.stopPropagation()}
           />
         </div>
-      )}
+      </AdminModal>
     </div>
   );
 }

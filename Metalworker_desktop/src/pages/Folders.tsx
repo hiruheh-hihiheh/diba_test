@@ -10,12 +10,11 @@ import {
   fetchAllItems, addFolderItem
 } from "../services/folders";
 import type { AdminFolder, FolderItemType } from "../types/folder";
+import AdminModal from "../components/ui/AdminModal";
 
 function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <AdminModal open={open} onClose={onClose}>
       <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h3 className="text-lg font-bold text-text">{title}</h3>
@@ -23,7 +22,7 @@ function Modal({ open, onClose, title, children }: { open: boolean; onClose: () 
         </div>
         <div className="p-6 overflow-y-auto">{children}</div>
       </div>
-    </div>
+    </AdminModal>
   );
 }
 
