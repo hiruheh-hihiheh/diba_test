@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { normalizeHeader } from "./jobImportParser";
 import type { ParserResult, ImportResult, ImportRowResult } from "../types/jobImport";
 
 export async function processJobImport(
@@ -47,114 +48,152 @@ export async function processJobImport(
   // Track duplicates within the current import
   const seenJobKeys = new Set<string>();
 
-  for (const row of parserResult.rows) {
-    const { normalized, errors, rowNumber, raw } = row;
+  try {
+    for (const row of parserResult.rows) {
+      const { normalized, errors, rowNumber, raw } = row;
 
-    const logError = async (field: string | null, value: string | null, msg: string) => {
-      await supabase.from("job_import_errors").insert({
-        import_id: importId,
-        row_number: rowNumber,
-        field_name: field,
-        raw_value: value,
-        error_message: msg,
-        raw_row: raw
-      });
-    };
+      const logError = async (field: string | null, value: string | null, msg: string): Promise<string | null> => {
+        const { error } = await supabase.from("job_import_errors").insert({
+          import_id: importId,
+          row_number: rowNumber,
+          field_name: field,
+          raw_value: value,
+          error_message: msg,
+          raw_row: raw
+        });
+        return error ? error.message : null;
+      };
 
-    // Pre-import skips
-    if (errors.length > 0) {
-      skippedCount++;
-      rowResults.push({ rowNumber, status: "skipped", message: errors.join(", ") });
-      await logError(null, null, `Parser errors: ${errors.join(", ")}`);
-      continue;
-    }
-
-    if (!normalized.job_no) {
-      skippedCount++;
-      rowResults.push({ rowNumber, status: "skipped", message: "Missing Job No" });
-      await logError("job_no", null, "Missing Job No");
-      continue;
-    }
-
-    if (normalized.job_type !== "labour" && normalized.job_type !== "with_material") {
-      skippedCount++;
-      rowResults.push({ rowNumber, status: "skipped", message: "Unknown job type" });
-      await logError("job_type", String(raw.job_type || raw.labourlwithmaterialbo || ""), `Unknown job type value: ${raw.job_type || raw.labourlwithmaterialbo}`);
-      continue;
-    }
-
-    const jobKey = `${normalized.job_no}-${normalized.job_type}`;
-    
-    if (seenJobKeys.has(jobKey)) {
-      skippedCount++;
-      rowResults.push({ rowNumber, status: "skipped", message: "Duplicate job within current import." });
-      await logError(null, null, "Duplicate job within current import.");
-      continue;
-    }
-
-    seenJobKeys.add(jobKey);
-
-    // Check DB for existing job
-    const { data: existingJob, error: checkError } = await supabase
-      .from("jobs")
-      .select("id")
-      .eq("job_no", normalized.job_no)
-      .eq("job_type", normalized.job_type)
-      .maybeSingle();
-
-    if (checkError) {
-      failedCount++;
-      rowResults.push({ rowNumber, status: "failed", message: "Database error checking existing job" });
-      await logError(null, null, `Database error: ${checkError.message}`);
-      continue;
-    }
-
-    if (existingJob) {
-      skippedCount++;
-      rowResults.push({ rowNumber, status: "skipped", message: "Job already exists in jobs table." });
-      await logError(null, null, "Job already exists in jobs table.");
-      continue;
-    }
-
-    // Prepare insert payload
-    const payload: Record<string, any> = {
-      job_no: normalized.job_no,
-      job_type: normalized.job_type,
-      job_given_date: normalized.job_given_date,
-      po_status: normalized.po_status,
-      tool_description: normalized.tool_description,
-      tool_part: normalized.tool_part,
-      quantity: normalized.quantity,
-      expected_completion_date: normalized.expected_completion_date,
-      expected_completion_note: normalized.expected_completion_note,
-      current_machining_status: normalized.current_machining_status,
-      status: normalized.status || "Pending",
-      drawing_status: normalized.drawing_status,
-      drawing_status_note: normalized.drawing_status_note,
-      model_status: normalized.model_status,
-    };
-    
-    // Convert empty strings to null (except status, we default it to Pending above just in case)
-    Object.keys(payload).forEach(k => {
-      if (payload[k] === "") {
-        payload[k] = null;
+      // Pre-import skips
+      if (errors.length > 0) {
+        skippedCount++;
+        const logErr = await logError(null, null, `Parser errors: ${errors.join(", ")}`);
+        const message = logErr ? `${errors.join(", ")} (Logging failed: ${logErr})` : errors.join(", ");
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
       }
-    });
 
-    const { data: insertedJob, error: insertError } = await supabase
-      .from("jobs")
-      .insert(payload)
-      .select("id")
-      .single();
+      if (!normalized.job_no) {
+        skippedCount++;
+        const logErr = await logError("job_no", null, "Missing Job No");
+        const message = logErr ? `Missing Job No (Logging failed: ${logErr})` : "Missing Job No";
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
+      }
 
-    if (insertError) {
-      failedCount++;
-      rowResults.push({ rowNumber, status: "failed", message: insertError.message });
-      await logError(null, null, `Insert failed: ${insertError.message}`);
-    } else {
-      createdCount++;
-      rowResults.push({ rowNumber, status: "created", jobId: insertedJob.id });
+      if (normalized.job_type !== "labour" && normalized.job_type !== "with_material") {
+        skippedCount++;
+        
+        let rawTypeValue = "";
+        for (const [k, v] of Object.entries(raw)) {
+          const normKey = normalizeHeader(k);
+          if (normKey === "jobtype" || normKey === "labourlwithmaterialbo") {
+            rawTypeValue = String(v);
+            break;
+          }
+        }
+
+        const msg = `Unknown job type value: "${rawTypeValue}"`;
+        const logErr = await logError("job_type", rawTypeValue, msg);
+        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+        
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
+      }
+
+      const jobKey = `${normalized.job_no}-${normalized.job_type}`;
+      
+      if (seenJobKeys.has(jobKey)) {
+        skippedCount++;
+        const msg = "Duplicate job within current import.";
+        const logErr = await logError(null, null, msg);
+        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
+      }
+
+      seenJobKeys.add(jobKey);
+
+      // Check DB for existing job
+      const { data: existingJob, error: checkError } = await supabase
+        .from("jobs")
+        .select("id")
+        .eq("job_no", normalized.job_no)
+        .eq("job_type", normalized.job_type)
+        .maybeSingle();
+
+      if (checkError) {
+        failedCount++;
+        const msg = "Database error checking existing job";
+        const logErr = await logError(null, null, `Database error: ${checkError.message}`);
+        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+        rowResults.push({ rowNumber, status: "failed", message });
+        continue;
+      }
+
+      if (existingJob) {
+        skippedCount++;
+        const msg = "Job already exists in jobs table.";
+        const logErr = await logError(null, null, msg);
+        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
+      }
+
+      // Prepare insert payload
+      const payload: Record<string, any> = {
+        job_no: normalized.job_no,
+        job_type: normalized.job_type,
+        job_given_date: normalized.job_given_date,
+        po_status: normalized.po_status,
+        tool_description: normalized.tool_description,
+        tool_part: normalized.tool_part,
+        quantity: normalized.quantity,
+        expected_completion_date: normalized.expected_completion_date,
+        expected_completion_note: normalized.expected_completion_note,
+        current_machining_status: normalized.current_machining_status,
+        status: normalized.status, // Do not invent statuses
+        drawing_status: normalized.drawing_status,
+        drawing_status_note: normalized.drawing_status_note,
+        model_status: normalized.model_status,
+      };
+      
+      // Convert empty strings to null
+      Object.keys(payload).forEach(k => {
+        if (payload[k] === "") {
+          payload[k] = null;
+        }
+      });
+
+      const { data: insertedJob, error: insertError } = await supabase
+        .from("jobs")
+        .insert(payload)
+        .select("id")
+        .single();
+
+      if (insertError) {
+        if (insertError.code === "23505") { // PostgreSQL unique constraint violation
+          skippedCount++;
+          const msg = "Job already exists in jobs table.";
+          const logErr = await logError(null, null, msg);
+          const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+          rowResults.push({ rowNumber, status: "skipped", message });
+        } else {
+          failedCount++;
+          const msg = `Insert failed: ${insertError.message}`;
+          const logErr = await logError(null, null, msg);
+          const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
+          rowResults.push({ rowNumber, status: "failed", message });
+        }
+      } else {
+        createdCount++;
+        rowResults.push({ rowNumber, status: "created", jobId: insertedJob.id });
+      }
     }
+  } catch (err: any) {
+    // Unexpected exception during processing
+    await supabase.from("job_imports").update({ status: "failed" }).eq("id", importId);
+    throw err; // Re-throw to UI
   }
 
   // Update import record
@@ -165,7 +204,7 @@ export async function processJobImport(
     finalStatus = "partial";
   }
 
-  await supabase
+  const { error: finalUpdateError } = await supabase
     .from("job_imports")
     .update({
       status: finalStatus,
@@ -174,6 +213,10 @@ export async function processJobImport(
       failed_rows: failedCount
     })
     .eq("id", importId);
+
+  if (finalUpdateError) {
+    throw new Error(`Import finalized but updating status failed: ${finalUpdateError.message}`);
+  }
 
   return {
     importId,
