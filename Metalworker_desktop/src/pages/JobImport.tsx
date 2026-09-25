@@ -404,10 +404,27 @@ export default function JobImportPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setImportResult(null)} />
           <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 flex flex-col animate-scale-in text-center">
-            <div className="w-16 h-16 bg-success/10 rounded-full flex items-center justify-center text-success mx-auto mb-4">
-              <CheckCircle2 size={32} />
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
+              importResult.status === 'failed' ? 'bg-danger/10 text-danger' :
+              importResult.status === 'partial' ? 'bg-warning/10 text-warning' :
+              'bg-success/10 text-success'
+            }`}>
+              {importResult.status === 'failed' ? (
+                <AlertTriangle size={32} />
+              ) : importResult.status === 'partial' ? (
+                <Info size={32} />
+              ) : (
+                <CheckCircle2 size={32} />
+              )}
             </div>
-            <h2 className="text-2xl font-extrabold text-text mb-2">Import Completed</h2>
+            <h2 className="text-2xl font-extrabold text-text mb-2">
+              {importResult.status === 'failed' ? 'Import Failed' : importResult.status === 'partial' ? 'Import Partially Completed' : 'Import Completed'}
+            </h2>
+            <p className="text-sm font-medium mb-4">
+              {importResult.status === 'completed' && <span className="text-success">All eligible rows were imported successfully.</span>}
+              {importResult.status === 'partial' && <span className="text-warning">Some rows were created while others were skipped or failed.</span>}
+              {importResult.status === 'failed' && <span className="text-danger">The import did not complete successfully.</span>}
+            </p>
             <p className="text-sm text-text-muted mb-6">
               File: <strong className="text-text">{selectedFile?.name}</strong><br/>
               Sheet: <strong className="text-text">{result?.selectedSheet}</strong>

@@ -192,12 +192,22 @@ export async function processJobImport(
     }
   } catch (err: any) {
     // Unexpected exception during processing
-    await supabase.from("job_imports").update({ status: "failed" }).eq("id", importId);
+    const { error: failureUpdateError } = await supabase.from("job_imports").update({ 
+      status: "failed",
+      created_rows: createdCount,
+      skipped_rows: skippedCount,
+      failed_rows: failedCount
+    }).eq("id", importId);
+
+    if (failureUpdateError) {
+      throw new Error(`Unexpected error: ${err.message}. (Additionally, updating import status failed: ${failureUpdateError.message})`);
+    }
+
     throw err; // Re-throw to UI
   }
 
   // Update import record
-  let finalStatus = "completed";
+  let finalStatus: "completed" | "partial" | "failed" = "completed";
   if (createdCount === 0 && (skippedCount > 0 || failedCount > 0)) {
     finalStatus = "failed";
   } else if (skippedCount > 0 || failedCount > 0) {
@@ -220,6 +230,7 @@ export async function processJobImport(
 
   return {
     importId,
+    status: finalStatus,
     totalRows: parserResult.summary.totalRows,
     createdRows: createdCount,
     updatedRows: 0,

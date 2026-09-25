@@ -48,6 +48,7 @@ export interface ImportRowResult {
 
 export interface ImportResult {
   importId: string;
+  status: "completed" | "partial" | "failed";
   totalRows: number;
   createdRows: number;
   updatedRows: number; // not used in Part 6, kept for completeness
