@@ -49,18 +49,25 @@ function isValidCalendarDate(y: number, m: number, d: number): boolean {
 }
 
 export function parseDate(value: any): string | null {
-  if (!value) return null;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
   
   if (value instanceof Date) {
     if (isNaN(value.getTime())) return null;
-    return value.toISOString().split("T")[0];
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
   
   if (typeof value === "number") {
     // Excel dates are days since 1900.
     const date = new Date(Math.round((value - 25569) * 86400 * 1000));
     if (isNaN(date.getTime())) return null;
-    return date.toISOString().split("T")[0];
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(date.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
   
   const str = String(value).trim();
@@ -131,7 +138,7 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
     const t = String(rawType).toUpperCase().trim();
     if (t === "L" || t === "LABOUR") {
       normalized.job_type = "labour";
-    } else if (t === "BO" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)") {
+    } else if (t === "BO" || t === "M" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)") {
       normalized.job_type = "with_material";
     } else {
       warnings.push(`Unknown job type value: "${rawType}"`);
@@ -142,7 +149,7 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
 
   // 3. Dates
   const rawGivenDate = rowCanonical.job_given_date;
-  if (rawGivenDate !== undefined) {
+  if (rawGivenDate !== undefined && rawGivenDate !== null && String(rawGivenDate).trim() !== "") {
     const d = parseDate(rawGivenDate);
     if (d) {
       normalized.job_given_date = d;
@@ -153,7 +160,7 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
   }
 
   const rawExpDate = rowCanonical.expected_completion_date;
-  if (rawExpDate !== undefined) {
+  if (rawExpDate !== undefined && rawExpDate !== null && String(rawExpDate).trim() !== "") {
     const parsedD = parseDate(rawExpDate);
     if (parsedD) {
       normalized.expected_completion_date = parsedD;
