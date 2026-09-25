@@ -72,7 +72,8 @@ export default function JobsLabourScreen() {
         (j.current_machining_status ?? "").toLowerCase().includes(q) ||
         (j.status ?? "").toLowerCase().includes(q) ||
         (j.drawing_status ?? "").toLowerCase().includes(q) ||
-        (j.model_status ?? "").toLowerCase().includes(q)
+        (j.model_status ?? "").toLowerCase().includes(q) ||
+        (j.expected_completion_note ?? "").toLowerCase().includes(q)
     );
   }, [jobs, search]);
 
@@ -158,7 +159,7 @@ export default function JobsLabourScreen() {
                   </View>
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Exp. Comp:</Text>
-                    <Text style={styles.detailValue}>{item.expected_completion_date || "—"}</Text>
+                    <Text style={styles.detailValue}>{item.expected_completion_date || item.expected_completion_note || "—"}</Text>
                   </View>
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Machining:</Text>

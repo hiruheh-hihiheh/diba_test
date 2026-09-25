@@ -49,7 +49,8 @@ export default function JobsLabourPage() {
       (j.current_machining_status ?? "").toLowerCase().includes(q) ||
       (j.status ?? "").toLowerCase().includes(q) ||
       (j.drawing_status ?? "").toLowerCase().includes(q) ||
-      (j.model_status ?? "").toLowerCase().includes(q)
+      (j.model_status ?? "").toLowerCase().includes(q) ||
+      (j.expected_completion_note ?? "").toLowerCase().includes(q)
     );
   }, [jobs, search]);
 
@@ -136,7 +137,7 @@ export default function JobsLabourPage() {
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.po_status || "—"}</p></td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.tool_description || "—"}{item.tool_part ? ` / ${item.tool_part}` : ""}</p></td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.quantity != null ? item.quantity : "—"}</p></td>
-                  <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.expected_completion_date || "—"}</p></td>
+                  <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.expected_completion_date || item.expected_completion_note || "—"}</p></td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.current_machining_status || "—"}</p></td>
                   <td className="px-5 py-4">
                     <span className="px-2 py-1 bg-surface-hover rounded text-xs text-text">{item.status || "—"}</span>
