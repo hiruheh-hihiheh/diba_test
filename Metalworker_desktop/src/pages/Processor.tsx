@@ -50,27 +50,22 @@ function formatLastLogin(dateStr?: string | null): string {
 
 /* ── MODAL ───────────────────────────────── */
 
-function Modal({
-  open,
-  onClose,
-  title,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-}) {
+function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-xl animate-scale-in flex flex-col max-h-full">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-xl animate-scale-in flex flex-col max-h-[calc(100vh-104px)]">
         <div className="flex items-center justify-between px-7 py-5 border-b border-border shrink-0">
           <h3 className="text-[18px] font-bold text-text">{title}</h3>
           <button onClick={onClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
             <X size={20} />
           </button>
         </div>
-        <div className="p-7 overflow-y-auto flex-1">{children}</div>
+        <div className="p-7 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-3 px-7 py-5 border-t border-border shrink-0 bg-surface rounded-b-2xl">
+            {footer}
+          </div>
+        )}
       </div>
     </AdminModal>
   );
@@ -359,7 +354,14 @@ export default function ProcessorPage() {
       </div>
 
       {/* Add Modal */}
-      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Processor User">
+      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Processor User" footer={
+        <>
+          <button onClick={() => setShowAddModal(false)} className="px-5 py-3 rounded-xl text-[14px] font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
+          <button onClick={handleCreate} disabled={addLoading} className="px-7 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
+            {addLoading && <Loader2 size={14} className="animate-spin" />}Create User
+          </button>
+        </>
+      }>
         <div className="space-y-5">
           <div>
             <label className="block text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] mb-2.5">Username</label>
@@ -382,17 +384,18 @@ export default function ProcessorPage() {
               {addMessage.text}
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button onClick={() => setShowAddModal(false)} className="px-5 py-3 rounded-xl text-[14px] font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
-            <button onClick={handleCreate} disabled={addLoading} className="px-7 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
-              {addLoading && <Loader2 size={14} className="animate-spin" />}Create User
-            </button>
-          </div>
         </div>
       </Modal>
 
       {/* Edit Modal */}
-      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Processor User">
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Processor User" footer={
+        <>
+          <button onClick={() => setShowEditModal(false)} className="px-5 py-3 rounded-xl text-[14px] font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
+          <button onClick={handleEditSave} disabled={editLoading} className="px-7 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
+            {editLoading && <Loader2 size={14} className="animate-spin" />}Save Changes
+          </button>
+        </>
+      }>
         <div className="space-y-5">
           <div>
             <label className="block text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] mb-2.5">Full Name</label>
@@ -417,12 +420,6 @@ export default function ProcessorPage() {
               {editMessage.text}
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button onClick={() => setShowEditModal(false)} className="px-5 py-3 rounded-xl text-[14px] font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
-            <button onClick={handleEditSave} disabled={editLoading} className="px-7 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
-              {editLoading && <Loader2 size={14} className="animate-spin" />}Save Changes
-            </button>
-          </div>
         </div>
       </Modal>
     </div>

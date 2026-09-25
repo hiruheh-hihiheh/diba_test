@@ -13,15 +13,20 @@ import { uploadPhoto } from "../services/cloudinary";
 import type { BillGroup, BillGroupPhoto, BillGroupInput } from "../types/billGroup";
 import AdminModal from "../components/ui/AdminModal";
 
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-full overflow-y-auto animate-scale-in flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-surface z-10 shrink-0">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(100vh-104px)] animate-scale-in flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h3 className="text-lg font-bold text-text">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"><X size={18} /></button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0 bg-surface rounded-b-2xl">
+            {footer}
+          </div>
+        )}
       </div>
     </AdminModal>
   );
@@ -182,19 +187,25 @@ export default function GroupBillsPage() {
       </div>
 
       {/* Add/Edit Modal */}
-      <Modal open={showFormModal} onClose={() => setShowFormModal(false)} title={editingGroup ? "Edit Bill Group" : "Add Bill Group"}>
+      <Modal 
+        open={showFormModal} 
+        onClose={() => setShowFormModal(false)} 
+        title={editingGroup ? "Edit Bill Group" : "Add Bill Group"}
+        footer={
+          <>
+            <button onClick={() => setShowFormModal(false)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
+            <button onClick={handleSave} disabled={formLoading} className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2">
+              {formLoading && <Loader2 size={14} className="animate-spin" />}{editingGroup ? "Save" : "Create"}
+            </button>
+          </>
+        }
+      >
         <div className="space-y-4">
           <div><label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-1.5">Name</label>
             <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="Group name" className={inputCls} /></div>
           <div><label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-1.5">Date</label>
             <input type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} className={inputCls} /></div>
           {formMessage && <div className={`px-4 py-3 rounded-xl text-sm animate-scale-in ${formMessage.type === "error" ? "bg-danger-muted border border-danger/20 text-danger" : "bg-success-muted border border-success/20 text-success"}`}>{formMessage.text}</div>}
-          <div className="flex justify-end gap-2 pt-2">
-            <button onClick={() => setShowFormModal(false)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
-            <button onClick={handleSave} disabled={formLoading} className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2">
-              {formLoading && <Loader2 size={14} className="animate-spin" />}{editingGroup ? "Save" : "Create"}
-            </button>
-          </div>
         </div>
       </Modal>
 

@@ -64,7 +64,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
 
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-full flex flex-col animate-scale-in">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[calc(100vh-104px)] flex flex-col animate-scale-in">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
@@ -78,7 +78,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
         </div>
 
         {/* Form Body */}
-        <div className="p-6 overflow-y-auto">
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto">
           <form id="job-edit-form" onSubmit={handleSubmit} className="space-y-6">
             {error && (
               <div className="px-4 py-3 rounded-xl bg-danger-muted border border-danger/20 text-danger text-sm">
