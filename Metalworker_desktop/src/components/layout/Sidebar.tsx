@@ -11,6 +11,7 @@ import {
   FileText,
   PenTool,
   FolderOpen,
+  Briefcase,
   Settings,
   LogOut,
   ChevronLeft,
@@ -44,6 +45,13 @@ const navSections: NavSection[] = [
     items: [
       { label: "Labour", icon: <Users size={22} />, path: "/labour" },
       { label: "Processor", icon: <UserCog size={22} />, path: "/processor" },
+    ],
+  },
+  {
+    title: "JOBS",
+    items: [
+      { label: "Labour", icon: <Briefcase size={22} />, path: "/jobs/labour" },
+      { label: "With Material (BO)", icon: <Briefcase size={22} />, path: "/jobs/with-material" },
     ],
   },
   {

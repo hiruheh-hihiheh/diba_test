@@ -1052,6 +1052,42 @@ export default function DashboardScreen() {
         <View style={styles.divider} />
 
         <SectionHeader
+          title="Jobs"
+          subtitle="Manage work orders"
+        />
+        <View style={styles.quickActionsRow}>
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/jobs-labour" as any)}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#F59E0B" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>🧰</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>Labour Jobs</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.quickActionCard}
+            onPress={() => router.push("/jobs-with-material" as any)}
+          >
+            <View
+              style={[
+                styles.quickActionIcon,
+                { backgroundColor: "#10B981" + "20" },
+              ]}
+            >
+              <Text style={styles.quickActionIconText}>🔩</Text>
+            </View>
+            <Text style={styles.quickActionLabel}>With Material (BO)</Text>
+          </Pressable>
+        </View>
+
+        <SectionHeader
           title="Stock"
           subtitle="Manage stock records"
         />

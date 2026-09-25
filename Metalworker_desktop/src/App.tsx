@@ -16,6 +16,8 @@ import GroupDrawingsPage from "./pages/GroupDrawings";
 import FoldersPage from "./pages/Folders";
 import FolderDetailPage from "./pages/FolderDetail";
 import PlaceholderPage from "./pages/Placeholder";
+import JobsLabourPage from "./pages/JobsLabour";
+import JobsWithMaterialPage from "./pages/JobsWithMaterial";
 
 export default function App() {
   return (
@@ -35,6 +37,10 @@ export default function App() {
             <Route path="/processor" element={<ProcessorPage />} />
             <Route path="/dispatches" element={<DispatchesPage />} />
             <Route path="/dispatches/:id" element={<DispatchDetailsPage />} />
+
+            {/* Jobs */}
+            <Route path="/jobs/labour" element={<JobsLabourPage />} />
+            <Route path="/jobs/with-material" element={<JobsWithMaterialPage />} />
 
             {/* Phase 3 — Inventory */}
             <Route path="/stock-owner" element={<OwnerStockPage />} />
