@@ -8,7 +8,7 @@ export interface Job {
   po_status: string | null;
   tool_description: string | null;
   tool_part: string | null;
-  quantity: number | null;
+  quantity: string | null;
   expected_completion_date: string | null;
   expected_completion_note: string | null;
   current_machining_status: string | null;
