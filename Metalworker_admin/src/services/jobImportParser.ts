@@ -1,4 +1,4 @@
-import type { ParsedExcelRow, ParserResult, ImportPreviewSummary } from "../types/jobImport";
+import type { ParsedExcelRow, ImportPreviewSummary } from "../types/jobImport";
 
 export function normalizeHeader(header: string): string {
   return header
@@ -7,22 +7,64 @@ export function normalizeHeader(header: string): string {
     .replace(/[^a-z0-9]/g, ""); // strip all punctuation and spaces
 }
 
+const HEADER_ALIASES: Record<string, string[]> = {
+  job_no: ["srno"],
+  job_type: ["labourlwithmaterialbo", "jobtype"],
+  job_given_date: ["jobgivendate"],
+  po_status: ["postatus", "postatuspendingornumber"],
+  tool_description: ["tooldisc", "tooldescription"],
+  tool_part: ["toolpart"],
+  quantity: ["quantity"],
+  expected_completion_date: ["expectedcompdate", "expectedcompletiondate"],
+  current_machining_status: ["currentmcingstatus", "machiningstatus"],
+  status: ["statusiporcomp", "status"],
+  drawing_status: ["drgstatus"],
+  model_status: ["modelstatus"]
+};
+
+// Create a reverse lookup: normalized -> canonical
+const NORMALIZED_TO_CANONICAL: Record<string, string> = {};
+for (const [canonical, aliases] of Object.entries(HEADER_ALIASES)) {
+  for (const alias of aliases) {
+    NORMALIZED_TO_CANONICAL[alias] = canonical;
+  }
+}
+
 export function parseDate(value: any): string | null {
   if (!value) return null;
+  
   if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
     return value.toISOString().split("T")[0];
   }
+  
   if (typeof value === "number") {
+    // Excel dates are days since 1900.
     const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+    if (isNaN(date.getTime())) return null;
     return date.toISOString().split("T")[0];
   }
+  
   const str = String(value).trim();
-  const dateRegex = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/;
-  const match = str.match(dateRegex);
-  if (match) {
-    const [_, y, m, d] = match;
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  
+  // YYYY-MM-DD or YYYY/MM/DD
+  const yyyyMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (yyyyMatch) {
+    const [_, y, m, d] = yyyyMatch;
+    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
   }
+
+  // DD-MM-YYYY or DD/MM/YYYY
+  const ddMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (ddMatch) {
+    const [_, d, m, y] = ddMatch;
+    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+  }
+  
   return null;
 }
 
@@ -46,16 +88,21 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
   const warnings: string[] = [];
   const errors: string[] = [];
 
-  const rowNorm: Record<string, any> = {};
+  // Create a canonical lookup for the raw row
+  const rowCanonical: Record<string, any> = {};
   for (const [key, val] of Object.entries(raw)) {
-    rowNorm[normalizeHeader(key)] = val;
+    const norm = normalizeHeader(key);
+    const canonical = NORMALIZED_TO_CANONICAL[norm];
+    if (canonical) {
+      rowCanonical[canonical] = val;
+    }
   }
 
   // 1. Job No
-  if (rowNorm["srno"] !== undefined) normalized.job_no = String(rowNorm["srno"]).trim();
+  if (rowCanonical.job_no !== undefined) normalized.job_no = String(rowCanonical.job_no).trim();
 
   // 2. Job Type
-  const rawType = rowNorm["labourlwithmaterialbo"] ?? rowNorm["jobtype"];
+  const rawType = rowCanonical.job_type;
   if (rawType !== undefined) {
     const t = String(rawType).toUpperCase().trim();
     if (t === "L" || t === "LABOUR") {
@@ -70,46 +117,42 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
   }
 
   // 3. Dates
-  if (rowNorm["jobgivendate"] !== undefined) {
-    const d = parseDate(rowNorm["jobgivendate"]);
+  const rawGivenDate = rowCanonical.job_given_date;
+  if (rawGivenDate !== undefined) {
+    const d = parseDate(rawGivenDate);
     if (d) {
       normalized.job_given_date = d;
     } else {
-      normalized.job_given_date = String(rowNorm["jobgivendate"]).trim(); 
-      warnings.push("Job Given Date might not be a valid date format.");
+      normalized.job_given_date = null;
+      warnings.push("Job Given Date is not a valid date and will require review.");
     }
   }
 
-  const expDateRaw = rowNorm["expectedcompdate"] ?? rowNorm["expectedcompletiondate"];
-  if (expDateRaw !== undefined) {
-    const parsedD = parseDate(expDateRaw);
+  const rawExpDate = rowCanonical.expected_completion_date;
+  if (rawExpDate !== undefined) {
+    const parsedD = parseDate(rawExpDate);
     if (parsedD) {
       normalized.expected_completion_date = parsedD;
     } else {
-      normalized.expected_completion_note = String(expDateRaw).trim();
+      normalized.expected_completion_note = String(rawExpDate).trim();
     }
   }
 
   // 4. Strings
-  if (rowNorm["postatus"] !== undefined) normalized.po_status = String(rowNorm["postatus"]).trim();
-  if (rowNorm["tooldisc"] !== undefined || rowNorm["tooldescription"] !== undefined) {
-    normalized.tool_description = String(rowNorm["tooldisc"] ?? rowNorm["tooldescription"]).trim();
-  }
-  if (rowNorm["toolpart"] !== undefined) normalized.tool_part = String(rowNorm["toolpart"]).trim();
+  if (rowCanonical.po_status !== undefined) normalized.po_status = String(rowCanonical.po_status).trim();
+  if (rowCanonical.tool_description !== undefined) normalized.tool_description = String(rowCanonical.tool_description).trim();
+  if (rowCanonical.tool_part !== undefined) normalized.tool_part = String(rowCanonical.tool_part).trim();
   
-  if (rowNorm["quantity"] !== undefined) {
-    normalized.quantity = String(rowNorm["quantity"]).trim();
+  if (rowCanonical.quantity !== undefined) {
+    normalized.quantity = String(rowCanonical.quantity).trim();
   }
 
-  const mcingStatus = rowNorm["currentmcingstatus"] ?? rowNorm["machiningstatus"];
-  if (mcingStatus !== undefined) normalized.current_machining_status = String(mcingStatus).trim();
+  if (rowCanonical.current_machining_status !== undefined) normalized.current_machining_status = String(rowCanonical.current_machining_status).trim();
+  if (rowCanonical.status !== undefined) normalized.status = String(rowCanonical.status).trim();
+  if (rowCanonical.drawing_status !== undefined) normalized.drawing_status = String(rowCanonical.drawing_status).trim();
+  if (rowCanonical.model_status !== undefined) normalized.model_status = String(rowCanonical.model_status).trim();
 
-  const status = rowNorm["statusiporcomp"] ?? rowNorm["status"];
-  if (status !== undefined) normalized.status = String(status).trim();
-
-  if (rowNorm["drgstatus"] !== undefined) normalized.drawing_status = String(rowNorm["drgstatus"]).trim();
-  if (rowNorm["modelstatus"] !== undefined) normalized.model_status = String(rowNorm["modelstatus"]).trim();
-
+  // Validate
   let hasData = false;
   for (const v of Object.values(normalized)) {
     if (v !== null && v !== "") hasData = true;
