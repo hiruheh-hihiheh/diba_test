@@ -49,7 +49,9 @@ export function parseDate(value: any): string | null {
   
   if (typeof value === "number") {
     // Excel dates are days since 1900.
-    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+    const days = Math.floor(value);
+    // Excel epoch: Dec 30, 1899
+    const date = new Date(Date.UTC(1899, 11, 30 + days));
     if (isNaN(date.getTime())) return null;
     const y = date.getUTCFullYear();
     const m = String(date.getUTCMonth() + 1).padStart(2, "0");

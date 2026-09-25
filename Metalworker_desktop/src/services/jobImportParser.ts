@@ -61,13 +61,15 @@ export function parseDate(value: any): string | null {
   }
   
   if (typeof value === "number") {
-    // Excel dates are days since 1900.
-    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
-    if (isNaN(date.getTime())) return null;
-    const y = date.getUTCFullYear();
-    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(date.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    try {
+      const parsed = XLSX.SSF.parse_date_code(value);
+      if (parsed) {
+        return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
   }
   
   const str = String(value).trim();
@@ -210,7 +212,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: "binary", cellDates: true });
+        const workbook = XLSX.read(data, { type: "binary", cellDates: false });
         
         let bestSheet = null;
         let bestScore = -1;
