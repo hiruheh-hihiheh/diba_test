@@ -19,6 +19,7 @@ import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
 import { Input } from "../components/ui/Input";
 import { JobEditModal } from "../components/jobs/JobEditModal";
+import { JobDrawingModal } from "../components/jobs/JobDrawingModal";
 
 export default function JobsLabourScreen() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -26,6 +27,7 @@ export default function JobsLabourScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [drawingModalJob, setDrawingModalJob] = useState<Job | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -164,7 +166,15 @@ export default function JobsLabourScreen() {
                   </View>
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>DRG:</Text>
-                    <Text style={styles.detailValue}>{item.drawing_status || "—"}</Text>
+                    <Pressable 
+                      style={({ pressed }) => [styles.drgBtn, pressed && styles.drgBtnPressed]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setDrawingModalJob(item);
+                      }}
+                    >
+                      <Text style={styles.drgBtnText}>{item.drawing_status || "—"}</Text>
+                    </Pressable>
                   </View>
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Model:</Text>
@@ -185,6 +195,12 @@ export default function JobsLabourScreen() {
           setEditingJob(null);
           loadJobs();
         }}
+      />
+
+      <JobDrawingModal
+        visible={!!drawingModalJob}
+        onClose={() => setDrawingModalJob(null)}
+        job={drawingModalJob}
       />
     </SafeAreaView>
   );
@@ -302,5 +318,22 @@ const styles = StyleSheet.create({
     fontSize: theme.textSizes.sm,
     flex: 1,
     textAlign: "right",
+  },
+  drgBtn: {
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  drgBtnPressed: {
+    backgroundColor: theme.colors.primary + "20",
+    borderColor: theme.colors.primary,
+  },
+  drgBtnText: {
+    fontSize: theme.textSizes.sm,
+    color: theme.colors.text,
+    fontWeight: "600",
   },
 });

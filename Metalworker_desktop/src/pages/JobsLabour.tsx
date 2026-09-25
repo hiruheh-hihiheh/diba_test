@@ -1,10 +1,11 @@
 // src/pages/JobsLabour.tsx
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle, Edit3 } from "lucide-react";
+import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle, Edit3, Image as ImageIcon } from "lucide-react";
 import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
 import JobEditModal from "../components/jobs/JobEditModal";
+import JobDrawingModal from "../components/jobs/JobDrawingModal";
 
 export default function JobsLabourPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -14,6 +15,7 @@ export default function JobsLabourPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [drawingModalJob, setDrawingModalJob] = useState<Job | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -139,7 +141,18 @@ export default function JobsLabourPage() {
                   <td className="px-5 py-4">
                     <span className="px-2 py-1 bg-surface-hover rounded text-xs text-text">{item.status || "—"}</span>
                   </td>
-                  <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.drawing_status || "—"}</p></td>
+                  <td className="px-5 py-4">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDrawingModalJob(item);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface border border-border text-xs font-semibold text-text hover:border-primary hover:text-primary transition-colors cursor-pointer group/drg"
+                    >
+                      <ImageIcon size={14} className="text-text-muted group-hover/drg:text-primary transition-colors" />
+                      {item.drawing_status || "—"}
+                    </button>
+                  </td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.model_status || "—"}</p></td>
                 </tr>
               ))
@@ -156,6 +169,12 @@ export default function JobsLabourPage() {
           setEditingJob(null);
           load();
         }} 
+      />
+
+      <JobDrawingModal 
+        open={!!drawingModalJob}
+        onClose={() => setDrawingModalJob(null)}
+        job={drawingModalJob}
       />
     </div>
   );
