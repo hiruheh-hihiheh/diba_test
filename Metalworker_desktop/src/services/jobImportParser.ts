@@ -32,14 +32,20 @@ for (const [canonical, aliases] of Object.entries(HEADER_ALIASES)) {
 }
 
 function scoreHeaders(headers: string[]): number {
-  let score = 0;
+  const seenCanonical = new Set<string>();
   for (const h of headers) {
     const norm = normalizeHeader(h);
-    if (NORMALIZED_TO_CANONICAL[norm]) {
-      score++;
+    const canonical = NORMALIZED_TO_CANONICAL[norm];
+    if (canonical) {
+      seenCanonical.add(canonical);
     }
   }
-  return score;
+  return seenCanonical.size;
+}
+
+function isValidCalendarDate(y: number, m: number, d: number): boolean {
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 export function parseDate(value: any): string | null {
@@ -62,18 +68,24 @@ export function parseDate(value: any): string | null {
   // YYYY-MM-DD or YYYY/MM/DD
   const yyyyMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (yyyyMatch) {
-    const [_, y, m, d] = yyyyMatch;
-    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
-      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const [_, yStr, mStr, dStr] = yyyyMatch;
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const d = parseInt(dStr, 10);
+    if (isValidCalendarDate(y, m, d)) {
+      return `${yStr}-${mStr.padStart(2, "0")}-${dStr.padStart(2, "0")}`;
     }
   }
 
   // DD-MM-YYYY or DD/MM/YYYY
   const ddMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
   if (ddMatch) {
-    const [_, d, m, y] = ddMatch;
-    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
-      return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const [_, dStr, mStr, yStr] = ddMatch;
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const d = parseInt(dStr, 10);
+    if (isValidCalendarDate(y, m, d)) {
+      return `${yStr}-${mStr.padStart(2, "0")}-${dStr.padStart(2, "0")}`;
     }
   }
   
