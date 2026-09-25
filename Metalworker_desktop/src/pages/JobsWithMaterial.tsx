@@ -1,9 +1,10 @@
 // src/pages/JobsWithMaterial.tsx
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle } from "lucide-react";
+import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle, Edit3 } from "lucide-react";
 import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
+import JobEditModal from "../components/jobs/JobEditModal";
 
 export default function JobsWithMaterialPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -11,6 +12,8 @@ export default function JobsWithMaterialPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -116,8 +119,17 @@ export default function JobsWithMaterialPage() {
               </tr>
             ) : (
               filtered.map((item) => (
-                <tr key={item.id} className="hover:bg-surface-hover/50 transition-colors">
-                  <td className="px-5 py-4"><p className="text-sm font-medium text-text">{item.job_no || "—"}</p></td>
+                <tr 
+                  key={item.id} 
+                  className="hover:bg-surface-hover/50 transition-colors cursor-pointer group"
+                  onClick={() => setEditingJob(item)}
+                >
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-text group-hover:text-primary transition-colors">{item.job_no || "—"}</p>
+                      <Edit3 size={14} className="text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.job_given_date || "—"}</p></td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.po_status || "—"}</p></td>
                   <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.tool_description || "—"}{item.tool_part ? ` / ${item.tool_part}` : ""}</p></td>
@@ -135,6 +147,16 @@ export default function JobsWithMaterialPage() {
           </tbody>
         </table>
       </div>
+
+      <JobEditModal 
+        open={!!editingJob} 
+        onClose={() => setEditingJob(null)} 
+        job={editingJob} 
+        onSaved={() => {
+          setEditingJob(null);
+          load();
+        }} 
+      />
     </div>
   );
 }

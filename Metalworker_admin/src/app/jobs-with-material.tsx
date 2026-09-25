@@ -18,12 +18,14 @@ import { supabase } from "../services/supabase";
 import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
 import { Input } from "../components/ui/Input";
+import { JobEditModal } from "../components/jobs/JobEditModal";
 
 export default function JobsWithMaterialScreen() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -123,7 +125,11 @@ export default function JobsWithMaterialScreen() {
         ) : (
           <View style={styles.listCard}>
             {filteredJobs.map((item) => (
-              <View key={item.id} style={styles.jobCard}>
+              <Pressable 
+                key={item.id} 
+                style={({ pressed }) => [styles.jobCard, pressed && styles.jobCardPressed]}
+                onPress={() => setEditingJob(item)}
+              >
                 <View style={styles.jobCardHeader}>
                   <Text style={styles.jobNo}>{item.job_no || "No Job #"}</Text>
                   <View style={styles.statusBadge}>
@@ -165,11 +171,21 @@ export default function JobsWithMaterialScreen() {
                     <Text style={styles.detailValue}>{item.model_status || "—"}</Text>
                   </View>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
         )}
       </ScrollView>
+
+      <JobEditModal
+        visible={!!editingJob}
+        onClose={() => setEditingJob(null)}
+        job={editingJob}
+        onSaved={() => {
+          setEditingJob(null);
+          loadJobs();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -235,6 +251,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
+  },
+  jobCardPressed: {
+    opacity: 0.7,
+    backgroundColor: theme.colors.border,
   },
   jobCardHeader: {
     flexDirection: "row",
