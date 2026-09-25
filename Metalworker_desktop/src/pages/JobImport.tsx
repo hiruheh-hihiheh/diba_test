@@ -475,7 +475,7 @@ export default function JobImportPage() {
       {/* Inspect Modal */}
       <AdminModal open={!!inspectRow} onClose={() => setInspectRow(null)}>
         {inspectRow && (
-          <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-in">
+          <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-full flex flex-col animate-scale-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text">Inspect Row {inspectRow.rowNumber}</h3>

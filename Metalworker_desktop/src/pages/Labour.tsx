@@ -75,8 +75,8 @@ function Modal({
 }) {
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-xl animate-scale-in">
-        <div className="flex items-center justify-between px-7 py-5 border-b border-border">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-xl animate-scale-in flex flex-col max-h-full">
+        <div className="flex items-center justify-between px-7 py-5 border-b border-border shrink-0">
           <h3 className="text-[18px] font-bold text-text">{title}</h3>
           <button
             onClick={onClose}
@@ -85,7 +85,7 @@ function Modal({
             <X size={20} />
           </button>
         </div>
-        <div className="p-7">{children}</div>
+        <div className="p-7 overflow-y-auto flex-1">{children}</div>
       </div>
     </AdminModal>
   );

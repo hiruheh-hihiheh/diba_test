@@ -64,7 +64,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
 
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col animate-scale-in">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-full flex flex-col animate-scale-in">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">

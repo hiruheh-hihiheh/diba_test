@@ -17,7 +17,7 @@ export default function AdminModal({ open, onClose, children, zIndex = 50 }: Adm
   
   return (
     <div 
-      className="fixed bottom-0 right-0 flex items-center justify-center p-4 transition-all duration-300"
+      className="fixed bottom-0 right-0 flex items-center justify-center p-4 transition-all duration-300 overflow-hidden"
       style={{ top: '72px', left: leftPadding, zIndex }}
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />

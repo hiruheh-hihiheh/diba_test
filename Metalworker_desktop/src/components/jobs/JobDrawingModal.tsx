@@ -111,7 +111,7 @@ export default function JobDrawingModal({ open, onClose, job }: Props) {
 
   return (
     <AdminModal open={open} onClose={onClose} zIndex={60}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-scale-in">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-full flex flex-col animate-scale-in">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
