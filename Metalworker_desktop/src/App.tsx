@@ -18,6 +18,7 @@ import FolderDetailPage from "./pages/FolderDetail";
 import PlaceholderPage from "./pages/Placeholder";
 import JobsLabourPage from "./pages/JobsLabour";
 import JobsWithMaterialPage from "./pages/JobsWithMaterial";
+import JobImportPage from "./pages/JobImport";
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
             {/* Jobs */}
             <Route path="/jobs/labour" element={<JobsLabourPage />} />
             <Route path="/jobs/with-material" element={<JobsWithMaterialPage />} />
+            <Route path="/jobs/import" element={<JobImportPage />} />
 
             {/* Phase 3 — Inventory */}
             <Route path="/stock-owner" element={<OwnerStockPage />} />

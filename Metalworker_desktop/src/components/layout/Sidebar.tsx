@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Hexagon,
+  UploadCloud,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { useSidebar } from "../../hooks/useSidebar";
@@ -52,6 +53,7 @@ const navSections: NavSection[] = [
     items: [
       { label: "Labour", icon: <Briefcase size={22} />, path: "/jobs/labour" },
       { label: "With Material (BO)", icon: <Briefcase size={22} />, path: "/jobs/with-material" },
+      { label: "Import Excel", icon: <UploadCloud size={22} />, path: "/jobs/import" },
     ],
   },
   {
