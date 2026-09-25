@@ -38,3 +38,21 @@ export interface ParserResult {
   summary: ImportPreviewSummary;
   error: string | null;
 }
+
+export interface ImportRowResult {
+  rowNumber: number;
+  status: "created" | "skipped" | "failed";
+  jobId?: string;
+  message?: string;
+}
+
+export interface ImportResult {
+  importId: string;
+  totalRows: number;
+  createdRows: number;
+  updatedRows: number; // not used in Part 6, kept for completeness
+  skippedRows: number;
+  failedRows: number;
+  rowResults: ImportRowResult[];
+  error?: string | null;
+}
