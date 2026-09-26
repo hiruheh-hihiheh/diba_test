@@ -470,17 +470,33 @@ export default function JobsWithMaterialPage() {
           {/* Jobs Table */}
           <div className={`${showAddPanel ? "flex-1 min-w-0" : "w-full"}`}>
             <div className="bg-surface border border-border rounded-xl overflow-hidden overflow-x-auto">
+              {inFolderView && filtered.length > 0 && (
+                <div className="flex items-center justify-between px-5 py-3 bg-surface-hover/30 border-b border-border">
+                  <label className="flex items-center gap-3 cursor-pointer text-sm font-semibold text-text">
+                    <input
+                      type="checkbox"
+                      ref={(el) => {
+                        if (el) el.indeterminate = selectedJobIds.size > 0 && selectedJobIds.size < filtered.length;
+                      }}
+                      checked={selectedJobIds.size > 0 && selectedJobIds.size === filtered.length}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                    />
+                    Select All
+                  </label>
+                  <span className="text-sm text-text-muted">
+                    {selectedJobIds.size > 0 
+                      ? `${selectedJobIds.size} of ${filtered.length} selected`
+                      : `${filtered.length} jobs`}
+                  </span>
+                </div>
+              )}
               <table className="w-full whitespace-nowrap">
                 <thead>
                   <tr className="border-b border-border">
                     {inFolderView && (
                       <th className="px-5 py-3 w-10">
-                        <input
-                          type="checkbox"
-                          checked={filtered.length > 0 && selectedJobIds.size === filtered.length}
-                          onChange={toggleSelectAll}
-                          className="w-4 h-4 rounded border-border text-primary focus:ring-primary accent-primary cursor-pointer"
-                        />
+                        {/* Checkbox moved to header bar above */}
                       </th>
                     )}
                     <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Job No</th>
