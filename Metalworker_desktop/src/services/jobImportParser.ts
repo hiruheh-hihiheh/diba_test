@@ -299,10 +299,11 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
           const parsed = parseRow(raw, i + 1);
           
           if (parsed.normalized.job_no) {
-            if (seenJobNos.has(parsed.normalized.job_no)) {
-              parsed.warnings.push(`Possible duplicate row for Job No: ${parsed.normalized.job_no}`);
+            const jobKey = `${parsed.normalized.job_no}-${parsed.normalized.job_type}`;
+            if (seenJobNos.has(jobKey)) {
+              parsed.warnings.push(`Possible duplicate row for Job No: ${parsed.normalized.job_no} (${parsed.normalized.job_type})`);
             } else {
-              seenJobNos.add(parsed.normalized.job_no);
+              seenJobNos.add(jobKey);
             }
           }
 
