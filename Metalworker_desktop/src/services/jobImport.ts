@@ -41,6 +41,19 @@ export async function processJobImport(
 
   const importId = importRecord.id;
 
+  let targetFolderType: string | null = null;
+  if (folderId) {
+    const { data: folderData, error: folderError } = await supabase
+      .from("admin_folders")
+      .select("folder_type")
+      .eq("id", folderId)
+      .single();
+    if (folderError) {
+      throw new Error(`Failed to fetch target folder details: ${folderError.message}`);
+    }
+    targetFolderType = folderData.folder_type;
+  }
+
   const rowResults: ImportRowResult[] = [];
   let createdCount = 0;
   let skippedCount = 0;
@@ -98,6 +111,16 @@ export async function processJobImport(
         const logErr = await logError("job_type", rawTypeValue, msg);
         const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
         
+        rowResults.push({ rowNumber, status: "skipped", message });
+        continue;
+      }
+
+      // Check folder type compatibility
+      if (folderId && targetFolderType && targetFolderType !== "general" && normalized.job_type !== targetFolderType) {
+        skippedCount++;
+        const msg = `Cannot import ${normalized.job_type} job into a ${targetFolderType} folder.`;
+        const logErr = await logError(null, null, msg);
+        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
         rowResults.push({ rowNumber, status: "skipped", message });
         continue;
       }
