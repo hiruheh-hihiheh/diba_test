@@ -127,7 +127,7 @@ export default function FoldersPage() {
         const res = await updateFolder(editingFolder.id, formName.trim());
         if (!res.ok) { setFormMessage({ type: "error", text: res.error || "Failed." }); return; }
       } else {
-        const res = await createFolder(formName.trim());
+        const res = await createFolder(formName.trim(), "general");
         if (!res.ok) { setFormMessage({ type: "error", text: res.error || "Failed." }); return; }
       }
       await load();

@@ -10,6 +10,7 @@ export type FolderItemType =
 export interface AdminFolder {
   id: string;
   name: string;
+  folder_type?: "labour" | "with_material" | "general" | null;
   created_at: string;
   updated_at: string;
   itemCount?: number;

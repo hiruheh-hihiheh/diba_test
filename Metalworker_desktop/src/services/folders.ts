@@ -55,8 +55,15 @@ export async function fetchFolder(id: string): Promise<AdminFolder> {
   return data as AdminFolder;
 }
 
-export async function createFolder(name: string): Promise<{ ok: boolean; data?: AdminFolder; error?: string }> {
-  const { data, error } = await supabase.from(TABLE).insert({ name }).select().single();
+export async function createFolder(
+  name: string,
+  folderType: AdminFolder["folder_type"] = null
+): Promise<{ ok: boolean; data?: AdminFolder; error?: string }> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert({ name, folder_type: folderType })
+    .select()
+    .single();
   if (error) return { ok: false, error: error.message };
   return { ok: true, data: data as AdminFolder };
 }

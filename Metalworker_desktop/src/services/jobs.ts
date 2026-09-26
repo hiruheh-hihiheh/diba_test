@@ -142,9 +142,19 @@ export async function fetchAvailableJobsForFolder(folderId: string, type: JobTyp
 }
 
 /**
- * Add a single job to a folder (via folder_items). Prevents duplicates.
+ * Add a single job to a folder (via folder_items). Prevents duplicates and invalid types.
  */
 export async function addJobToFolder(folderId: string, jobId: string): Promise<{ ok: boolean; error?: string }> {
+  // Check folder type vs job type
+  const { data: folderData } = await supabase.from("admin_folders").select("folder_type").eq("id", folderId).single();
+  const { data: jobData } = await supabase.from(TABLE).select("job_type").eq("id", jobId).single();
+
+  if (folderData && jobData && folderData.folder_type) {
+    if (folderData.folder_type !== jobData.job_type && folderData.folder_type !== "general") {
+      return { ok: false, error: `Cannot add ${jobData.job_type} job to a ${folderData.folder_type} folder.` };
+    }
+  }
+
   // Check if already linked
   const { data: existing } = await supabase
     .from("folder_items")
@@ -173,10 +183,21 @@ export async function addJobToFolder(folderId: string, jobId: string): Promise<{
 }
 
 /**
- * Add multiple jobs to a folder (via folder_items). Prevents duplicates.
+ * Add multiple jobs to a folder (via folder_items). Prevents duplicates and invalid types.
  */
 export async function addMultipleJobsToFolder(folderId: string, jobIds: string[]): Promise<{ ok: boolean; error?: string }> {
   if (jobIds.length === 0) return { ok: true };
+
+  // Check folder type vs job types
+  const { data: folderData } = await supabase.from("admin_folders").select("folder_type").eq("id", folderId).single();
+  const { data: jobsData } = await supabase.from(TABLE).select("job_type").in("id", jobIds);
+
+  if (folderData && jobsData && folderData.folder_type && folderData.folder_type !== "general") {
+    const invalidJob = jobsData.find((j: any) => j.job_type !== folderData.folder_type);
+    if (invalidJob) {
+      return { ok: false, error: `Cannot add ${invalidJob.job_type} job to a ${folderData.folder_type} folder.` };
+    }
+  }
 
   // Check existing
   const { data: existing } = await supabase

@@ -86,7 +86,7 @@ export default function JobImportPage() {
         return;
       }
       setImporting(true);
-      const { ok, data, error } = await createFolder(newFolderName.trim());
+      const { ok, data, error } = await createFolder(newFolderName.trim(), "general");
       if (!ok || !data) {
         alert(`Failed to create folder: ${error}`);
         setImporting(false);

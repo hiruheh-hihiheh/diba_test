@@ -132,7 +132,10 @@ export default function JobsWithMaterialPage() {
   // ─── Derived Data ───────────────────────────────────────
 
   const filteredFolders = useMemo(() => {
-    const relevant = folders.filter(f => (f.withMaterialCount ?? 0) > 0);
+    const relevant = folders.filter(f => 
+      f.folder_type === JOB_TYPE || 
+      ((f.folder_type === "general" || f.folder_type == null) && (f.withMaterialCount ?? 0) > 0)
+    );
     if (!search.trim()) return relevant;
     const q = search.toLowerCase();
     return relevant.filter(f => f.name.toLowerCase().includes(q));
@@ -178,11 +181,12 @@ export default function JobsWithMaterialPage() {
 
   async function handleCreateFolder() {
     if (!newFolderName.trim()) return;
-    const { ok, data, error: err } = await createFolder(newFolderName.trim());
+    const { ok, data, error: err } = await createFolder(newFolderName.trim(), JOB_TYPE);
     if (ok && data) {
       setCreatingFolder(false);
       setNewFolderName("");
-      loadFolders();
+      await loadFolders();
+      setSelectedFolder(data);
     } else {
       alert(`Failed to create folder: ${err}`);
     }
