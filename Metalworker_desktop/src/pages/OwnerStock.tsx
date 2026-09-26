@@ -156,7 +156,7 @@ export default function OwnerStockPage() {
     } catch (err) { window.alert(err instanceof Error ? err.message : "Failed to delete."); }
   }
 
-  function renderForm(isEdit: boolean) {
+  function renderForm() {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
@@ -274,8 +274,8 @@ export default function OwnerStockPage() {
         </table>
       </div>
 
-      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Owner Stock">{renderForm(false)}</Modal>
-      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Owner Stock">{renderForm(true)}</Modal>
+      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Owner Stock" footer={renderFooter(false)}>{renderForm()}</Modal>
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Owner Stock" footer={renderFooter(true)}>{renderForm()}</Modal>
 
       {/* Preview Modal */}
       <Modal open={showPreviewModal} onClose={() => setShowPreviewModal(false)} title="Owner Stock Details">

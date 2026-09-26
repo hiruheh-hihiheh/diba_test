@@ -12,15 +12,20 @@ import {
 import type { AdminFolder, FolderItemType } from "../types/folder";
 import AdminModal from "../components/ui/AdminModal";
 
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in max-h-full flex flex-col">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in max-h-[calc(100vh-104px)] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h3 className="text-lg font-bold text-text">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"><X size={18} /></button>
         </div>
-        <div className="p-6 overflow-y-auto">{children}</div>
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0 bg-surface rounded-b-2xl">
+            {footer}
+          </div>
+        )}
       </div>
     </AdminModal>
   );
@@ -374,7 +379,24 @@ export default function FoldersPage() {
       </div>
 
       {/* ── MODALS ───────────────────────────────────────────────────────────── */}
-      <Modal open={showFormModal} onClose={() => setShowFormModal(false)} title={editingFolder ? "Rename Folder" : "New Folder"}>
+      <Modal 
+        open={showFormModal} 
+        onClose={() => setShowFormModal(false)} 
+        title={editingFolder ? "Rename Folder" : "New Folder"}
+        footer={
+          <>
+            <button onClick={() => setShowFormModal(false)} 
+              className="px-5 py-3 rounded-xl text-[14px] font-bold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={formLoading} 
+              className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
+              {formLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+              {editingFolder ? "Save Changes" : "Create Folder"}
+            </button>
+          </>
+        }
+      >
         <div className="space-y-5">
           <div>
             <label className="block text-[12px] font-bold text-text-muted tracking-[0.1em] uppercase mb-2">Folder Name</label>
@@ -391,18 +413,7 @@ export default function FoldersPage() {
               {formMessage.text}
             </div>
           )}
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowFormModal(false)} 
-              className="px-5 py-3 rounded-xl text-[14px] font-bold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
-              Cancel
-            </button>
-            <button onClick={handleSave} disabled={formLoading} 
-              className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2.5">
-              {formLoading ? <Loader2 size={16} className="animate-spin" /> : null}
-              {editingFolder ? "Save Changes" : "Create Folder"}
-            </button>
           </div>
-        </div>
       </Modal>
 
       <Modal open={!!previewItem} onClose={() => setPreviewItem(null)} title="Item Preview">

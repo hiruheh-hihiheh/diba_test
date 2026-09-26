@@ -34,15 +34,20 @@ function getItemTypeLabel(type: FolderItemType) {
   }
 }
 
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in flex flex-col max-h-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in flex flex-col max-h-[calc(100vh-104px)]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h3 className="text-[16px] font-bold text-text">{title}</h3>
           <button onClick={onClose} className="p-2 rounded-xl text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"><X size={18} /></button>
         </div>
-        <div className="p-6 overflow-y-auto">{children}</div>
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0 bg-surface rounded-b-2xl">
+            {footer}
+          </div>
+        )}
       </div>
     </AdminModal>
   );

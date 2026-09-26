@@ -171,7 +171,19 @@ export default function GroupDrawingsPage() {
         </table>
       </div>
 
-      <Modal open={showFormModal} onClose={() => setShowFormModal(false)} title={editingGroup ? "Edit Drawing Group" : "Add Drawing Group"}>
+      <Modal 
+        open={showFormModal} 
+        onClose={() => setShowFormModal(false)} 
+        title={editingGroup ? "Edit Drawing Group" : "Add Drawing Group"}
+        footer={
+          <>
+            <button onClick={() => setShowFormModal(false)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer">Cancel</button>
+            <button onClick={handleSave} disabled={formLoading} className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2">
+              {formLoading && <Loader2 size={14} className="animate-spin" />}{editingGroup ? "Save Changes" : "Create"}
+            </button>
+          </>
+        }
+      >
         <div className="space-y-4">
           <div><label className="block text-xs font-semibold text-text-muted uppercase tracking-wider mb-1.5">Name</label>
             <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="Group name" className={inputCls} /></div>

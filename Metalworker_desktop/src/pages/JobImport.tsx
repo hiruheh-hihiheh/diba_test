@@ -475,7 +475,7 @@ export default function JobImportPage() {
       {/* Inspect Modal */}
       <AdminModal open={!!inspectRow} onClose={() => setInspectRow(null)}>
         {inspectRow && (
-          <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-full flex flex-col animate-scale-in">
+          <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(100vh-104px)] flex flex-col animate-scale-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
               <div>
                 <h3 className="text-lg font-bold text-text">Inspect Row {inspectRow.rowNumber}</h3>
@@ -485,7 +485,7 @@ export default function JobImportPage() {
                 <X size={18} />
               </button>
             </div>
-            <div className="p-6 overflow-y-auto flex-1">
+            <div className="p-6 flex-1 min-h-0 overflow-y-auto">
               <pre className="p-4 bg-bg rounded-xl text-sm font-mono text-text overflow-x-auto border border-border">
                 {JSON.stringify(inspectRow.raw, null, 2)}
               </pre>

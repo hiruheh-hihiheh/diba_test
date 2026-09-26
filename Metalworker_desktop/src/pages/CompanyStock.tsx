@@ -120,7 +120,7 @@ export default function CompanyStockPage() {
     catch (err) { window.alert(err instanceof Error ? err.message : "Failed."); }
   }
 
-  function renderForm(isEdit: boolean) {
+  function renderForm() {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
@@ -217,8 +217,8 @@ export default function CompanyStockPage() {
         </table>
       </div>
 
-      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Company Stock" footer={renderFooter(false)}>{renderForm(false)}</Modal>
-      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Company Stock" footer={renderFooter(true)}>{renderForm(true)}</Modal>
+      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Company Stock" footer={renderFooter(false)}>{renderForm()}</Modal>
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Company Stock" footer={renderFooter(true)}>{renderForm()}</Modal>
       <Modal open={showPreviewModal} onClose={() => setShowPreviewModal(false)} title="Company Stock Details">
         {previewItem && (
           <div className="space-y-4">
