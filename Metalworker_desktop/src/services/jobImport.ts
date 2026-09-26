@@ -4,7 +4,8 @@ import type { ParserResult, ImportResult, ImportRowResult } from "../types/jobIm
 
 export async function processJobImport(
   fileName: string,
-  parserResult: ParserResult
+  parserResult: ParserResult,
+  folderId?: string
 ): Promise<ImportResult> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData?.user) {
@@ -136,7 +137,7 @@ export async function processJobImport(
         const msg = "Job already exists in jobs table.";
         const logErr = await logError(null, null, msg);
         const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        rowResults.push({ rowNumber, status: "skipped", message });
+        rowResults.push({ rowNumber, status: "skipped", message, jobId: existingJob.id });
         continue;
       }
 
@@ -174,10 +175,19 @@ export async function processJobImport(
       if (insertError) {
         if (insertError.code === "23505") { // PostgreSQL unique constraint violation
           skippedCount++;
+          
+          // Try to fetch the existing job ID again since it violated unique constraint
+          const { data: duplicateJob } = await supabase
+            .from("jobs")
+            .select("id")
+            .eq("job_no", payload.job_no)
+            .eq("job_type", payload.job_type)
+            .maybeSingle();
+            
           const msg = "Job already exists in jobs table.";
           const logErr = await logError(null, null, msg);
           const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-          rowResults.push({ rowNumber, status: "skipped", message });
+          rowResults.push({ rowNumber, status: "skipped", message, jobId: duplicateJob?.id });
         } else {
           failedCount++;
           const msg = `Insert failed: ${insertError.message}`;
@@ -190,6 +200,42 @@ export async function processJobImport(
         rowResults.push({ rowNumber, status: "created", jobId: insertedJob.id });
       }
     }
+    
+    // Add all processed jobs (created or skipped) to the folder if provided
+    if (folderId) {
+      const jobIdsToAdd = rowResults
+        .map(r => r.jobId)
+        .filter(Boolean) as string[];
+        
+      if (jobIdsToAdd.length > 0) {
+        // Find existing max position in the folder
+        const { data: existingPos } = await supabase
+          .from("folder_items")
+          .select("position")
+          .eq("folder_id", folderId)
+          .order("position", { ascending: false })
+          .limit(1);
+          
+        let nextPos = existingPos && existingPos.length > 0 ? existingPos[0].position + 1 : 0;
+        
+        const insertData = jobIdsToAdd.map(id => {
+          const data = {
+            folder_id: folderId,
+            item_type: "job",
+            item_id: id,
+            position: nextPos
+          };
+          nextPos++;
+          return data;
+        });
+        
+        const { error: folderError } = await supabase.from("folder_items").insert(insertData);
+        if (folderError) {
+          console.warn("Failed to add some jobs to folder:", folderError.message);
+        }
+      }
+    }
+    
   } catch (err: any) {
     // Unexpected exception during processing
     const { error: failureUpdateError } = await supabase.from("job_imports").update({ 

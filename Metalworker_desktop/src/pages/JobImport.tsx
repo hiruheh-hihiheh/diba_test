@@ -1,9 +1,12 @@
-import { useState, useRef } from "react";
-import { UploadCloud, FileSpreadsheet, AlertTriangle, Info, CheckCircle2, Eye, X, Database } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { UploadCloud, FileSpreadsheet, AlertTriangle, Info, CheckCircle2, Eye, X, Database, Download } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { parseExcelFile } from "../services/jobImportParser";
 import { processJobImport } from "../services/jobImport";
+import { fetchFolders, createFolder } from "../services/folders";
 import type { ParserResult, ParsedExcelRow, ImportResult } from "../types/jobImport";
+import type { AdminFolder } from "../types/folder";
+import { format } from "date-fns";
 import { getJobTypeLabel } from "../types/job";
 import AdminModal from "../components/ui/AdminModal";
 
@@ -19,6 +22,24 @@ export default function JobImportPage() {
   const [inspectRow, setInspectRow] = useState<ParsedExcelRow | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  const [folders, setFolders] = useState<AdminFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<string>("");
+  const [newFolderName, setNewFolderName] = useState<string>("");
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  
+  useEffect(() => {
+    fetchFolders().then(setFolders).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    if (showConfirm && selectedFile) {
+      const baseName = selectedFile.name.replace(/\.[^/.]+$/, "");
+      const defaultName = `${baseName} - ${format(new Date(), "dd MMM yyyy")}`;
+      setNewFolderName(defaultName);
+      setIsCreatingFolder(true);
+    }
+  }, [showConfirm, selectedFile]);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -56,16 +77,173 @@ export default function JobImportPage() {
 
   async function handleImport() {
     if (!result || !selectedFile) return;
+
+    let targetFolderId = selectedFolderId;
+    
+    if (isCreatingFolder) {
+      if (!newFolderName.trim()) {
+        alert("Please enter a folder name");
+        return;
+      }
+      setImporting(true);
+      const { ok, data, error } = await createFolder(newFolderName.trim());
+      if (!ok || !data) {
+        alert(`Failed to create folder: ${error}`);
+        setImporting(false);
+        return;
+      }
+      targetFolderId = data.id;
+    } else {
+      if (!targetFolderId) {
+        alert("Please select a folder");
+        return;
+      }
+    }
+
     setShowConfirm(false);
     setImporting(true);
     try {
-      const res = await processJobImport(selectedFile.name, result);
+      const res = await processJobImport(selectedFile.name, result, targetFolderId);
       setImportResult(res);
     } catch (err: any) {
       alert(`Import failed: ${err.message}`);
     } finally {
       setImporting(false);
     }
+  }
+
+  function handleDownloadReport() {
+    if (!result || !selectedFile) return;
+
+    const lines: string[] = [];
+
+    lines.push("============================================================");
+    lines.push("HAWKINS EXCEL MAPPING AUDIT REPORT");
+    lines.push("============================================================");
+    lines.push("");
+    lines.push("File:");
+    lines.push(selectedFile.name);
+    lines.push("");
+    lines.push("Selected Sheet:");
+    lines.push(result.selectedSheet || "None");
+    lines.push("");
+    lines.push("Ignored Sheets:");
+    lines.push(result.ignoredSheets.join(", ") || "None");
+    lines.push("");
+    lines.push("Generated:");
+    lines.push(new Date().toISOString());
+    lines.push("");
+
+    lines.push("SUMMARY");
+    lines.push("-------");
+    lines.push(`Total Rows: ${result.summary.totalRows}`);
+    lines.push(`Valid Rows: ${result.summary.validRows}`);
+    lines.push(`Warning Rows: ${result.summary.warningRows}`);
+    lines.push(`Error Rows: ${result.summary.errorRows}`);
+    lines.push(`Labour Rows: ${result.summary.labourRows}`);
+    lines.push(`With Material Rows: ${result.summary.withMaterialRows}`);
+    lines.push(`Unknown Job Type Rows: ${result.summary.unknownJobTypeRows}`);
+    lines.push("");
+
+    lines.push("============================================================");
+    lines.push("HEADER / COLUMN MAPPING");
+    lines.push("============================================================");
+    lines.push("");
+    
+    if (result.rows.length > 0) {
+      const canonicalMap: Record<string, string> = {
+        srno: "job_no",
+        labourlwithmaterialbo: "job_type",
+        jobtype: "job_type",
+        jobgivendate: "job_given_date",
+        postatus: "po_status",
+        postatuspendingornumber: "po_status",
+        tooldisc: "tool_description",
+        tooldescription: "tool_description",
+        toolpart: "tool_part",
+        quantity: "quantity",
+        expectedcompdate: "expected_completion_date",
+        expectedcompletiondate: "expected_completion_date",
+        currentmcingstatus: "current_machining_status",
+        machiningstatus: "current_machining_status",
+        statusiporcomp: "status",
+        status: "status",
+        drgstatus: "drawing_status",
+        modelstatus: "model_status"
+      };
+
+      const rawKeys = Object.keys(result.rows[0].raw);
+      for (const k of rawKeys) {
+        const norm = String(k).toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+        const canon = canonicalMap[norm] || "unmapped";
+        lines.push(`"${k}" -> ${canon}`);
+      }
+    } else {
+      lines.push("No rows found.");
+    }
+    lines.push("");
+
+    for (const r of result.rows) {
+      lines.push("============================================================");
+      lines.push(`ROW ${r.rowNumber}`);
+      lines.push("============================================================");
+      lines.push("");
+      lines.push("RAW EXCEL DATA:");
+      for (const [k, v] of Object.entries(r.raw)) {
+        lines.push(`  "${k}": ${JSON.stringify(v)}`);
+      }
+      lines.push("");
+      lines.push("MAPPED / NORMALIZED DATA:");
+      for (const [k, v] of Object.entries(r.normalized)) {
+        lines.push(`  ${k}: ${JSON.stringify(v)}`);
+      }
+      lines.push("");
+      lines.push("WARNINGS:");
+      if (r.warnings.length > 0) {
+        for (const w of r.warnings) lines.push(`  - ${w}`);
+      } else {
+        lines.push("  None");
+      }
+      lines.push("");
+      lines.push("ERRORS:");
+      if (r.errors.length > 0) {
+        for (const err of r.errors) lines.push(`  - ${err}`);
+      } else {
+        lines.push("  None");
+      }
+      lines.push("");
+      lines.push("------------------------------------------------------------");
+      lines.push("");
+    }
+
+    lines.push("============================================================");
+    lines.push("VALIDATION / ISSUES");
+    lines.push("============================================================");
+    lines.push("");
+    
+    const issueRows = result.rows.filter(r => r.warnings.length > 0 || r.errors.length > 0);
+    if (issueRows.length === 0) {
+      lines.push("No issues found.");
+    } else {
+      for (const r of issueRows) {
+        lines.push(`- Excel row number: ${r.rowNumber}`);
+        lines.push(`- Job No: ${r.normalized.job_no || "null"}`);
+        lines.push(`- Raw values: ${JSON.stringify(r.raw)}`);
+        lines.push(`- warnings: ${JSON.stringify(r.warnings)}`);
+        lines.push(`- errors: ${JSON.stringify(r.errors)}`);
+        lines.push("");
+      }
+    }
+
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Hawkins-Jobs-Status-Mapping-Audit.txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   const eligibleRows = result?.rows.filter(r => r.errors.length === 0 && r.normalized.job_no && r.normalized.job_type !== null) || [];
@@ -92,6 +270,16 @@ export default function JobImportPage() {
             ref={fileInputRef} 
             onChange={handleFileChange} 
           />
+          {result && (
+            <button 
+              onClick={handleDownloadReport}
+              disabled={importing}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-info/10 text-info border border-info/20 hover:bg-info/20 font-bold transition-all cursor-pointer disabled:opacity-50"
+            >
+              <Download size={20} />
+              Download Mapping Report
+            </button>
+          )}
           {result && (
             <button 
               onClick={handleReset}
@@ -378,6 +566,51 @@ export default function JobImportPage() {
             
             <div className="p-3 bg-info-muted/30 border border-info/20 rounded-xl mb-6">
               <p className="text-sm font-medium text-info text-center">Existing jobs will not be overwritten.</p>
+            </div>
+
+            <div className="mb-6 space-y-4 border-t border-border pt-4">
+              <h3 className="font-bold text-text">Save to Folder</h3>
+              <div className="flex gap-4 mb-2">
+                <label className="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input 
+                    type="radio" 
+                    checked={isCreatingFolder} 
+                    onChange={() => setIsCreatingFolder(true)} 
+                    className="accent-primary"
+                  />
+                  Create New Folder
+                </label>
+                <label className="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input 
+                    type="radio" 
+                    checked={!isCreatingFolder} 
+                    onChange={() => setIsCreatingFolder(false)} 
+                    className="accent-primary"
+                  />
+                  Existing Folder
+                </label>
+              </div>
+
+              {isCreatingFolder ? (
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="E.g. Hawkins Jobs - 26 Sep 2026"
+                  className="w-full bg-bg border border-border rounded-xl px-4 py-2 text-text focus:outline-none focus:border-primary"
+                />
+              ) : (
+                <select
+                  value={selectedFolderId}
+                  onChange={(e) => setSelectedFolderId(e.target.value)}
+                  className="w-full bg-bg border border-border rounded-xl px-4 py-2 text-text focus:outline-none focus:border-primary"
+                >
+                  <option value="" disabled>Select a folder...</option>
+                  {folders.map(f => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="flex gap-3 justify-end">

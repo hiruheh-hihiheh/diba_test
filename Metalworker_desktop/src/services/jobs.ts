@@ -24,6 +24,29 @@ export async function fetchJobsByType(type: JobType): Promise<Job[]> {
   return (data ?? []) as Job[];
 }
 
+export async function fetchJobsByFolder(folderId: string, type: JobType): Promise<Job[]> {
+  const { data: items, error: itemsError } = await supabase
+    .from("folder_items")
+    .select("item_id")
+    .eq("folder_id", folderId)
+    .eq("item_type", "job");
+    
+  if (itemsError) throw new Error(itemsError.message);
+  if (!items || items.length === 0) return [];
+  
+  const jobIds = items.map(i => i.item_id);
+  
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .in("id", jobIds)
+    .eq("job_type", type)
+    .order("created_at", { ascending: false });
+    
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Job[];
+}
+
 export async function fetchJob(id: string): Promise<Job> {
   const { data, error } = await supabase
     .from(TABLE)
