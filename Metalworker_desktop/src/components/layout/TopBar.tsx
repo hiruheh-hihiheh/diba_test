@@ -1,8 +1,9 @@
 // src/components/layout/TopBar.tsx
 
 import { useLocation } from "react-router-dom";
-import { User, Bell } from "lucide-react";
+import { User, Bell, Sun, Moon } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme } from "../../contexts/ThemeContext";
 
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
@@ -41,6 +42,7 @@ function getBreadcrumb(pathname: string): string[] {
 export default function TopBar() {
   const location = useLocation();
   const { adminUsername } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   const title = getPageTitle(location.pathname);
   const breadcrumbs = getBreadcrumb(location.pathname);
@@ -62,8 +64,23 @@ export default function TopBar() {
         </div>
       </div>
 
-      {/* Right side — notifications + profile */}
+      {/* Right side — theme toggle + notifications + profile */}
       <div className="flex items-center gap-4 shrink-0 ml-4">
+        <button
+          onClick={toggleTheme}
+          className="
+            w-10 h-10 rounded-xl
+            bg-surface-hover/50 border border-border
+            flex items-center justify-center
+            text-text-muted hover:text-text hover:bg-surface-hover
+            transition-colors duration-200 cursor-pointer
+          "
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+
         <button
           className="
             w-10 h-10 rounded-xl

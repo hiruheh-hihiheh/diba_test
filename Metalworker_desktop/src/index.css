@@ -5,14 +5,15 @@
    ═══════════════════════════════════════════ */
 
 @theme {
-  --color-bg: #0F172A;
-  --color-bg-secondary: #0B1120;
-  --color-surface: #1E293B;
-  --color-surface-hover: #263548;
-  --color-surface-active: #2D3F52;
-  --color-primary: #3B82F6;
-  --color-primary-hover: #2563EB;
-  --color-primary-muted: #3B82F620;
+  --color-bg: var(--theme-bg);
+  --color-bg-secondary: var(--theme-bg-secondary);
+  --color-surface: var(--theme-surface);
+  --color-surface-hover: var(--theme-surface-hover);
+  --color-surface-active: var(--theme-surface-active);
+  --color-primary: var(--theme-primary);
+  --color-primary-hover: var(--theme-primary-hover);
+  --color-primary-muted: var(--theme-primary-muted);
+  --color-primary-text: var(--theme-primary-text);
   --color-success: #10B981;
   --color-success-muted: #10B98120;
   --color-danger: #EF4444;
@@ -21,12 +22,48 @@
   --color-warning-muted: #F59E0B20;
   --color-purple: #8B5CF6;
   --color-purple-muted: #8B5CF620;
-  --color-text: #F8FAFC;
-  --color-text-secondary: #CBD5E1;
-  --color-text-muted: #94A3B8;
-  --color-border: #334155;
-  --color-border-hover: #475569;
+  --color-text: var(--theme-text);
+  --color-text-secondary: var(--theme-text-secondary);
+  --color-text-muted: var(--theme-text-muted);
+  --color-border: var(--theme-border);
+  --color-border-hover: var(--theme-border-hover);
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  /* DARK MODE (Default, Netflix-inspired) */
+  --theme-bg: #000000;
+  --theme-bg-secondary: #0A0A0A;
+  --theme-surface: #141414;
+  --theme-surface-hover: #1F1F1F;
+  --theme-surface-active: #262626;
+  --theme-primary: #E50914;
+  --theme-primary-hover: #B20710;
+  --theme-primary-muted: #E5091420;
+  --theme-primary-text: #FFFFFF;
+  --theme-text: #FFFFFF;
+  --theme-text-secondary: #E5E5E5;
+  --theme-text-muted: #A3A3A3;
+  --theme-border: #2A2A2A;
+  --theme-border-hover: #404040;
+}
+
+[data-theme="light"] {
+  /* LIGHT MODE (Clean white admin) */
+  --theme-bg: #FFFFFF;
+  --theme-bg-secondary: #F7F7F7;
+  --theme-surface: #FFFFFF;
+  --theme-surface-hover: #F3F4F6;
+  --theme-surface-active: #E5E7EB;
+  --theme-primary: #2563EB;
+  --theme-primary-hover: #1D4ED8;
+  --theme-primary-muted: #2563EB20;
+  --theme-primary-text: #000000;
+  --theme-text: #111111;
+  --theme-text-secondary: #333333;
+  --theme-text-muted: #666666;
+  --theme-border: #E5E7EB;
+  --theme-border-hover: #D1D5DB;
 }
 
 @layer base {
@@ -45,12 +82,14 @@
     -moz-osx-font-smoothing: grayscale;
     background-color: var(--color-bg);
     color: var(--color-text);
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   body {
     min-height: 100vh;
     margin: 0;
     background-color: var(--color-bg);
+    transition: background-color 0.3s ease;
   }
 
   #root {
@@ -164,5 +203,11 @@ th {
 
   .animate-pulse {
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Override hard-coded text-white on primary buttons to use theme's primary text color */
+  .bg-primary.text-white,
+  .bg-primary .text-white {
+    color: var(--theme-primary-text) !important;
   }
 }

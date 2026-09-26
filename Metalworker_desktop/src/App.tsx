@@ -2,6 +2,7 @@
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./hooks/useAuth";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import AdminLayout from "./layouts/AdminLayout";
 import LoginPage from "./pages/Login";
 import DashboardPage from "./pages/Dashboard";
@@ -22,7 +23,8 @@ import JobImportPage from "./pages/JobImport";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
       <AuthProvider>
         <Routes>
           {/* Public route */}
@@ -64,6 +66,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
-    </BrowserRouter>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
