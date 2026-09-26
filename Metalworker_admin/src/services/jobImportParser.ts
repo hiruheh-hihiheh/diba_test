@@ -1,6 +1,7 @@
 import type { ParsedExcelRow, ImportPreviewSummary } from "../types/jobImport";
 
 export function normalizeHeader(header: string): string {
+  if (typeof header !== "string") return "";
   return header
     .toLowerCase()
     .trim()
@@ -48,21 +49,34 @@ export function parseDate(value: any): string | null {
   }
   
   if (typeof value === "number") {
-    // Excel dates are days since 1900.
     const days = Math.floor(value);
-    // Excel epoch: Dec 30, 1899
     const date = new Date(Date.UTC(1899, 11, 30 + days));
-    if (isNaN(date.getTime())) return null;
-    const y = date.getUTCFullYear();
-    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(date.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    if (!isNaN(date.getTime())) {
+      const y = date.getUTCFullYear();
+      const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(date.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+    return null;
   }
   
   const str = String(value).trim();
   
-  // YYYY-MM-DD or YYYY/MM/DD
-  const yyyyMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (/^\d+$/.test(str)) {
+    const num = parseInt(str, 10);
+    if (num > 10000 && num < 100000) {
+      const days = Math.floor(num);
+      const date = new Date(Date.UTC(1899, 11, 30 + days));
+      if (!isNaN(date.getTime())) {
+        const y = date.getUTCFullYear();
+        const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+        const d = String(date.getUTCDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+    }
+  }
+  
+  const yyyyMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (yyyyMatch) {
     const [_, yStr, mStr, dStr] = yyyyMatch;
     const y = parseInt(yStr, 10);
@@ -73,8 +87,7 @@ export function parseDate(value: any): string | null {
     }
   }
 
-  // DD-MM-YYYY or DD/MM/YYYY
-  const ddMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  const ddMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
   if (ddMatch) {
     const [_, dStr, mStr, yStr] = ddMatch;
     const y = parseInt(yStr, 10);

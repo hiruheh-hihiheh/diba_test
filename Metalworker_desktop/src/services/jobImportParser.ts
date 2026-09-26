@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { ParsedExcelRow, ParserResult, ImportPreviewSummary } from "../types/jobImport";
 
 export function normalizeHeader(header: string): string {
+  if (typeof header !== "string") return "";
   return header
     .toLowerCase()
     .trim()
@@ -61,21 +62,34 @@ export function parseDate(value: any): string | null {
   }
   
   if (typeof value === "number") {
-    try {
-      const parsed = XLSX.SSF.parse_date_code(value);
-      if (parsed) {
-        return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
-      }
-    } catch (e) {
-      // ignore
+    const days = Math.floor(value);
+    const date = new Date(Date.UTC(1899, 11, 30 + days));
+    if (!isNaN(date.getTime())) {
+      const y = date.getUTCFullYear();
+      const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(date.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     }
     return null;
   }
   
   const str = String(value).trim();
   
-  // YYYY-MM-DD or YYYY/MM/DD
-  const yyyyMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (/^\d+$/.test(str)) {
+    const num = parseInt(str, 10);
+    if (num > 10000 && num < 100000) {
+      const days = Math.floor(num);
+      const date = new Date(Date.UTC(1899, 11, 30 + days));
+      if (!isNaN(date.getTime())) {
+        const y = date.getUTCFullYear();
+        const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+        const d = String(date.getUTCDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+    }
+  }
+  
+  const yyyyMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (yyyyMatch) {
     const [_, yStr, mStr, dStr] = yyyyMatch;
     const y = parseInt(yStr, 10);
@@ -86,8 +100,7 @@ export function parseDate(value: any): string | null {
     }
   }
 
-  // DD-MM-YYYY or DD/MM/YYYY
-  const ddMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  const ddMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
   if (ddMatch) {
     const [_, dStr, mStr, yStr] = ddMatch;
     const y = parseInt(yStr, 10);
@@ -217,26 +230,32 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
         let bestSheet = null;
         let bestScore = -1;
         let ignoredSheets: string[] = [];
+        const sheetHeaderRowIndices: Record<string, number> = {};
 
         for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+          const json = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as any[][];
+          
+          let bestHeaderScore = -1;
+          let bestHeaderRowIndex = -1;
           
           if (json.length > 0) {
-            let headerRow: any[] = [];
-            for (const row of json) {
-              if (row.length > 0) {
-                headerRow = row;
-                break;
+            for (let r = 0; r < Math.min(json.length, 15); r++) {
+              const row = json[r];
+              if (row && row.length > 0) {
+                const score = scoreHeaders(row.map(String));
+                if (score > bestHeaderScore) {
+                  bestHeaderScore = score;
+                  bestHeaderRowIndex = r;
+                }
               }
             }
-            const score = scoreHeaders(headerRow.map(String));
-            
-            // Require at least 4 significant canonical columns to consider it the operational sheet
-            if (score > bestScore && score >= 4) {
+
+            if (bestHeaderScore > bestScore && bestHeaderScore >= 4) {
               if (bestSheet) ignoredSheets.push(bestSheet);
-              bestScore = score;
+              bestScore = bestHeaderScore;
               bestSheet = sheetName;
+              sheetHeaderRowIndices[sheetName] = bestHeaderRowIndex;
             } else {
               ignoredSheets.push(sheetName);
             }
@@ -256,13 +275,28 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
         }
 
         const sheet = workbook.Sheets[bestSheet];
-        const rawRows = XLSX.utils.sheet_to_json(sheet) as Record<string, any>[];
+        const jsonWithEmpty = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as any[][];
+        
+        const headerRowIndex = sheetHeaderRowIndices[bestSheet];
+        const headers = jsonWithEmpty[headerRowIndex].map(String);
         
         const parsedRows: ParsedExcelRow[] = [];
         const seenJobNos = new Set<string>();
 
-        rawRows.forEach((raw, i) => {
-          const parsed = parseRow(raw, i + 2); // +2 because 1-indexed and header row
+        for (let i = headerRowIndex + 1; i < jsonWithEmpty.length; i++) {
+          const rowArr = jsonWithEmpty[i];
+          if (!rowArr || rowArr.length === 0 || rowArr.every(cell => cell === null || cell === undefined || String(cell).trim() === '')) {
+            continue;
+          }
+
+          const raw: Record<string, any> = {};
+          for (let col = 0; col < headers.length; col++) {
+            if (headers[col]) {
+              raw[headers[col]] = rowArr[col];
+            }
+          }
+
+          const parsed = parseRow(raw, i + 1);
           
           if (parsed.normalized.job_no) {
             if (seenJobNos.has(parsed.normalized.job_no)) {
@@ -275,7 +309,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
           if (Object.keys(raw).length > 0) {
             parsedRows.push(parsed);
           }
-        });
+        }
 
         resolve({
           selectedSheet: bestSheet,
