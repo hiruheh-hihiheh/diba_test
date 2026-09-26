@@ -153,7 +153,7 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
     const t = String(rawType).toUpperCase().trim();
     if (t === "L" || t === "LABOUR") {
       normalized.job_type = "labour";
-    } else if (t === "BO" || t === "M" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)") {
+    } else if (t === "BO" || t === "M" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)" || t === "W/M") {
       normalized.job_type = "with_material";
     } else {
       warnings.push(`Unknown job type value: "${rawType}"`);

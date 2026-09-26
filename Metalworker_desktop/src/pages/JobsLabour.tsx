@@ -1,13 +1,14 @@
 // src/pages/JobsLabour.tsx
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle, Edit3, Image as ImageIcon, Folder as FolderIcon, ChevronRight, File, ArrowLeft } from "lucide-react";
-import { fetchJobsByType, fetchJobsByFolder } from "../services/jobs";
-import { fetchFolders } from "../services/folders";
+import { Briefcase, Search, Loader2, RefreshCw, AlertTriangle, Edit3, Image as ImageIcon, Folder as FolderIcon, ChevronRight, Trash2, Edit2 } from "lucide-react";
+import { fetchJobsByType, fetchJobsByFolder, removeJobFromFolder, removeMultipleJobsFromFolder } from "../services/jobs";
+import { fetchFolders, updateFolder, deleteFolder } from "../services/folders";
 import type { Job } from "../types/job";
 import type { AdminFolder } from "../types/folder";
 import JobEditModal from "../components/jobs/JobEditModal";
 import JobDrawingModal from "../components/jobs/JobDrawingModal";
+import AdminModal from "../components/ui/AdminModal";
 import { format, parseISO } from "date-fns";
 
 export default function JobsLabourPage() {
@@ -24,6 +25,15 @@ export default function JobsLabourPage() {
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [drawingModalJob, setDrawingModalJob] = useState<Job | null>(null);
 
+  // Folder Actions
+  const [renamingFolder, setRenamingFolder] = useState<AdminFolder | null>(null);
+  const [newName, setNewName] = useState("");
+  const [deletingFolder, setDeletingFolder] = useState<AdminFolder | null>(null);
+
+  // Multi-select
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [removingMultiple, setRemovingMultiple] = useState(false);
+
   const loadFolders = useCallback(async () => {
     setLoading(true);
     try {
@@ -39,6 +49,7 @@ export default function JobsLabourPage() {
   const loadJobs = useCallback(async () => {
     setError(null);
     setLoading(true);
+    setSelectedJobIds(new Set()); // Reset selection when loading jobs
     try {
       let list: Job[] = [];
       if (viewMode === "folders" && selectedFolder) {
@@ -75,12 +86,80 @@ export default function JobsLabourPage() {
   const groupedFolders = useMemo(() => {
     const groups: Record<string, AdminFolder[]> = {};
     for (const f of folders) {
+      if (!f.labourCount || f.labourCount === 0) continue;
       const monthYear = format(parseISO(f.created_at), "MMMM yyyy");
       if (!groups[monthYear]) groups[monthYear] = [];
       groups[monthYear].push(f);
     }
     return groups;
   }, [folders]);
+
+  async function handleRenameFolder() {
+    if (!renamingFolder || !newName.trim()) return;
+    const { ok, error: err } = await updateFolder(renamingFolder.id, newName.trim());
+    if (ok) {
+      if (selectedFolder?.id === renamingFolder.id) {
+        setSelectedFolder({ ...selectedFolder, name: newName.trim() });
+      }
+      setRenamingFolder(null);
+      loadFolders();
+    } else {
+      alert(`Failed to rename: ${err}`);
+    }
+  }
+
+  async function handleDeleteFolder() {
+    if (!deletingFolder) return;
+    const { ok, error: err } = await deleteFolder(deletingFolder.id);
+    if (ok) {
+      if (selectedFolder?.id === deletingFolder.id) {
+        setSelectedFolder(null);
+        setViewMode("folders");
+      }
+      setDeletingFolder(null);
+      loadFolders();
+    } else {
+      alert(`Failed to delete: ${err}`);
+    }
+  }
+
+  async function handleRemoveJob(job: Job) {
+    if (!selectedFolder) return;
+    const { ok, error: err } = await removeJobFromFolder(selectedFolder.id, job.id);
+    if (ok) {
+      loadJobs();
+    } else {
+      alert(`Failed to remove job: ${err}`);
+    }
+  }
+
+  async function handleRemoveMultipleJobs() {
+    if (!selectedFolder || selectedJobIds.size === 0) return;
+    setRemovingMultiple(true);
+    const { ok, error: err } = await removeMultipleJobsFromFolder(selectedFolder.id, Array.from(selectedJobIds));
+    setRemovingMultiple(false);
+    if (ok) {
+      loadJobs();
+    } else {
+      alert(`Failed to remove jobs: ${err}`);
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedJobIds.size === filtered.length) {
+      setSelectedJobIds(new Set());
+    } else {
+      setSelectedJobIds(new Set(filtered.map(j => j.id)));
+    }
+  };
+
+  const toggleSelectJob = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newSet = new Set(selectedJobIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedJobIds(newSet);
+  };
 
   const filtered = useMemo(() => {
     if (!search.trim()) return jobs;
@@ -128,6 +207,16 @@ export default function JobsLabourPage() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {viewMode === "folders" && selectedFolder && selectedJobIds.size > 0 && (
+            <button
+              onClick={handleRemoveMultipleJobs}
+              disabled={removingMultiple}
+              className="px-4 py-2 bg-danger-muted text-danger text-sm font-bold rounded-lg border border-danger/20 hover:bg-danger/10 transition-colors"
+            >
+              {removingMultiple ? "Removing..." : `Remove ${selectedJobIds.size} from Folder`}
+            </button>
+          )}
+
           <div className="flex bg-surface border border-border rounded-xl p-1">
             <button
               onClick={() => { setViewMode("folders"); setSelectedFolder(null); }}
@@ -185,9 +274,26 @@ export default function JobsLabourPage() {
                       <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
                         <FolderIcon size={20} className="fill-primary/20" />
                       </div>
+                      <div className="flex opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                        <button 
+                          onClick={() => { setRenamingFolder(folder); setNewName(folder.name); }}
+                          className="p-1.5 text-text-muted hover:text-primary transition-colors rounded-lg hover:bg-surface-hover"
+                          title="Rename Folder"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={() => setDeletingFolder(folder)}
+                          className="p-1.5 text-text-muted hover:text-danger transition-colors rounded-lg hover:bg-surface-hover"
+                          title="Delete Folder"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                     <h3 className="font-bold text-text mb-1 truncate" title={folder.name}>{folder.name}</h3>
-                    <p className="text-xs text-text-muted">Imported {format(parseISO(folder.created_at), "MMM d, yyyy")}</p>
+                    <p className="text-xs font-semibold text-primary mb-1">{folder.labourCount} Labour Jobs</p>
+                    <p className="text-[10px] text-text-muted">Imported {format(parseISO(folder.created_at), "MMM d, yyyy")}</p>
                   </div>
                 ))}
               </div>
@@ -209,6 +315,16 @@ export default function JobsLabourPage() {
             <table className="w-full whitespace-nowrap">
               <thead>
                 <tr className="border-b border-border">
+                  {viewMode === "folders" && selectedFolder && (
+                    <th className="px-5 py-3 w-10">
+                      <input 
+                        type="checkbox" 
+                        checked={filtered.length > 0 && selectedJobIds.size === filtered.length}
+                        onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded border-border text-primary focus:ring-primary accent-primary"
+                      />
+                    </th>
+                  )}
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Job No</th>
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Job Given Date</th>
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">PO Status</th>
@@ -219,12 +335,15 @@ export default function JobsLabourPage() {
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Status</th>
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">DRG Status</th>
                   <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3">Model Status</th>
+                  {viewMode === "folders" && selectedFolder && (
+                    <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-5 py-3 w-20">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-5 py-12 text-center">
+                    <td colSpan={12} className="px-5 py-12 text-center">
                       <AlertTriangle size={32} className="mx-auto text-text-muted/30 mb-2" />
                       <p className="text-sm text-text-muted">{search ? "No jobs match your search." : "No jobs found in this view."}</p>
                     </td>
@@ -233,9 +352,19 @@ export default function JobsLabourPage() {
                   filtered.map((item) => (
                     <tr 
                       key={item.id} 
-                      className="hover:bg-surface-hover/50 transition-colors cursor-pointer group"
+                      className={`hover:bg-surface-hover/50 transition-colors cursor-pointer group ${selectedJobIds.has(item.id) ? "bg-primary/5" : ""}`}
                       onClick={() => setEditingJob(item)}
                     >
+                      {viewMode === "folders" && selectedFolder && (
+                        <td className="px-5 py-4" onClick={e => e.stopPropagation()}>
+                          <input 
+                            type="checkbox"
+                            checked={selectedJobIds.has(item.id)}
+                            onChange={(e) => toggleSelectJob(item.id, e as any)}
+                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary accent-primary"
+                          />
+                        </td>
+                      )}
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-text group-hover:text-primary transition-colors">{item.job_no || "—"}</p>
@@ -264,6 +393,22 @@ export default function JobsLabourPage() {
                         </button>
                       </td>
                       <td className="px-5 py-4"><p className="text-sm text-text-muted">{item.model_status || "—"}</p></td>
+                      {viewMode === "folders" && selectedFolder && (
+                        <td className="px-5 py-4 text-center">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm("Remove this job from the folder?")) {
+                                handleRemoveJob(item);
+                              }
+                            }}
+                            className="p-1.5 text-text-muted hover:text-danger bg-surface hover:bg-danger/10 border border-transparent hover:border-danger/20 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                            title="Remove from Folder"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -279,7 +424,7 @@ export default function JobsLabourPage() {
         job={editingJob} 
         onSaved={() => {
           setEditingJob(null);
-          load();
+          loadJobs();
         }} 
       />
 
@@ -288,6 +433,42 @@ export default function JobsLabourPage() {
         onClose={() => setDrawingModalJob(null)}
         job={drawingModalJob}
       />
+
+      {/* Rename Modal */}
+      <AdminModal open={!!renamingFolder} onClose={() => setRenamingFolder(null)}>
+        <div className="bg-surface border border-border rounded-2xl shadow-xl w-full max-w-sm p-6 flex flex-col animate-scale-in">
+          <h2 className="text-xl font-bold text-text mb-4">Rename Folder</h2>
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            className="w-full bg-bg border border-border rounded-xl px-4 py-2 text-text focus:outline-none focus:border-primary mb-6"
+            autoFocus
+          />
+          <div className="flex gap-3 justify-end">
+            <button onClick={() => setRenamingFolder(null)} className="px-4 py-2 rounded-xl text-text font-semibold hover:bg-surface-hover">Cancel</button>
+            <button onClick={handleRenameFolder} className="px-4 py-2 rounded-xl bg-primary text-white font-bold hover:bg-primary-hover shadow-lg shadow-primary/20">Save</button>
+          </div>
+        </div>
+      </AdminModal>
+
+      {/* Delete Folder Modal */}
+      <AdminModal open={!!deletingFolder} onClose={() => setDeletingFolder(null)}>
+        <div className="bg-surface border border-border rounded-2xl shadow-xl w-full max-w-sm p-6 flex flex-col animate-scale-in">
+          <div className="w-12 h-12 rounded-full bg-danger/10 text-danger flex items-center justify-center mb-4">
+            <Trash2 size={24} />
+          </div>
+          <h2 className="text-xl font-bold text-text mb-2">Delete "{deletingFolder?.name}"?</h2>
+          <p className="text-sm text-text-muted mb-6">
+            This will remove the folder and unlink its jobs. 
+            <strong className="block mt-2 text-text">The actual jobs will remain safely in the system (available in All Jobs).</strong>
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button onClick={() => setDeletingFolder(null)} className="px-4 py-2 rounded-xl text-text font-semibold hover:bg-surface-hover">Cancel</button>
+            <button onClick={handleDeleteFolder} className="px-4 py-2 rounded-xl bg-danger text-white font-bold hover:bg-danger/90 shadow-lg shadow-danger/20">Delete Folder</button>
+          </div>
+        </div>
+      </AdminModal>
     </div>
   );
 }

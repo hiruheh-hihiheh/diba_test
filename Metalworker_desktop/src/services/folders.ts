@@ -17,15 +17,32 @@ export async function fetchFolders(): Promise<AdminFolder[]> {
   if (folders.length > 0) {
     const { data: counts } = await supabase
       .from(ITEMS_TABLE)
-      .select("folder_id");
+      .select("folder_id, item_type, item_id");
+      
+    const { data: allJobs } = await supabase.from("jobs").select("id, job_type");
+    const jobTypeMap = new Map((allJobs || []).map(j => [j.id, j.job_type]));
       
     const countMap = new Map<string, number>();
+    const labourCountMap = new Map<string, number>();
+    const withMaterialCountMap = new Map<string, number>();
+    
     for (const c of counts || []) {
       countMap.set(c.folder_id, (countMap.get(c.folder_id) || 0) + 1);
+      
+      if (c.item_type === "job") {
+        const type = jobTypeMap.get(c.item_id);
+        if (type === "labour") {
+          labourCountMap.set(c.folder_id, (labourCountMap.get(c.folder_id) || 0) + 1);
+        } else if (type === "with_material") {
+          withMaterialCountMap.set(c.folder_id, (withMaterialCountMap.get(c.folder_id) || 0) + 1);
+        }
+      }
     }
     
     for (const f of folders) {
       f.itemCount = countMap.get(f.id) || 0;
+      f.labourCount = labourCountMap.get(f.id) || 0;
+      f.withMaterialCount = withMaterialCountMap.get(f.id) || 0;
     }
   }
 
@@ -215,6 +232,12 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
         .then(({ data }) => { data?.forEach((r: { id: string; name: string }) => labelMap.set(r.id, r.name)); })
     );
   }
+  if (groups.has("job")) {
+    fetches.push(
+      supabase.from("jobs").select("id, job_no").in("id", groups.get("job")!)
+        .then(({ data }) => { data?.forEach((r: { id: string; job_no: string | null }) => labelMap.set(r.id, r.job_no ? `Job ${r.job_no}` : "Job")); })
+    );
+  }
 
   await Promise.all(fetches);
 
@@ -232,6 +255,9 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
       if (name) {
         label = item.item_type === "bill_group" ? `Bill Group - ${name}` : `Drawing Group - ${name}`;
       }
+    } else if (item.item_type === "job") {
+      const name = labelMap.get(item.item_id);
+      if (name) label = name;
     }
 
     return { ...item, label };
@@ -248,11 +274,12 @@ export async function fetchAvailableItems(
 
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
-  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
     supabase.from("owner_stock").select("id, folder_no, folio_number, source_of_metal").order("created_at", { ascending: false }),
     supabase.from("company_stock").select("id, folder_no, company_name, product_name").order("created_at", { ascending: false }),
     supabase.from("bill_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("drawing_groups").select("id, name").order("created_at", { ascending: false }),
+    supabase.from("jobs").select("id, job_no").order("created_at", { ascending: false }),
   ]);
 
   const available: { type: FolderItemType; id: string; label: string }[] = [];
@@ -269,16 +296,20 @@ export async function fetchAvailableItems(
   for (const g of drawingRes.data ?? []) {
     if (!existingIds.has(g.id)) available.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
   }
+  for (const j of jobRes.data ?? []) {
+    if (!existingIds.has(j.id)) available.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
+  }
 
   return available;
 }
 
 export async function fetchAllItems(): Promise<{ type: FolderItemType; id: string; label: string }[]> {
-  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
     supabase.from("owner_stock").select("id, folder_no, folio_number, source_of_metal").order("created_at", { ascending: false }),
     supabase.from("company_stock").select("id, folder_no, company_name, product_name").order("created_at", { ascending: false }),
     supabase.from("bill_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("drawing_groups").select("id, name").order("created_at", { ascending: false }),
+    supabase.from("jobs").select("id, job_no").order("created_at", { ascending: false }),
   ]);
 
   const items: { type: FolderItemType; id: string; label: string }[] = [];
@@ -287,6 +318,7 @@ export async function fetchAllItems(): Promise<{ type: FolderItemType; id: strin
   for (const s of companyRes.data ?? []) items.push({ type: "company_stock", id: s.id, label: buildCompanyStockLabel(s, s.id) });
   for (const g of billRes.data ?? []) items.push({ type: "bill_group", id: g.id, label: `Bill Group - ${g.name}` });
   for (const g of drawingRes.data ?? []) items.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
+  for (const j of jobRes.data ?? []) items.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
 
   return items;
 }

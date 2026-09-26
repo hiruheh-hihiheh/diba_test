@@ -13,6 +13,8 @@ export interface AdminFolder {
   created_at: string;
   updated_at: string;
   itemCount?: number;
+  labourCount?: number;
+  withMaterialCount?: number;
 }
 
 export interface FolderItem {

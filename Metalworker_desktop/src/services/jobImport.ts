@@ -208,32 +208,51 @@ export async function processJobImport(
         .filter(Boolean) as string[];
         
       if (jobIdsToAdd.length > 0) {
-        // Find existing max position in the folder
-        const { data: existingPos } = await supabase
+        // Check for existing items to prevent duplicates
+        const { data: existingItems } = await supabase
           .from("folder_items")
-          .select("position")
+          .select("item_id")
           .eq("folder_id", folderId)
-          .order("position", { ascending: false })
-          .limit(1);
+          .eq("item_type", "job")
+          .in("item_id", jobIdsToAdd);
           
-        let nextPos = existingPos && existingPos.length > 0 ? existingPos[0].position + 1 : 0;
-        
-        const insertData = jobIdsToAdd.map(id => {
-          const data = {
-            folder_id: folderId,
-            item_type: "job",
-            item_id: id,
-            position: nextPos
-          };
-          nextPos++;
-          return data;
-        });
-        
-        const { error: folderError } = await supabase.from("folder_items").insert(insertData);
-        if (folderError) {
-          console.warn("Failed to add some jobs to folder:", folderError.message);
+        const existingSet = new Set((existingItems || []).map(e => e.item_id));
+        const newJobIdsToAdd = jobIdsToAdd.filter(id => !existingSet.has(id));
+
+        if (newJobIdsToAdd.length > 0) {
+          // Find existing max position in the folder
+          const { data: existingPos } = await supabase
+            .from("folder_items")
+            .select("position")
+            .eq("folder_id", folderId)
+            .order("position", { ascending: false })
+            .limit(1);
+            
+          let nextPos = existingPos && existingPos.length > 0 ? existingPos[0].position + 1 : 0;
+          
+          const insertData = newJobIdsToAdd.map(id => {
+            const data = {
+              folder_id: folderId,
+              item_type: "job",
+              item_id: id,
+              position: nextPos
+            };
+            nextPos++;
+            return data;
+          });
+          
+          const { error: folderError } = await supabase.from("folder_items").insert(insertData);
+          if (folderError) {
+            console.warn("Failed to add some jobs to folder:", folderError.message);
+          }
         }
       }
+    }
+    
+    // Attempt to link import record to folder_id
+    if (folderId) {
+      // Ignore errors if the table hasn't been updated with folder_id column yet
+      await supabase.from("job_imports").update({ folder_id: folderId }).eq("id", importRecord.id);
     }
     
   } catch (err: any) {

@@ -47,6 +47,30 @@ export async function fetchJobsByFolder(folderId: string, type: JobType): Promis
   return (data ?? []) as Job[];
 }
 
+export async function removeJobFromFolder(folderId: string, jobId: string): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase
+    .from("folder_items")
+    .delete()
+    .match({ folder_id: folderId, item_id: jobId, item_type: "job" });
+    
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function removeMultipleJobsFromFolder(folderId: string, jobIds: string[]): Promise<{ ok: boolean; error?: string }> {
+  if (jobIds.length === 0) return { ok: true };
+  
+  const { error } = await supabase
+    .from("folder_items")
+    .delete()
+    .eq("folder_id", folderId)
+    .eq("item_type", "job")
+    .in("item_id", jobIds);
+    
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 export async function fetchJob(id: string): Promise<Job> {
   const { data, error } = await supabase
     .from(TABLE)
