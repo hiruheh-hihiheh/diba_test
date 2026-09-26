@@ -1,5 +1,5 @@
 // src/components/jobs/JobEditModal.tsx
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   View,
@@ -11,7 +11,8 @@ import {
   Platform,
   Alert,
 } from "react-native";
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import type { Job, JobInput } from "../../types/job";
@@ -26,6 +27,9 @@ interface Props {
 }
 
 export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [formData, setFormData] = useState<JobInput>({});
   const [loading, setLoading] = useState(false);
 
@@ -211,7 +215,7 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

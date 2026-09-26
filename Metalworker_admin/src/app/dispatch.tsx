@@ -1,5 +1,5 @@
 // src/app/dispatch.tsx
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,8 @@ import { router, useFocusEffect } from "expo-router";
 import type { Session } from "@supabase/supabase-js";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import {
   fetchAdminDispatches,
   getStatusColor,
@@ -31,6 +32,9 @@ interface UserGroup {
 }
 
 export default function DispatchScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [session, setSession] = useState<Session | null>(null);
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,13 +280,13 @@ useFocusEffect(
                           <View
                             style={[
                               styles.statusBadge,
-                              { backgroundColor: getStatusColor(dispatch.status) + "20" },
+                              { backgroundColor: getStatusColor(dispatch.status, theme) + "20" },
                             ]}
                           >
                             <Text
                               style={[
                                 styles.statusText,
-                                { color: getStatusColor(dispatch.status) },
+                                { color: getStatusColor(dispatch.status, theme) },
                               ]}
                               numberOfLines={1}
                             >
@@ -350,13 +354,13 @@ useFocusEffect(
                                   <View
                                     style={[
                                       styles.statusBadge,
-                                      { backgroundColor: getStatusColor(dispatch.status) + "20" },
+                                      { backgroundColor: getStatusColor(dispatch.status, theme) + "20" },
                                     ]}
                                   >
                                     <Text
                                       style={[
                                         styles.statusText,
-                                        { color: getStatusColor(dispatch.status) },
+                                        { color: getStatusColor(dispatch.status, theme) },
                                       ]}
                                       numberOfLines={1}
                                     >
@@ -387,7 +391,7 @@ useFocusEffect(
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -471,7 +475,7 @@ const styles = StyleSheet.create({
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
   },
-  filterTextActive: { color: "#FFFFFF" },
+  filterTextActive: { color: theme.colors.primaryButtonText },
 
   /* LIST CARD */
   listCard: {

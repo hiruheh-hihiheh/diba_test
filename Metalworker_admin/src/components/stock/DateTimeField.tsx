@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
 interface DateTimeFieldProps {
   label?: string;
@@ -16,6 +17,9 @@ export function DateTimeField({
   onChange,
   placeholder = "Select date & time",
 }: DateTimeFieldProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [mode, setMode] = useState<"date" | "time" | "datetime">("date");
   const [show, setShow] = useState(false);
   const [tempDate, setTempDate] = useState<Date | null>(null);
@@ -113,7 +117,7 @@ export function DateTimeField({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     marginBottom: theme.spacing.md,
   },

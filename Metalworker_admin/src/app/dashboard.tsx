@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +17,8 @@ import { useRouter } from "expo-router";
 import type { Session } from "@supabase/supabase-js";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import {
   createWorkerUser,
   deleteWorker,
@@ -36,6 +37,7 @@ import type { Dispatch } from "../types/dispatch";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { ThemeToggle } from "../components/ui/ThemeToggle";
 
 /*
   ============================
@@ -105,6 +107,8 @@ function StatCard({
   color: string;
   icon: string;
 }) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={[styles.statCard, { borderLeftColor: color }]}>
       <View style={[styles.statIcon, { backgroundColor: color + "15" }]}>
@@ -119,11 +123,14 @@ function StatCard({
 function DispatchRow({
   dispatch,
   onPress,
+  theme,
 }: {
   dispatch: Dispatch;
   onPress: (d: Dispatch) => void;
+  theme: any;
 }) {
-  const statusColor = getStatusColor(dispatch.status);
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const statusColor = getStatusColor(dispatch.status, theme);
   return (
     <Pressable onPress={() => onPress(dispatch)} style={styles.dispatchRow}>
       <View style={styles.dispatchRowTop}>
@@ -164,6 +171,8 @@ function WorkerRow({
   onDelete: (w: Profile) => void;
   isLast?: boolean;
 }) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={[styles.workerRow, isLast && styles.lastWorkerRow]}>
       <View style={styles.workerRowMain}>
@@ -250,6 +259,8 @@ function SectionHeader({
   subtitle?: string;
   rightElement?: React.ReactNode;
 }) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionHeaderLeft}>
@@ -278,6 +289,8 @@ function FolderSection({
   onEdit: (w: Profile) => void;
   onDelete: (w: Profile) => void;
 }) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.folderContainer}>
       <Pressable style={styles.folderHeader} onPress={onToggle}>
@@ -323,6 +336,9 @@ function FolderSection({
 */
 
 export default function DashboardScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -823,9 +839,12 @@ export default function DashboardScreen() {
               <Text style={styles.headerSubBold}>{adminUsername}</Text>
             </Text>
           </View>
-          <Pressable onPress={handleLogout} style={styles.logoutBtn}>
-            <Text style={styles.logoutText}>Logout</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <ThemeToggle />
+            <Pressable onPress={handleLogout} style={styles.logoutBtn}>
+              <Text style={styles.logoutText}>Logout</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* ==============================
@@ -935,6 +954,7 @@ export default function DashboardScreen() {
                   key={d.id}
                   dispatch={d}
                   onPress={handleDispatchPress}
+                  theme={theme}
                 />
               ))}
             </>
@@ -976,6 +996,7 @@ export default function DashboardScreen() {
                   key={d.id}
                   dispatch={d}
                   onPress={handleDispatchPress}
+                  theme={theme}
                 />
               ))}
             </>
@@ -1099,7 +1120,7 @@ export default function DashboardScreen() {
             <View
               style={[
                 styles.quickActionIcon,
-                { backgroundColor: "#3B82F6" + "20" },
+                { backgroundColor: theme.colors.primary + "20" },
               ]}
             >
               <Text style={styles.quickActionIconText}>🏠</Text>
@@ -1433,7 +1454,7 @@ export default function DashboardScreen() {
   ============================
 */
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -1775,7 +1796,7 @@ const styles = StyleSheet.create({
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
   },
-  filterTextActive: { color: "#FFFFFF" },
+  filterTextActive: { color: theme.colors.primaryButtonText },
 
   /* LIST CARD */
   listCard: {
@@ -1892,7 +1913,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: theme.spacing.md,
   },
-  avatarText: { color: "#FFFFFF", fontWeight: "700", fontSize: 18 },
+  avatarText: { color: theme.colors.primaryButtonText, fontWeight: "700", fontSize: 18 },
   workerInfo: { flex: 1 },
   workerNameRow: {
     flexDirection: "row",

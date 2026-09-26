@@ -1,7 +1,7 @@
 // src/app/folders.tsx
 // Folders overview: shows available items (draggable) + folders (drop targets)
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,8 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import {
   fetchFolders,
@@ -40,15 +41,18 @@ import { Input } from "../components/ui/Input";
 
 /* ─── Type badge config ─── */
 
-const TYPE_BADGES: Record<FolderItemType, { label: string; color: string }> = {
-  owner_stock: { label: "Owner", color: "#3B82F6" },
+const getTypeBadges = (theme: AppTheme): Record<FolderItemType, { label: string; color: string }> => ({
+  owner_stock: { label: "Owner", color: theme.colors.primary },
   company_stock: { label: "Company", color: "#8B5CF6" },
-  bill_group: { label: "Bill", color: "#F59E0B" },
-  drawing_group: { label: "Drawing", color: "#10B981" },
-  job: { label: "Job", color: "#EF4444" },
-};
+  bill_group: { label: "Bill", color: theme.colors.warning },
+  drawing_group: { label: "Drawing", color: theme.colors.success },
+  job: { label: "Job", color: theme.colors.danger },
+});
 
 export default function FoldersScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [folders, setFolders] = useState<AdminFolder[]>([]);
   const [allItems, setAllItems] = useState<
     { type: FolderItemType; id: string; label: string }[]
@@ -307,7 +311,7 @@ export default function FoldersScreen() {
                             All
                           </Text>
                         </Pressable>
-                        {Object.entries(TYPE_BADGES).map(([type, badge]) => (
+                        {Object.entries(getTypeBadges(theme)).map(([type, badge]) => (
                           <Pressable
                             key={type}
                             style={[styles.filterBtn, itemTypeFilter === type && styles.filterBtnActive]}
@@ -334,7 +338,7 @@ export default function FoldersScreen() {
                       scrollEnabled={!isDragActive}
                     >
                       {filteredItems.map((item) => {
-                        const badge = TYPE_BADGES[item.type];
+                        const badge = getTypeBadges(theme)[item.type];
                         return (
                           <DraggableItem
                             key={`${item.type}-${item.id}`}
@@ -486,7 +490,7 @@ export default function FoldersScreen() {
 
 /* ─── Styles ─── */
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

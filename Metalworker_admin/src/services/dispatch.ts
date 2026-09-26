@@ -103,21 +103,17 @@ export function getMaterialLabel(type: MaterialType): string {
   }
 }
 
-export function getStatusColor(status: string): string {
+export function getStatusColor(status: string, theme: any): string {
   switch (status) {
     case "submitted":
-      return "#F59E0B";
-
+      return theme.colors.warning;
     case "reviewed":
-      return "#3B82F6";
-
+      return theme.colors.primary;
     case "approved":
-      return "#10B981";
-
+      return theme.colors.success;
     case "rejected":
-      return "#EF4444";
-
+      return theme.colors.danger;
     default:
-      return "#6B7280";
+      return theme.colors.textMuted;
   }
 }

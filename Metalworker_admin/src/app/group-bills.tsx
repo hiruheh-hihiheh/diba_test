@@ -1,6 +1,6 @@
 // src/app/group-bills.tsx
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,8 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import {
   fetchBillGroups,
@@ -34,6 +35,9 @@ import type { GroupPhoto } from "../components/documents/GroupPhotoUploader";
 import { GroupPhotoPreviewModal } from "../components/documents/GroupPhotoPreviewModal";
 
 export default function GroupBillsScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [groups, setGroups] = useState<BillGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -276,7 +280,7 @@ export default function GroupBillsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

@@ -17,7 +17,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import type { FolderItemType } from "../../types/folder";
 
 /* ─── Public types ─── */
@@ -65,13 +66,13 @@ export function useDragDrop() {
 
 /* ─── Badge config (shared with FolderContents) ─── */
 
-const TYPE_COLORS: Record<FolderItemType, string> = {
-  owner_stock: "#3B82F6",
+const getTypeColors = (theme: AppTheme): Record<FolderItemType, string> => ({
+  owner_stock: theme.colors.primary,
   company_stock: "#8B5CF6",
-  bill_group: "#F59E0B",
-  drawing_group: "#10B981",
-  job: "#EF4444",
-};
+  bill_group: theme.colors.warning,
+  drawing_group: theme.colors.success,
+  job: theme.colors.danger,
+});
 
 const TYPE_LABELS: Record<FolderItemType, string> = {
   owner_stock: "Owner",
@@ -102,6 +103,9 @@ export function DragDropProvider({
   onDragStart,
   onDragEnd,
 }: DragDropProviderProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   /* ── React state ── */
   const [isDragging, setIsDragging] = useState(false);
   const [dragData, setDragData] = useState<DragData | null>(null);
@@ -246,13 +250,13 @@ export function DragDropProvider({
               <View
                 style={[
                   styles.ghostBadge,
-                  { backgroundColor: TYPE_COLORS[dragData.type] + "30" },
+                  { backgroundColor: getTypeColors(theme)[dragData.type] + "30" },
                 ]}
               >
                 <Text
                   style={[
                     styles.ghostBadgeText,
-                    { color: TYPE_COLORS[dragData.type] },
+                    { color: getTypeColors(theme)[dragData.type] },
                   ]}
                 >
                   {TYPE_LABELS[dragData.type]}
@@ -271,7 +275,7 @@ export function DragDropProvider({
 
 /* ─── Styles ─── */
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
     overflow: "visible" as any,

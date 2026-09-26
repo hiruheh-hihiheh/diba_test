@@ -2,7 +2,7 @@
 // Shows folder contents with drag-and-drop.
 // Header is fixed; FolderContents manages its own scroll + DnD provider.
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -12,11 +12,15 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import { FolderContents } from "../components/folders/FolderContents";
 
 export default function FolderDetailScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const params = useLocalSearchParams<{ id?: string | string[]; name?: string | string[] }>();
   const folderId = Array.isArray(params.id) ? params.id[0] : params.id;
   const folderName = Array.isArray(params.name) ? params.name[0] : params.name;
@@ -66,7 +70,7 @@ export default function FolderDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

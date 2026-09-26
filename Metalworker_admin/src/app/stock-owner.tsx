@@ -1,6 +1,6 @@
 // src/app/stock-owner.tsx
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,8 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import {
   fetchOwnerStocks,
@@ -30,6 +31,9 @@ import { Button } from "../components/ui/Button";
 import { OwnerStockForm } from "../components/stock/OwnerStockForm";
 
 export default function StockOwnerScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [stocks, setStocks] = useState<OwnerStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -257,7 +261,7 @@ export default function StockOwnerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

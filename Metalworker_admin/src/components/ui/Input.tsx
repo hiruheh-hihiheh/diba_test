@@ -1,3 +1,4 @@
+import React, { useMemo } from "react";
 import {
   StyleSheet,
   Text,
@@ -6,13 +7,17 @@ import {
   type TextInputProps,
 } from "react-native";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
 interface InputProps extends TextInputProps {
   label?: string;
 }
 
 export function Input({ label, style, ...rest }: InputProps) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
     <View style={styles.wrap}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
@@ -25,7 +30,7 @@ export function Input({ label, style, ...rest }: InputProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   wrap: { marginBottom: theme.spacing.md },
   label: {
     color: theme.colors.textMuted,

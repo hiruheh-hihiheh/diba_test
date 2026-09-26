@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import type { GroupPhoto } from "./GroupPhotoUploader";
 
 interface GroupPhotoPreviewModalProps {
@@ -29,6 +30,9 @@ export function GroupPhotoPreviewModal({
   date,
   fetchPhotos,
 }: GroupPhotoPreviewModalProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [photos, setPhotos] = useState<GroupPhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,7 +131,7 @@ export function GroupPhotoPreviewModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

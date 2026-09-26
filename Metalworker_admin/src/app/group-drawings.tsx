@@ -1,6 +1,6 @@
 // src/app/group-drawings.tsx
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,8 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import {
   fetchDrawingGroups,
@@ -34,6 +35,9 @@ import type { GroupPhoto } from "../components/documents/GroupPhotoUploader";
 import { GroupPhotoPreviewModal } from "../components/documents/GroupPhotoPreviewModal";
 
 export default function GroupDrawingsScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [groups, setGroups] = useState<DrawingGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -267,7 +271,7 @@ export default function GroupDrawingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

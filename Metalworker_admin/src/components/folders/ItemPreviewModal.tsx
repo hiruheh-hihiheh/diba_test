@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import type { FolderItemType } from "../../types/folder";
 import { fetchOwnerStock } from "../../services/ownerStock";
 import { fetchCompanyStock } from "../../services/companyStock";
@@ -42,6 +43,9 @@ export function ItemPreviewModal({
   itemId,
   label,
 }: ItemPreviewModalProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [details, setDetails] = useState<any>(null);
   const [photos, setPhotos] = useState<GroupPhoto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -243,7 +247,7 @@ export function ItemPreviewModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

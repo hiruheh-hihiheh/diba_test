@@ -1,7 +1,7 @@
 // src/components/stock/StockPhotoUploader.tsx
 // Single-photo uploader with camera capture + gallery pick + Cloudinary upload
 
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -13,7 +13,8 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import { uploadPhoto } from "../../services/cloudinary";
 
 interface StockPhotoUploaderProps {
@@ -29,6 +30,9 @@ export function StockPhotoUploader({
   onPhotoUploaded,
   onPhotoRemoved,
 }: StockPhotoUploaderProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -151,7 +155,7 @@ export function StockPhotoUploader({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     marginBottom: theme.spacing.md,
   },

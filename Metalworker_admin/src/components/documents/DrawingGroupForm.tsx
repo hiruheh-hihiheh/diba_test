@@ -1,6 +1,6 @@
 // src/components/documents/DrawingGroupForm.tsx
 
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { GroupPhotoUploader, type GroupPhoto } from "./GroupPhotoUploader";
@@ -33,6 +34,9 @@ export function DrawingGroupForm({
   editingItem,
   existingPhotos = [],
 }: DrawingGroupFormProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const isEdit = !!editingItem;
 
   const [name, setName] = useState(editingItem?.name ?? "");
@@ -151,7 +155,7 @@ export function DrawingGroupForm({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,

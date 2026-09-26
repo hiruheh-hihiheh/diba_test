@@ -2,7 +2,7 @@
 // Folder items with drag-to-reorder + available items with drag-to-add.
 // Wraps its own DragDropProvider + ScrollView for proper ghost positioning.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,8 @@ import {
   View,
 } from "react-native";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import type { FolderItemDisplay, FolderItemType } from "../../types/folder";
 import {
   addItemToFolder,
@@ -38,19 +39,22 @@ interface FolderContentsProps {
   folderId: string;
 }
 
-const TYPE_BADGES: Record<FolderItemType, { label: string; color: string }> = {
-  owner_stock: { label: "Owner", color: "#3B82F6" },
+const getTypeBadges = (theme: AppTheme): Record<FolderItemType, { label: string; color: string }> => ({
+  owner_stock: { label: "Owner", color: theme.colors.primary },
   company_stock: { label: "Company", color: "#8B5CF6" },
-  bill_group: { label: "Bill", color: "#F59E0B" },
-  drawing_group: { label: "Drawing", color: "#10B981" },
-  job: { label: "Job", color: "#EF4444" },
-};
+  bill_group: { label: "Bill", color: theme.colors.warning },
+  drawing_group: { label: "Drawing", color: theme.colors.success },
+  job: { label: "Job", color: theme.colors.danger },
+});
 
 const DROP_ZONE_ID = "folder-items";
 
 /* ─── Component ─── */
 
 export function FolderContents({ folderId }: FolderContentsProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [items, setItems] = useState<FolderItemDisplay[]>([]);
   const [available, setAvailable] = useState<
     { type: FolderItemType; id: string; label: string }[]
@@ -497,7 +501,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
               </View>
             ) : (
               items.map((item, index) => {
-                const badge = TYPE_BADGES[item.item_type];
+                const badge = getTypeBadges(theme)[item.item_type];
                 return (
                   <DraggableItem
                     key={item.id}
@@ -644,7 +648,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
             </Text>
           ) : (
             available.map((item) => {
-              const badge = TYPE_BADGES[item.type];
+              const badge = getTypeBadges(theme)[item.type];
               return (
                 <DraggableItem
                   key={`${item.type}-${item.id}`}
@@ -762,7 +766,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
 
 /* ─── Styles ─── */
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   loadingContainer: {
     flex: 1,
     paddingVertical: theme.spacing.xl,

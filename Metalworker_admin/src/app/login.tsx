@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -11,12 +11,16 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase, usernameToEmail } from "../services/supabase";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 
 export default function LoginScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -177,7 +181,7 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -205,7 +209,7 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   logoText: {
-    color: "#FFFFFF",
+    color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.lg,
     fontWeight: "800",
   },

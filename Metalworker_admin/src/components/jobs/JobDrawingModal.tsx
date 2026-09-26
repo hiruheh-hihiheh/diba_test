@@ -1,5 +1,5 @@
 // src/components/jobs/JobDrawingModal.tsx
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Modal,
   View,
@@ -14,7 +14,8 @@ import {
   Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import type { Job } from "../../types/job";
 import type { JobDrawing } from "../../types/jobDrawing";
 import { fetchJobDrawings, createJobDrawing, deleteJobDrawing, setPrimaryDrawing } from "../../services/jobDrawings";
@@ -28,6 +29,9 @@ interface Props {
 }
 
 export function JobDrawingModal({ visible, onClose, job }: Props) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [drawings, setDrawings] = useState<JobDrawing[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -274,7 +278,7 @@ export function JobDrawingModal({ visible, onClose, job }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

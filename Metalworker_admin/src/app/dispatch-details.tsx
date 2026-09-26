@@ -1,5 +1,5 @@
 // src/app/dispatch-details.tsx
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,8 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import {
   fetchDispatchById,
   updateDispatch,
@@ -27,6 +28,9 @@ import {
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
 
 export default function DispatchDetailsScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const params = useLocalSearchParams<{ id?: string | string[] }>();
 const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
 
@@ -331,14 +335,14 @@ status: editStatus,
                   style={[
                     styles.statusBadgeLarge,
                     {
-                      backgroundColor: getStatusColor(dispatch.status) + "20",
+                      backgroundColor: getStatusColor(dispatch.status, theme) + "20",
                     },
                   ]}
                 >
                   <Text
                     style={[
                       styles.statusTextLarge,
-                      { color: getStatusColor(dispatch.status) },
+                      { color: getStatusColor(dispatch.status, theme) },
                     ]}
                   >
                     {dispatch.status.toUpperCase()}
@@ -415,8 +419,8 @@ status: editStatus,
                         style={[
                           styles.statusOption,
                           editStatus === opt.key && {
-                            backgroundColor: getStatusColor(opt.key) + "20",
-                            borderColor: getStatusColor(opt.key),
+                            backgroundColor: getStatusColor(opt.key, theme) + "20",
+                            borderColor: getStatusColor(opt.key, theme),
                           },
                         ]}
                         onPress={() => setEditStatus(opt.key)}
@@ -425,7 +429,7 @@ status: editStatus,
                           style={[
                             styles.statusOptionText,
                             editStatus === opt.key && {
-                              color: getStatusColor(opt.key),
+                              color: getStatusColor(opt.key, theme),
                             },
                           ]}
                         >
@@ -475,7 +479,7 @@ status: editStatus,
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -503,7 +507,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
   },
   retryBtnText: {
-    color: "#FFFFFF",
+    color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.md,
     fontWeight: "700",
   },
@@ -668,7 +672,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   editBtnText: {
-    color: "#FFFFFF",
+    color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.md,
     fontWeight: "700",
   },
@@ -776,7 +780,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveBtnText: {
-    color: "#FFFFFF",
+    color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.md,
     fontWeight: "700",
   },

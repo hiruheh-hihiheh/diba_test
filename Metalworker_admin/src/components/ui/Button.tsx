@@ -1,3 +1,4 @@
+import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -7,7 +8,8 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
 interface ButtonProps {
   title: string;
@@ -26,6 +28,9 @@ export function Button({
   variant = "primary",
   style,
 }: ButtonProps) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   const unavailable = disabled || loading;
 
   return (
@@ -41,7 +46,7 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "ghost" ? theme.colors.text : "#FFFFFF"} />
+        <ActivityIndicator color={variant === "ghost" ? theme.colors.text : theme.colors.primaryButtonText} />
       ) : (
         <Text style={[styles.text, variant === "ghost" && styles.ghostText]}>
           {title}
@@ -51,7 +56,7 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   base: {
     minHeight: 50,
     borderRadius: theme.radius.md,
@@ -67,6 +72,6 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85 },
   disabled: { opacity: 0.5 },
-  text: { color: "#FFFFFF", fontSize: theme.textSizes.md, fontWeight: "600" },
+  text: { color: theme.colors.primaryButtonText, fontSize: theme.textSizes.md, fontWeight: "600" },
   ghostText: { color: theme.colors.text },
 });

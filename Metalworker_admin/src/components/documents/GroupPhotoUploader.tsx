@@ -1,7 +1,7 @@
 // src/components/documents/GroupPhotoUploader.tsx
 // Multi-photo uploader for bill/drawing groups
 
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -13,7 +13,8 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { Platform } from "react-native";
 
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 import { uploadPhoto } from "../../services/cloudinary";
 
 export interface GroupPhoto {
@@ -36,6 +37,9 @@ export function GroupPhotoUploader({
   onPhotoRemoved,
   onPhotosReordered,
 }: GroupPhotoUploaderProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,7 +200,7 @@ export function GroupPhotoUploader({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     marginBottom: theme.spacing.md,
   },

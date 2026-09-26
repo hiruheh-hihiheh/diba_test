@@ -5,7 +5,8 @@ import React, { useCallback, useEffect, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { useDragDrop } from "./DragDropProvider";
-import { theme } from "../../constants/theme";
+import { AppTheme } from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
 interface FolderDropTargetProps {
   zoneId: string;
@@ -13,6 +14,9 @@ interface FolderDropTargetProps {
 }
 
 export function FolderDropTarget({ zoneId, children }: FolderDropTargetProps) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const { registerDropZone, unregisterDropZone, activeDropZone, isDragging } =
     useDragDrop();
   const viewRef = useRef<View>(null);
@@ -61,7 +65,7 @@ export function FolderDropTarget({ zoneId, children }: FolderDropTargetProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   hoverOverlay: {
     position: "absolute",
     left: 0,

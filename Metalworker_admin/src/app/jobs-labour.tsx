@@ -1,5 +1,5 @@
 // src/app/jobs-labour.tsx
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,15 +13,20 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { theme } from "../constants/theme";
+import { AppTheme } from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 import { supabase } from "../services/supabase";
 import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
 import { Input } from "../components/ui/Input";
 import { JobEditModal } from "../components/jobs/JobEditModal";
+import { ThemeToggle } from "../components/ui/ThemeToggle";
 import { JobDrawingModal } from "../components/jobs/JobDrawingModal";
 
 export default function JobsLabourScreen() {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +101,7 @@ export default function JobsLabourScreen() {
               {filteredJobs.length} {filteredJobs.length === 1 ? "Job" : "Jobs"}
             </Text>
           </View>
+          <ThemeToggle />
         </View>
 
         {/* Search */}
@@ -207,7 +213,7 @@ export default function JobsLabourScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: theme.colors.background,
