@@ -307,6 +307,17 @@ export default function JobsLabourPage() {
     setSelectedAvailableIds(s);
   };
 
+  const toggleSelectAllAvailable = () => {
+    const allFilteredSelected = filteredAvailable.length > 0 && filteredAvailable.every(j => selectedAvailableIds.has(j.id));
+    const next = new Set(selectedAvailableIds);
+    if (allFilteredSelected) {
+      filteredAvailable.forEach(j => next.delete(j.id));
+    } else {
+      filteredAvailable.forEach(j => next.add(j.id));
+    }
+    setSelectedAvailableIds(next);
+  };
+
   // ─── Render ─────────────────────────────────────────────
 
   if (loading && !refreshing) return <div className="flex items-center justify-center py-32"><Loader2 size={32} className="text-primary animate-spin" /></div>;
@@ -608,6 +619,29 @@ export default function JobsLabourPage() {
                   placeholder="Search..."
                   className="w-full pl-8 pr-3 py-2 rounded-lg bg-bg border border-border text-xs text-text placeholder:text-text-muted/50 focus:outline-none focus:border-primary"
                 />
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-text">
+                  <input
+                    type="checkbox"
+                    ref={(el) => {
+                      if (el) {
+                        const allFilteredSelected = filteredAvailable.length > 0 && filteredAvailable.every(j => selectedAvailableIds.has(j.id));
+                        const someFilteredSelected = filteredAvailable.length > 0 && filteredAvailable.some(j => selectedAvailableIds.has(j.id)) && !allFilteredSelected;
+                        el.indeterminate = someFilteredSelected;
+                      }
+                    }}
+                    checked={filteredAvailable.length > 0 && filteredAvailable.every(j => selectedAvailableIds.has(j.id))}
+                    onChange={toggleSelectAllAvailable}
+                    className="w-3.5 h-3.5 rounded border-border text-primary accent-primary cursor-pointer"
+                  />
+                  Select All
+                </label>
+                <span className="text-[10px] text-text-muted">
+                  {selectedAvailableIds.size > 0 
+                    ? (selectedAvailableIds.size === availableJobs.length ? `All ${availableJobs.length} selected` : `${selectedAvailableIds.size} selected`) 
+                    : "0 selected"}
+                </span>
               </div>
               {selectedAvailableIds.size > 0 && (
                 <button
