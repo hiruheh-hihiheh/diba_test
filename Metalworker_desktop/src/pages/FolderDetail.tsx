@@ -1,117 +1,211 @@
+// src/pages/FolderDetail.tsx
+
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, FolderOpen, Loader2, RefreshCw, Eye, Search,
-  AlertTriangle, Trash2, Plus, GripVertical, CheckSquare, Square,
-  Package, Building2, FileText, PenTool
+  ArrowLeft,
+  FolderOpen,
+  Loader2,
+  RefreshCw,
+  Eye,
+  Trash2,
+  Plus,
+  GripVertical,
+  Package,
+  Building2,
+  FileText,
+  PenTool,
+  Briefcase,
+  Layers,
+  ExternalLink,
 } from "lucide-react";
 import {
-  fetchFolder, fetchFolderItems, resolveFolderItemLabels,
-  fetchAvailableItems, addFolderItem, removeFolderItem,
-  addMultipleItemsToFolder, removeMultipleItemsFromFolder,
-  reorderFolderItems
+  fetchFolder,
+  fetchFolderItems,
+  resolveFolderItemLabels,
+  fetchAvailableItems,
+  addFolderItem,
+  removeFolderItem,
+  addMultipleItemsToFolder,
+  removeMultipleItemsFromFolder,
+  reorderFolderItems,
 } from "../services/folders";
 import type { AdminFolder, FolderItemDisplay, FolderItemType } from "../types/folder";
-import AdminModal from "../components/ui/AdminModal";
+import { usePageMeta } from "../contexts/PageMetaContext";
+import { useSelection } from "../hooks/useSelection";
+import { useToast } from "../components/ui/Toast";
+import { useConfirm } from "../components/ui/ConfirmDialog";
+import SearchInput from "../components/ui/SearchInput";
+import EmptyState from "../components/ui/EmptyState";
+import Modal from "../components/ui/Modal";
+import IconButton from "../components/ui/IconButton";
+import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
+import BulkActionBar from "../components/ui/BulkActionBar";
+import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
+import { readableError } from "../utils/readableError";
+
+interface LibItem {
+  type: FolderItemType;
+  id: string;
+  label: string;
+}
 
 function getItemIcon(type: FolderItemType) {
   switch (type) {
-    case "owner_stock": return <Package size={16} className="text-purple" />;
-    case "company_stock": return <Building2 size={16} className="text-primary" />;
-    case "bill_group": return <FileText size={16} className="text-warning" />;
-    case "drawing_group": return <PenTool size={16} className="text-success" />;
-    case "job": return <Package size={16} className="text-red-500" />;
+    case "owner_stock":
+      return <Package size={16} className="text-purple" />;
+    case "company_stock":
+      return <Building2 size={16} className="text-primary" />;
+    case "bill_group":
+      return <FileText size={16} className="text-warning" />;
+    case "drawing_group":
+      return <PenTool size={16} className="text-success" />;
+    case "job":
+      return <Briefcase size={16} className="text-danger" />;
   }
 }
 
 function getItemTypeLabel(type: FolderItemType) {
   switch (type) {
-    case "owner_stock": return "Owner Stock";
-    case "company_stock": return "Company Stock";
-    case "bill_group": return "Bill Group";
-    case "drawing_group": return "Drawing Group";
-    case "job": return "Job";
+    case "owner_stock":
+      return "Owner Stock";
+    case "company_stock":
+      return "Company Stock";
+    case "bill_group":
+      return "Bill Group";
+    case "drawing_group":
+      return "Drawing Group";
+    case "job":
+      return "Job";
   }
 }
 
-function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode }) {
-  return (
-    <AdminModal open={open} onClose={onClose}>
-      <div className="relative bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in flex flex-col max-h-[calc(100vh-104px)]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
-          <h3 className="text-[16px] font-bold text-text">{title}</h3>
-          <button onClick={onClose} className="p-2 rounded-xl text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"><X size={18} /></button>
-        </div>
-        <div className="p-6 flex-1 min-h-0 overflow-y-auto">{children}</div>
-        {footer && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border shrink-0 bg-surface rounded-b-2xl">
-            {footer}
-          </div>
-        )}
-      </div>
-    </AdminModal>
-  );
-}
+/** Where each item type is managed, so the details dialog can link out. */
+const itemRoute: Record<FolderItemType, { path: string; label: string }> = {
+  owner_stock: { path: "/stock-owner", label: "Open Stock by Owner" },
+  company_stock: { path: "/stock-company", label: "Open Stock by Company" },
+  bill_group: { path: "/group-bills", label: "Open Group Bills" },
+  drawing_group: { path: "/group-drawings", label: "Open Group Drawings" },
+  job: { path: "/jobs/labour", label: "Open Jobs" },
+};
 
-// Icon component since X was missing from import but used in Modal
-import { X } from "lucide-react";
+const ITEM_FILTERS: ("all" | FolderItemType)[] = [
+  "all",
+  "owner_stock",
+  "company_stock",
+  "bill_group",
+  "drawing_group",
+];
+
+/** How many "available items" rows are mounted at once. See visibleCount. */
+const AVAILABLE_PAGE = 60;
 
 export default function FolderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [folder, setFolder] = useState<AdminFolder | null>(null);
   const [folderItems, setFolderItems] = useState<FolderItemDisplay[]>([]);
-  const [availableItems, setAvailableItems] = useState<{ type: FolderItemType; id: string; label: string }[]>([]);
-  
+  const [availableItems, setAvailableItems] = useState<LibItem[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  
-  // Available Items filtering
+  const [error, setError] = useState<string | null>(null);
+  /** False for "gone" / "not allowed", where a retry button cannot help. */
+  const [errorRetryable, setErrorRetryable] = useState(true);
+
+  /* Search over the items *inside* the folder, which did not exist before. */
+  const [insideSearch, setInsideSearch] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | FolderItemType>("all");
 
-  // Selection Mode state
-  const [selectionMode, setSelectionMode] = useState<boolean>(false);
-  const [selectedFolderItems, setSelectedFolderItems] = useState<Set<string>>(new Set());
-  const [selectedAvailableItems, setSelectedAvailableItems] = useState<Set<string>>(new Set());
-  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  /* The old UI hid every checkbox behind a "Select Multiple" toggle, so bulk
+     work needed an extra mode switch. Selection is now always available. */
+  const insideSelection = useSelection();
+  const availableSelection = useSelection();
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [addingOneId, setAddingOneId] = useState<string | null>(null);
+  const [removingOneId, setRemovingOneId] = useState<string | null>(null);
 
-  // Drag and Drop (Reorder)
-  const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [previewItem, setPreviewItem] = useState<LibItem | null>(null);
 
-  // Preview Modal
-  const [previewItem, setPreviewItem] = useState<{ type: FolderItemType; id: string; label: string } | null>(null);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!id) return;
+      if (!silent) setLoading(true);
+      try {
+        const [fData, fItemsData, aItemsData] = await Promise.all([
+          fetchFolder(id),
+          fetchFolderItems(id),
+          fetchAvailableItems(id),
+        ]);
+        setFolder(fData);
+        setFolderItems(await resolveFolderItemLabels(fItemsData));
+        setAvailableItems(aItemsData);
+        insideSelection.prune(fItemsData.map((i) => i.id));
+        availableSelection.prune(aItemsData.map((i) => i.id));
+        setError(null);
+        setErrorRetryable(true);
+      } catch (e) {
+        /* This used to print the raw database message, so a folder whose row
+           could not be read showed "Cannot coerce the result to a single JSON
+           object" above a "Try again" button that could never succeed. */
+        const r = readableError(e, {
+          subject: "this folder",
+          fallback:
+            "This folder could not be opened. It may have been deleted, or it may not be visible to your account.",
+          byKind: {
+            "not-found":
+              "This folder no longer exists — it was probably deleted. Nothing inside it was affected.",
+            forbidden:
+              "Your account does not have permission to open this folder.",
+            connection:
+              "Could not reach the server, so this folder could not be loaded. Check your connection and try again.",
+          },
+        });
+        setError(r.message);
+        setErrorRetryable(r.retryable);
+      } finally {
+        setLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [id]
+  );
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    try {
-      const [fData, fItemsData, aItemsData] = await Promise.all([
-        fetchFolder(id),
-        fetchFolderItems(id),
-        fetchAvailableItems(id)
-      ]);
-      setFolder(fData);
-      
-      const resolvedItems = await resolveFolderItemLabels(fItemsData);
-      setFolderItems(resolvedItems);
-      setAvailableItems(aItemsData);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to load folder details.");
-      navigate("/folders");
-    } finally {
-      setLoading(false);
-    }
-  }, [id, navigate]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  useEffect(() => { load(); }, [load]);
+  usePageMeta(
+    {
+      title: folder?.name ?? "Folder",
+      crumbs: [{ label: "Folders", to: "/folders" }, { label: folder?.name ?? "…" }],
+      subtitle: folder
+        ? `${folderItems.length} item${folderItems.length === 1 ? "" : "s"} inside`
+        : undefined,
+      /* The body header reports the same count and the folder type. */
+      selfTitles: true,
+    },
+    [folder?.id, folder?.name, folderItems.length]
+  );
 
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
+    await load(true);
     setRefreshing(false);
   }
+
+  const filteredInside = useMemo(() => {
+    if (!insideSearch.trim()) return folderItems;
+    const q = insideSearch.toLowerCase();
+    return folderItems.filter(
+      (i) => i.label.toLowerCase().includes(q) || getItemTypeLabel(i.item_type).toLowerCase().includes(q)
+    );
+  }, [folderItems, insideSearch]);
 
   const filteredAvailable = useMemo(() => {
     return availableItems.filter((item) => {
@@ -121,378 +215,682 @@ export default function FolderDetail() {
     });
   }, [availableItems, search, filter]);
 
-  // --- HTML5 Drag and Drop for Reordering ---
+  /* ── Available items: bounded rendering ──────────────
+     The library holds every record in the system, so this panel can face
+     thousands of items. Mounting them all made the folder page slow to open
+     and left a scroll area tens of thousands of pixels tall. Rows are revealed
+     in blocks instead, which also keeps the "Select all shown" checkbox honest
+     — it selects exactly the rows on screen, which is what the label promises. */
+
+  const [visibleCount, setVisibleCount] = useState(AVAILABLE_PAGE);
+  const availableKey = `${filter}|${search.trim().toLowerCase()}`;
+  const [lastAvailableKey, setLastAvailableKey] = useState(availableKey);
+  if (availableKey !== lastAvailableKey) {
+    // A new search or filter is a new result set: start it from the top.
+    setLastAvailableKey(availableKey);
+    setVisibleCount(AVAILABLE_PAGE);
+  }
+
+  const visibleAvailable = useMemo(
+    () => filteredAvailable.slice(0, visibleCount),
+    [filteredAvailable, visibleCount]
+  );
+  const remainingAvailable = filteredAvailable.length - visibleAvailable.length;
+
+  const insideIds = useMemo(() => filteredInside.map((i) => i.id), [filteredInside]);
+  const availableIds = useMemo(() => visibleAvailable.map((i) => i.id), [visibleAvailable]);
+
+  /* ── Reordering ────────────────────────────────────── */
+
   function handleDragStart(e: React.DragEvent, index: number) {
-    if (selectionMode) {
-      e.preventDefault();
-      return;
-    }
-    setDraggedItemIndex(index);
+    setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
   }
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault();
-    if (draggedItemIndex === null || draggedItemIndex === index || selectionMode) return;
-    
-    // Optimistic UI reorder
+    if (draggedIndex === null || draggedIndex === index) return;
     const newItems = [...folderItems];
-    const draggedItem = newItems[draggedItemIndex];
-    newItems.splice(draggedItemIndex, 1);
-    newItems.splice(index, 0, draggedItem);
-    
-    setDraggedItemIndex(index);
+    const [moved] = newItems.splice(draggedIndex, 1);
+    newItems.splice(index, 0, moved);
+    setDraggedIndex(index);
     setFolderItems(newItems);
   }
 
-  async function handleDragEnd(e: React.DragEvent) {
-    e.preventDefault();
-    if (draggedItemIndex === null || selectionMode) return;
-    setDraggedItemIndex(null);
-
-    // Save new positions
-    const updates = folderItems.map((item, index) => ({
-      id: item.id,
-      position: index
-    }));
-    
-    const res = await reorderFolderItems(updates);
+  async function handleDragEnd() {
+    if (draggedIndex === null) return;
+    setDraggedIndex(null);
+    const res = await reorderFolderItems(folderItems.map((item, index) => ({ id: item.id, position: index })));
     if (!res.ok) {
-      alert("Failed to save new order.");
-      await load();
+      toast.error({
+        title: "Could not save the new order",
+        description: res.error || "The order was restored to the previous sequence.",
+      });
+      await load(true);
+    } else {
+      toast.success({ title: "Order saved" });
     }
   }
 
-  // --- Single Item Actions ---
-  async function handleAddSingle(item: { type: FolderItemType; id: string; label: string }) {
+  /* ── Single item actions ───────────────────────────── */
+
+  async function handleAddSingle(item: LibItem) {
     if (!id) return;
+    setAddingOneId(item.id);
     const res = await addFolderItem(id, item.type, item.id);
-    if (res.ok) await load();
-    else alert(res.error || "Failed to add item.");
+    setAddingOneId(null);
+    if (res.ok) {
+      await load(true);
+      toast.success({
+        title: "Added to folder",
+        description: `${item.label} was added to ${folder?.name}.`,
+      });
+    } else {
+      toast.error({
+        title: "Could not add item",
+        description: res.error || `${item.label} was not added. Please try again.`,
+      });
+    }
   }
 
-  async function handleRemoveSingle(folderItemId: string) {
-    const res = await removeFolderItem(folderItemId);
-    if (res.ok) await load();
-    else alert(res.error || "Failed to remove item.");
+  async function handleRemoveSingle(row: FolderItemDisplay) {
+    const ok = await confirm({
+      title: "Remove from folder?",
+      message: (
+        <>
+          <strong className="text-text">{row.label}</strong> will be removed from{" "}
+          <strong className="text-text">{folder?.name}</strong>.
+          <strong className="block mt-2 text-text">
+            The record itself is not deleted — it stays in the Item Library.
+          </strong>
+        </>
+      ),
+      confirmLabel: "Remove from folder",
+      tone: "primary",
+    });
+    if (!ok) return;
+
+    setRemovingOneId(row.id);
+    const res = await removeFolderItem(row.id);
+    setRemovingOneId(null);
+
+    if (res.ok) {
+      setFolderItems((prev) => {
+        const next = prev.filter((i) => i.id !== row.id);
+        insideSelection.prune(next.map((i) => i.id));
+        return next;
+      });
+      await load(true);
+      toast.success({
+        title: "Removed from folder",
+        description: `${row.label} is no longer in ${folder?.name}. The record itself is untouched.`,
+      });
+    } else {
+      toast.error({
+        title: "Could not remove item",
+        description: res.error || "The item is still in the folder. Please try again.",
+      });
+    }
   }
 
-  // --- Bulk Selection Handlers ---
-  function toggleSelectionMode() {
-    setSelectionMode(!selectionMode);
-    setSelectedFolderItems(new Set());
-    setSelectedAvailableItems(new Set());
-  }
-
-  function handleToggleFolderItem(folderItemId: string) {
-    const newSet = new Set(selectedFolderItems);
-    if (newSet.has(folderItemId)) newSet.delete(folderItemId);
-    else newSet.add(folderItemId);
-    setSelectedFolderItems(newSet);
-    setSelectedAvailableItems(new Set()); // Exclusive selection
-  }
-
-  function handleToggleAvailableItem(itemId: string) {
-    const newSet = new Set(selectedAvailableItems);
-    if (newSet.has(itemId)) newSet.delete(itemId);
-    else newSet.add(itemId);
-    setSelectedAvailableItems(newSet);
-    setSelectedFolderItems(new Set()); // Exclusive selection
-  }
+  /* ── Bulk actions ──────────────────────────────────── */
 
   async function handleBulkRemove() {
-    if (selectedFolderItems.size === 0) return;
-    setBulkActionLoading(true);
-    const res = await removeMultipleItemsFromFolder(Array.from(selectedFolderItems));
+    const ids = Array.from(insideSelection.selected);
+    if (ids.length === 0) return;
+
+    const ok = await confirm({
+      title: `Remove ${ids.length} item${ids.length === 1 ? "" : "s"} from folder?`,
+      message: (
+        <>
+          The selected items are unlinked from <strong className="text-text">{folder?.name}</strong>.
+          <strong className="block mt-2 text-text">
+            No record is deleted — everything stays in the Item Library.
+          </strong>
+        </>
+      ),
+      confirmLabel: `Remove ${ids.length} from folder`,
+      tone: "primary",
+    });
+    if (!ok) return;
+
+    setBulkBusy(true);
+    const res = await removeMultipleItemsFromFolder(ids);
+    setBulkBusy(false);
+
     if (res.ok) {
-      setSelectedFolderItems(new Set());
-      await load();
+      insideSelection.clear();
+      await load(true);
+      toast.success({
+        title: `${ids.length} item${ids.length === 1 ? "" : "s"} removed`,
+        description: `Unlinked from ${folder?.name}. No records were deleted.`,
+      });
     } else {
-      alert(res.error || "Failed to remove items.");
+      toast.error({
+        title: "Could not remove items",
+        description: res.error || "Nothing was removed. Please try again.",
+      });
     }
-    setBulkActionLoading(false);
   }
 
   async function handleBulkAdd() {
-    if (selectedAvailableItems.size === 0 || !id) return;
-    setBulkActionLoading(true);
-    
+    const ids = Array.from(availableSelection.selected);
+    if (ids.length === 0 || !id) return;
+
+    setBulkBusy(true);
     const itemsToAdd = availableItems
-      .filter(i => selectedAvailableItems.has(i.id))
-      .map(i => ({ type: i.type, id: i.id }));
-      
+      .filter((i) => availableSelection.selected.has(i.id))
+      .map((i) => ({ type: i.type, id: i.id }));
     const res = await addMultipleItemsToFolder(id, itemsToAdd);
+    setBulkBusy(false);
+
     if (res.ok) {
-      setSelectedAvailableItems(new Set());
-      await load();
+      availableSelection.clear();
+      await load(true);
+      toast.success({
+        title: `${ids.length} item${ids.length === 1 ? "" : "s"} added`,
+        description: `Added to ${folder?.name}.`,
+      });
     } else {
-      alert(res.error || "Failed to add items.");
+      toast.error({
+        title: "Could not add items",
+        description: res.error || "Nothing was added. Please try again.",
+      });
     }
-    setBulkActionLoading(false);
   }
 
-  if (loading || !folder) return <div className="flex justify-center py-32"><Loader2 size={32} className="animate-spin text-primary" /></div>;
+  if (loading) {
+    return (
+      <div className="flex justify-center py-32">
+        <Loader2 size={32} className="animate-spin text-primary" />
+        <span className="sr-only">Loading folder</span>
+      </div>
+    );
+  }
 
-  const hasFolderSelection = selectedFolderItems.size > 0;
-  const hasAvailableSelection = selectedAvailableItems.size > 0;
-
-  return (
-    <div className="space-y-8 animate-fade-in pb-24">
-      {/* ── HEADER ───────────────────────────────────────── */}
-      <div>
-        <button onClick={() => navigate("/folders")} className="flex items-center gap-2.5 text-[14px] font-bold text-text-muted hover:text-text transition-colors mb-6 cursor-pointer">
+  if (error || !folder) {
+    return (
+      <div className="space-y-5">
+        <button
+          type="button"
+          onClick={() => navigate("/folders")}
+          className="flex items-center gap-2.5 text-sm font-bold text-text-muted hover:text-text transition-colors cursor-pointer"
+        >
           <ArrowLeft size={18} /> Back to Folders
         </button>
+        <ErrorState
+          message={error ?? "This folder no longer exists."}
+          title={errorRetryable ? "Could not open folder" : "Folder not found"}
+          /* Only offer a retry when retrying could actually work. A folder that
+             is gone or forbidden stays gone, and a button that provably cannot
+             work is worse than no button. */
+          onRetry={errorRetryable ? () => load() : undefined}
+        />
+      </div>
+    );
+  }
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+  return (
+    <div className="space-y-6 animate-fade-in pb-24">
+      {/* ── Header ──
+          No <h1>: the TopBar and the breadcrumb trail already name the folder,
+          and printing the name a third time meant a long folder name was
+          truncated twice. The line that remains says what kind of folder this
+          is, which is the detail that is not visible anywhere else. */}
+      <div>
+        <Link
+          to="/folders"
+          className="inline-flex items-center gap-2.5 text-sm font-bold text-text-muted hover:text-text transition-colors mb-5"
+        >
+          <ArrowLeft size={18} /> Back to Folders
+        </Link>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4 min-w-0">
             <div className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
               <FolderOpen size={24} className="text-primary" />
             </div>
-            <div>
-              <h1 className="text-[22px] font-extrabold text-text truncate">{folder.name}</h1>
-              <p className="text-[14px] text-text-muted mt-0.5">{folderItems.length} items inside</p>
-            </div>
+            <p className="text-sm text-text-muted min-w-0">
+              <span className="text-text font-semibold">
+                {folderItems.length} item{folderItems.length === 1 ? "" : "s"}
+              </span>{" "}
+              inside ·{" "}
+              {folder.folder_type
+                ? `${folder.folder_type.replace(/_/g, " ")} folder`
+                : "general folder"}
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <button onClick={handleRefresh} disabled={refreshing} className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-surface border border-border text-[14px] font-bold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
-              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} /> Refresh
-            </button>
-            <button onClick={toggleSelectionMode} className={`flex items-center gap-2.5 px-5 py-3 rounded-xl border text-[14px] font-bold transition-all cursor-pointer ${
-              selectionMode ? "bg-primary text-white border-primary" : "bg-surface border-border text-text hover:bg-surface-hover"
-            }`}>
-              {selectionMode ? <CheckSquare size={18} /> : <Square size={18} />}
-              {selectionMode ? "Done" : "Select Multiple"}
-            </button>
-          </div>
+          <IconButton
+            label={refreshing ? "Refreshing…" : "Refresh folder"}
+            icon={<RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />}
+            onClick={handleRefresh}
+            busy={refreshing}
+            variant="surface"
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* ── LEFT COLUMN: ITEMS IN FOLDER ───────────────── */}
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-text">Items inside Folder</h2>
-            {selectionMode && (
-              <button 
-                onClick={() => setSelectedFolderItems(selectedFolderItems.size === folderItems.length ? new Set() : new Set(folderItems.map(i => i.id)))}
-                className="text-[13px] font-bold text-primary hover:underline cursor-pointer"
-              >
-                {selectedFolderItems.size === folderItems.length ? "Deselect All" : "Select All"}
-              </button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* ── Items inside the folder ── */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-bold text-text">Items inside folder</h2>
+            {folderItems.length > 0 && (
+              <label className="flex items-center gap-2 text-xs font-semibold text-text cursor-pointer">
+                <SelectAllCheckbox
+                  ids={insideIds}
+                  selection={insideSelection}
+                  label={`Select all ${insideIds.length} items shown`}
+                />
+                Select all shown
+              </label>
             )}
           </div>
 
-          <div className="bg-surface border border-border rounded-2xl overflow-hidden min-h-[300px]">
-            {folderItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-                <FolderOpen size={40} className="text-text-muted/30 mb-3" />
-                <p className="text-[14px] text-text-muted font-medium">This folder is empty.</p>
-                <p className="text-[13px] text-text-muted mt-1">Add items from the right panel.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/50">
-                {folderItems.map((item, index) => {
-                  const isSelected = selectedFolderItems.has(item.id);
-                  return (
-                    <div 
-                      key={item.id}
-                      draggable={!selectionMode}
-                      onDragStart={(e) => handleDragStart(e, index)}
-                      onDragOver={(e) => handleDragOver(e, index)}
-                      onDragEnd={handleDragEnd}
-                      onClick={() => selectionMode && handleToggleFolderItem(item.id)}
-                      className={`
-                        flex items-center gap-4 p-4 transition-colors
-                        ${selectionMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}
-                        ${isSelected ? "bg-primary-muted/10" : "hover:bg-surface-hover/30"}
-                      `}
+          <SearchInput
+            value={insideSearch}
+            onChange={setInsideSearch}
+            scope="items in this folder"
+            unit="item"
+            resultCount={filteredInside.length}
+            totalCount={folderItems.length}
+            placeholder="Search inside this folder…"
+          />
+
+          <div className="bg-surface border border-border rounded-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-22rem)]">
+            <InlineRefreshBar show={refreshing} />
+
+            {filteredInside.length === 0 ? (
+              <EmptyState
+                icon={<FolderOpen size={24} />}
+                title={
+                  insideSearch.trim()
+                    ? "No items match"
+                    : folderItems.length === 0
+                      ? "This folder is empty"
+                      : "Nothing shown"
+                }
+                description={
+                  insideSearch.trim()
+                    ? `No item in this folder matches “${insideSearch.trim()}”.`
+                    : folderItems.length === 0
+                      ? "Use the Available Items panel to bring jobs, stock, bills or drawings into this folder."
+                      : undefined
+                }
+                action={
+                  insideSearch.trim() ? (
+                    <button
+                      type="button"
+                      onClick={() => setInsideSearch("")}
+                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
                     >
-                      {selectionMode && (
-                        <div className="shrink-0 text-text-muted">
-                          {isSelected ? <CheckSquare size={20} className="text-primary" /> : <Square size={20} />}
-                        </div>
-                      )}
-                      {!selectionMode && (
-                        <div className="shrink-0 text-border cursor-grab active:cursor-grabbing">
-                          <GripVertical size={18} />
-                        </div>
-                      )}
-                      
+                      Clear search
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="overflow-y-auto scrollbar-thin divide-y divide-border/50">
+                {filteredInside.map((item) => {
+                  const checked = insideSelection.isSelected(item.id);
+                  const busy = removingOneId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, folderItems.indexOf(item))}
+                      onDragOver={(e) => handleDragOver(e, folderItems.indexOf(item))}
+                      onDragEnd={handleDragEnd}
+                      aria-busy={busy}
+                      className={`flex items-center gap-3 px-4 py-3 transition-colors group ${
+                        busy ? "opacity-60" : checked ? "bg-primary/5" : "hover:bg-surface-hover/30"
+                      }`}
+                    >
+                      <span
+                        className="shrink-0 text-border cursor-grab active:cursor-grabbing"
+                        title="Drag to reorder"
+                        aria-label="Drag to reorder this item"
+                      >
+                        <GripVertical size={18} />
+                      </span>
+
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => insideSelection.toggle(item.id)}
+                        aria-label={`Select ${item.label}`}
+                        className="w-4 h-4 rounded accent-primary cursor-pointer shrink-0"
+                      />
+
                       <div className="w-10 h-10 rounded-xl bg-bg border border-border flex items-center justify-center shrink-0">
                         {getItemIcon(item.item_type)}
                       </div>
-                      
+
                       <div className="flex-1 min-w-0">
-                        <p className="text-[14px] font-bold text-text truncate">{item.label}</p>
-                        <p className="text-[12px] text-text-muted font-medium mt-0.5">{getItemTypeLabel(item.item_type)}</p>
+                        <p className="text-sm font-bold text-text truncate" title={item.label}>
+                          {item.label}
+                        </p>
+                        <p className="text-xs text-text-muted font-medium mt-0.5">
+                          {getItemTypeLabel(item.item_type)}
+                        </p>
                       </div>
 
-                      {!selectionMode && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => setPreviewItem({ type: item.item_type, id: item.item_id, label: item.label })}
-                            className="p-2 rounded-lg text-text-muted hover:text-text hover:bg-bg transition-colors cursor-pointer" title="Preview">
-                            <Eye size={16} />
-                          </button>
-                          <button onClick={() => handleRemoveSingle(item.id)}
-                            className="p-2 rounded-lg text-text-muted hover:text-danger hover:bg-danger-muted transition-colors cursor-pointer" title="Remove">
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <IconButton
+                          label={`Details for ${item.label}`}
+                          size="sm"
+                          icon={<Eye size={14} />}
+                          onClick={() =>
+                            setPreviewItem({
+                              type: item.item_type,
+                              id: item.item_id,
+                              label: item.label,
+                            })
+                          }
+                        />
+                        <IconButton
+                          label={`Remove ${item.label} from ${folder.name} (record is kept)`}
+                          size="sm"
+                          variant="danger"
+                          icon={<Trash2 size={14} />}
+                          onClick={() => handleRemoveSingle(item)}
+                          busy={busy}
+                        />
+                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
-          </div>
-        </div>
 
-        {/* ── RIGHT COLUMN: AVAILABLE ITEMS ──────────────── */}
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-text">Available Items</h2>
-            {selectionMode && (
-              <button 
-                onClick={() => setSelectedAvailableItems(selectedAvailableItems.size === filteredAvailable.length ? new Set() : new Set(filteredAvailable.map(i => i.id)))}
-                className="text-[13px] font-bold text-primary hover:underline cursor-pointer"
-              >
-                {selectedAvailableItems.size === filteredAvailable.length ? "Deselect All" : "Select All"}
-              </button>
+            {insideSelection.count > 0 && folderItems.length > 0 && (
+              <div className="px-4 py-2 border-t border-border bg-surface-hover/30 flex items-center justify-between gap-3 shrink-0">
+                <span className="text-xs text-text-muted">
+                  {insideSelection.count} of {filteredInside.length} shown selected
+                </span>
+                <button
+                  type="button"
+                  onClick={insideSelection.clear}
+                  className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ── Available items ── */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-bold text-text">Available items</h2>
+            {availableIds.length > 0 && (
+              <label className="flex items-center gap-2 text-xs font-semibold text-text cursor-pointer">
+                <SelectAllCheckbox
+                  ids={availableIds}
+                  selection={availableSelection}
+                  label={`Select all ${availableIds.length} available items shown`}
+                />
+                Select all shown
+              </label>
             )}
           </div>
 
-          <div className="bg-surface border border-border rounded-2xl flex flex-col h-[600px] overflow-hidden">
+          {/* Height is derived from the viewport, not the hard-coded 600px that
+              pushed the panel off a short window. */}
+          <div className="bg-surface border border-border rounded-2xl flex flex-col overflow-hidden lg:max-h-[calc(100dvh-20rem)]">
             <div className="p-4 border-b border-border space-y-3 shrink-0 bg-surface">
-              <div className="relative">
-                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search available items..."
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-bg border border-border text-[14px] text-text placeholder:text-text-muted/40 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all" />
-              </div>
-              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                {(["all", "owner_stock", "company_stock", "bill_group", "drawing_group"] as const).map(t => (
-                  <button key={t} onClick={() => setFilter(t)}
-                    className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-colors whitespace-nowrap cursor-pointer ${
-                      filter === t ? "bg-primary text-white" : "bg-bg text-text-muted hover:text-text hover:bg-surface-hover border border-border"
-                    }`}>
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                scope="available items"
+                resultCount={filteredAvailable.length}
+                totalCount={availableItems.length}
+                placeholder="Search available items…"
+              />
+              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none" role="group" aria-label="Filter by type">
+                {ITEM_FILTERS.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setFilter(t)}
+                    aria-pressed={filter === t}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                      filter === t
+                        ? "bg-primary text-white"
+                        : "bg-bg text-text-muted hover:text-text hover:bg-surface-hover border border-border"
+                    }`}
+                  >
                     {t === "all" ? "All" : getItemTypeLabel(t)}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2">
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-2 min-h-[min(16rem,45dvh)]">
               {filteredAvailable.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <AlertTriangle size={32} className="text-text-muted/30 mb-2" />
-                  <p className="text-[14px] text-text-muted">No items found.</p>
-                </div>
+                <EmptyState
+                  icon={<Layers size={22} />}
+                  title={
+                    availableItems.length === 0
+                      ? "Nothing left to add"
+                      : "No items match"
+                  }
+                  description={
+                    availableItems.length === 0
+                      ? `Every record in the system is already in ${folder.name}.`
+                      : `Nothing matches${
+                          search.trim() ? ` “${search.trim()}”` : ""
+                        }${filter !== "all" ? ` in ${getItemTypeLabel(filter)}` : ""}.`
+                  }
+                  action={
+                    availableItems.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearch("");
+                          setFilter("all");
+                        }}
+                        className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                      >
+                        Reset filters
+                      </button>
+                    ) : undefined
+                  }
+                />
               ) : (
                 <div className="space-y-1">
-                  {filteredAvailable.map(item => {
-                    const isSelected = selectedAvailableItems.has(item.id);
+                  {visibleAvailable.map((item) => {
+                    const checked = availableSelection.isSelected(item.id);
+                    const busy = addingOneId === item.id;
                     return (
-                      <div 
-                        key={item.id}
-                        onClick={() => selectionMode && handleToggleAvailableItem(item.id)}
-                        className={`
-                          flex items-center gap-3 p-3 rounded-xl transition-colors group
-                          ${selectionMode ? "cursor-pointer" : ""}
-                          ${isSelected ? "bg-primary-muted/20 border border-primary/30" : "hover:bg-surface-hover/50 border border-transparent"}
-                        `}
+                      <div
+                        key={`${item.type}-${item.id}`}
+                        className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors ${
+                          checked
+                            ? "bg-primary-muted/20 border border-primary/30"
+                            : "hover:bg-surface-hover/50 border border-transparent"
+                        } ${busy ? "opacity-60" : ""}`}
                       >
-                        {selectionMode && (
-                          <div className="shrink-0 text-text-muted">
-                            {isSelected ? <CheckSquare size={18} className="text-primary" /> : <Square size={18} />}
-                          </div>
-                        )}
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => availableSelection.toggle(item.id)}
+                          aria-label={`Select ${item.label}`}
+                          className="w-4 h-4 rounded accent-primary cursor-pointer shrink-0"
+                        />
                         <div className="w-9 h-9 rounded-lg bg-bg border border-border flex items-center justify-center shrink-0">
                           {getItemIcon(item.type)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-bold text-text truncate">{item.label}</p>
-                          <p className="text-[11px] text-text-muted font-medium mt-0.5">{getItemTypeLabel(item.type)}</p>
+                          <p className="text-[13px] font-bold text-text truncate" title={item.label}>
+                            {item.label}
+                          </p>
+                          <p className="text-[11px] text-text-muted font-medium mt-0.5">
+                            {getItemTypeLabel(item.type)}
+                          </p>
                         </div>
-                        {!selectionMode && (
-                          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => setPreviewItem(item)}
-                              className="p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-bg transition-colors cursor-pointer" title="Preview">
-                              <Eye size={14} />
-                            </button>
-                            <button onClick={() => handleAddSingle(item)}
-                              className="p-1.5 rounded-lg text-primary hover:bg-primary-muted transition-colors cursor-pointer" title="Add to Folder">
-                              <Plus size={16} />
-                            </button>
-                          </div>
-                        )}
+                        {/* Always visible; previously hover-only. */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <IconButton
+                            label={`Details for ${item.label}`}
+                            size="sm"
+                            icon={<Eye size={14} />}
+                            onClick={() => setPreviewItem(item)}
+                          />
+                          <IconButton
+                            label={`Add ${item.label} to ${folder.name}`}
+                            size="sm"
+                            variant="primary"
+                            icon={<Plus size={15} />}
+                            onClick={() => handleAddSingle(item)}
+                            busy={busy}
+                          />
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
             </div>
+
+            {/* How much of the list is on screen, and how to get the rest. Without
+                this the panel gave no hint that 268 items existed behind the
+                268 rendered rows, and there was no way to tell scrolling had a
+                bottom. */}
+            {remainingAvailable > 0 && (
+              <div className="px-4 py-2.5 border-t border-border bg-bg/60 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <span className="text-xs text-text-muted">
+                  Showing{" "}
+                  <span className="font-semibold text-text">
+                    {visibleAvailable.length.toLocaleString()}
+                  </span>{" "}
+                  of{" "}
+                  <span className="font-semibold text-text">
+                    {filteredAvailable.length.toLocaleString()}
+                  </span>{" "}
+                  available
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleCount((c) => Math.min(c + AVAILABLE_PAGE, filteredAvailable.length))
+                    }
+                    className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                  >
+                    Show {Math.min(AVAILABLE_PAGE, remainingAvailable)} more
+                  </button>
+                  <span className="text-border">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(filteredAvailable.length)}
+                    className="text-xs font-bold text-text-muted hover:text-text cursor-pointer"
+                  >
+                    Show all
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {availableSelection.count > 0 && (
+              <div className="px-4 py-2.5 border-t border-border bg-primary/5 flex items-center justify-between gap-3 shrink-0">
+                <span className="text-xs font-semibold text-text">
+                  {availableSelection.count} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={availableSelection.clear}
+                  className="text-xs font-bold text-text-muted hover:text-text cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+        </section>
       </div>
 
-      {/* ── BULK ACTION BAR ──────────────────────────────── */}
-      {(hasFolderSelection || hasAvailableSelection) && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-surface border border-border shadow-2xl rounded-2xl p-4 flex items-center gap-6 animate-slide-in-left z-40 max-w-[90vw]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold">
-              {hasFolderSelection ? selectedFolderItems.size : selectedAvailableItems.size}
-            </div>
-            <span className="text-[15px] font-bold text-text">Items Selected</span>
-          </div>
-          
-          <div className="h-8 w-px bg-border" />
-          
-          <div className="flex items-center gap-3">
-            <button onClick={() => { setSelectedFolderItems(new Set()); setSelectedAvailableItems(new Set()); }}
-              className="px-4 py-2 rounded-xl text-[14px] font-bold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
-              Cancel
-            </button>
-            
-            {hasFolderSelection && (
-              <button onClick={handleBulkRemove} disabled={bulkActionLoading}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-danger-muted hover:bg-danger text-danger hover:text-white text-[14px] font-bold transition-colors cursor-pointer disabled:opacity-50">
-                {bulkActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                Remove from Folder
-              </button>
-            )}
-            
-            {hasAvailableSelection && (
-              <button onClick={handleBulkAdd} disabled={bulkActionLoading}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-[14px] font-bold transition-colors cursor-pointer disabled:opacity-50">
-                {bulkActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                Add to Folder
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ── Bulk bar: viewport-anchored (was a document-positioned `fixed`
+             element hidden below long lists) ── */}
+      <BulkActionBar
+        count={insideSelection.count}
+        itemLabel="items"
+        context={folder.name}
+        onClear={insideSelection.clear}
+      >
+        <button
+          type="button"
+          onClick={handleBulkRemove}
+          disabled={bulkBusy}
+          className="px-3.5 py-2 rounded-lg bg-danger-muted text-danger text-xs font-bold border border-danger/25 hover:bg-danger hover:text-white transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+          Remove from folder
+        </button>
+      </BulkActionBar>
 
-      {/* ── PREVIEW MODAL ────────────────────────────────── */}
-      <Modal open={!!previewItem} onClose={() => setPreviewItem(null)} title="Item Preview">
+      <BulkActionBar
+        count={availableSelection.count}
+        itemLabel="items"
+        context={`adding to ${folder.name}`}
+        onClear={availableSelection.clear}
+        clearLabel="Clear selection"
+      >
+        <button
+          type="button"
+          onClick={handleBulkAdd}
+          disabled={bulkBusy}
+          className="px-3.5 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-hover transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+          Add to folder
+        </button>
+      </BulkActionBar>
+
+      {/* ── Item details ── */}
+      <Modal
+        open={!!previewItem}
+        onClose={() => setPreviewItem(null)}
+        size="sm"
+        title={previewItem ? getItemTypeLabel(previewItem.type) : "Item"}
+        subtitle="This record is managed on its own page"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setPreviewItem(null)}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+            {previewItem && (
+              <button
+                type="button"
+                onClick={() => {
+                  const target = itemRoute[previewItem.type];
+                  setPreviewItem(null);
+                  navigate(target.path);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors cursor-pointer flex items-center gap-2"
+              >
+                {itemRoute[previewItem.type].label}
+                <ExternalLink size={14} />
+              </button>
+            )}
+          </>
+        }
+      >
         {previewItem && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-4 bg-bg border border-border p-5 rounded-2xl">
-              <div className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center shrink-0">
-                {getItemIcon(previewItem.type)}
-              </div>
-              <div>
-                <p className="text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] mb-1">
-                  {getItemTypeLabel(previewItem.type)}
-                </p>
-                <p className="text-[16px] font-bold text-text">{previewItem.label}</p>
-              </div>
+          <div className="flex items-center gap-4 bg-bg border border-border p-5 rounded-2xl">
+            <div className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center shrink-0">
+              {getItemIcon(previewItem.type)}
             </div>
-            
-            <div className="bg-surface border border-border rounded-2xl p-6 flex flex-col items-center justify-center py-12">
-              <Eye size={48} className="text-text-muted/30 mb-4" />
-              <p className="text-[15px] font-medium text-text-muted text-center max-w-xs">
-                To view full details for this item, open it directly from the respective management page.
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-text-muted uppercase tracking-[0.1em] mb-1">
+                {getItemTypeLabel(previewItem.type)}
               </p>
+              <p className="text-base font-bold text-text break-words">{previewItem.label}</p>
             </div>
           </div>
         )}
