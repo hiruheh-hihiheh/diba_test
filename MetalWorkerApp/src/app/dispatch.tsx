@@ -1,555 +1,664 @@
-import { useEffect, useState, useCallback } from "react";
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
+import * as Linking from "expo-linking";
 
+import { AppHeader } from "../components/ui/AppHeader";
+import { Button } from "../components/ui/Button";
+import { Card, Section } from "../components/ui/Card";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { Input } from "../components/ui/Input";
+import { NetworkBanner } from "../components/ui/NetworkBanner";
+import { Screen } from "../components/ui/Screen";
+import { useToast } from "../components/ui/Toast";
+import { MaterialTypePicker } from "../components/dispatch/MaterialTypePicker";
+import { PhotoPicker } from "../components/dispatch/PhotoPicker";
+import { SessionGate } from "../components/SessionGate";
+import { useLanguage } from "../contexts/LanguageContext";
+import { format } from "../constants/translations";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import {
+  createDispatch,
+  getMaterialLabelKey,
+  type CreateDispatchInput,
+  type MaterialType,
+} from "../services/dispatch";
+import { uploadDispatchPhoto, type CloudinaryUploadResult } from "../services/cloudinary";
+import { clockLabel, timeLabel } from "../utils/dateFormat";
+import { readableError } from "../utils/readableError";
 import { theme } from "../constants/theme";
-import { getTranslations, type Language } from "../constants/translations";
-import { supabase } from "../services/supabase";
-import { uploadDispatchPhoto } from "../services/cloudinary";
-import { createDispatch, getMaterialLabelKey, type CreateDispatchInput, type MaterialType } from "../services/dispatch";
 
-type SubmissionState = "idle" | "uploading" | "saving" | "success" | "error";
+type Phase = "form" | "submitting" | "success";
+type LocationState =
+  | { kind: "getting" }
+  | { kind: "captured"; latitude: number; longitude: number; name: string | null }
+  | { kind: "unavailable"; canAskAgain: boolean };
+
+type FieldKey = "photo" | "vehicle" | "material";
 
 export default function DispatchScreen() {
-  const [language, setLanguage] = useState<Language>("en");
-  const t = getTranslations(language);
+  return (
+    <SessionGate allow={["worker"]}>
+      <DispatchForm />
+    </SessionGate>
+  );
+}
 
-  const [loading, setLoading] = useState(true);
-  
+function DispatchForm() {
+  const { t } = useLanguage();
+  const { isOffline } = useNetworkStatus();
+  const toast = useToast();
+
+  const [asset, setAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [photoAsset, setPhotoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState("");
   const [materialType, setMaterialType] = useState<MaterialType | null>(null);
-  
-  const [locationStatus, setLocationStatus] = useState<"getting" | "captured" | "unavailable">("getting");
-  const [locationData, setLocationData] = useState<{ latitude: number; longitude: number; name: string } | null>(null);
-  
-  const [currentTime] = useState(new Date());
+  const [location, setLocation] = useState<LocationState>({ kind: "getting" });
 
-  const [submissionState, setSubmissionState] = useState<SubmissionState>("idle");
-  const [lastDispatch, setLastDispatch] = useState<CreateDispatchInput | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("form");
+  const [showErrors, setShowErrors] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<CreateDispatchInput | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
-      setLoading(false);
-    }
-    checkAuth();
-  }, []);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [locationPrompt, setLocationPrompt] = useState(false);
 
-  // Reusable location capture function
+  const vehicleRef = useRef<TextInput>(null);
+  const scrollerRef = useRef<ScrollView>(null);
+  const submitInFlight = useRef(false);
+
+  /** True once the worker has confirmed a discard, so the guard stands down. */
+  const leavingRef = useRef(false);
+
+  /** Measured from the real layout so "jump to the bad field" is exact. */
+  const fieldOffsets = useRef<Partial<Record<FieldKey, number>>>({});
+
+  /**
+   * Cached Cloudinary result for the *current* photo.
+   *
+   * Before, a failed database insert on a weak connection re-uploaded the whole
+   * image on every retry and left an orphan asset behind each time. Caching
+   * means a retry only re-runs the insert.
+   */
+  const uploadedRef = useRef<{ uri: string; result: CloudinaryUploadResult } | null>(null);
+
+  const [now, setNow] = useState(() => new Date());
+
+  // ---- location -----------------------------------------------------------
   const captureLocation = useCallback(async () => {
-    setLocationStatus("getting");
+    setLocation({ kind: "getting" });
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        setLocationStatus("unavailable");
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setLocation({ kind: "unavailable", canAskAgain: permission.canAskAgain });
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({});
-      const coords = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        name: "",
-      };
-
-      try {
-        const reverse = await Location.reverseGeocodeAsync(coords);
-        if (reverse && reverse.length > 0) {
-          const r = reverse[0];
-          coords.name = [r.name, r.street, r.city, r.region].filter(Boolean).join(", ");
-        }
-      } catch {
-        // Ignore geocoding errors
-      }
-
-      setLocationData(coords);
-      setLocationStatus("captured");
-    } catch {
-      setLocationStatus("unavailable");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!loading) {
-      captureLocation();
-    }
-  }, [loading, captureLocation]);
-
-  async function handleTakePhoto() {
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== "granted") {
-        setErrorMessage(t.camera_error);
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        quality: 0.8,
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
       });
 
-if (!result.canceled && result.assets && result.assets.length > 0) {
-  const asset = result.assets[0];
-
-  console.log("PHOTO ASSET:", asset);
-  console.log("PHOTO URI:", asset.uri);
-  console.log("PHOTO FILE:", asset.file);
-
-  setPhotoAsset(asset);
-  setPhotoUri(asset.uri);
-  setErrorMessage(null);
-}
-    } catch {
-      setErrorMessage(t.camera_error);
-    }
-  }
-
-  function handleVehicleChange(text: string) {
-    // Only uppercase while typing, don't trim yet
-    setVehicleNumber(text.toUpperCase());
-    setErrorMessage(null);
-  }
-
-  function handleSelectMaterial(type: MaterialType) {
-    setMaterialType(type);
-    setErrorMessage(null);
-  }
-
-  async function handleSubmit() {
-    if (!photoAsset || !photoUri) {
-      setErrorMessage(t.photo_required);
-      return;
-    }
-
-    // Robust upload source handling
-    let uploadSource: string | Blob | null = null;
-    
-    if (Platform.OS === "web") {
-      // On web, prefer file object if available
-      uploadSource = photoAsset.file || null;
-    } else {
-      // On native, use URI
-      uploadSource = photoUri;
-    }
-
-    if (!uploadSource) {
-      setErrorMessage(t.photo_required);
-      return;
-    }
-
-    // Trim vehicle number only at submission time
-    const trimmedVehicleNumber = vehicleNumber.trim();
-    
-    if (!trimmedVehicleNumber) {
-      setErrorMessage(t.vehicle_required);
-      return;
-    }
-    
-    if (!materialType) {
-      setErrorMessage(t.material_required);
-      return;
-    }
-
-    setErrorMessage(null);
-    setSubmissionState("uploading");
-    
-    try {
-      let uploadResult;
+      let name: string | null = null;
       try {
-        uploadResult = await uploadDispatchPhoto(uploadSource);
-      } catch (err) {
-        console.error("Cloudinary upload error:", err);
-        setErrorMessage(t.photo_upload_failed);
-        setSubmissionState("error");
-        return;
+        const reverse = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        if (reverse?.length) {
+          const r = reverse[0];
+          name = [r.name, r.street, r.city, r.region].filter(Boolean).join(", ") || null;
+        }
+      } catch {
+        // Geocoding is a nice-to-have; raw coordinates are still useful.
       }
 
-      setSubmissionState("saving");
+      setLocation({
+        kind: "captured",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        name,
+      });
+    } catch {
+      setLocation({ kind: "unavailable", canAskAgain: true });
+    }
+  }, []);
 
-      const dispatchData: CreateDispatchInput = {
-        vehicleNumber: trimmedVehicleNumber,
-        materialType,
-        photoUrl: uploadResult.secureUrl,
-        photoPublicId: uploadResult.publicId,
-        latitude: locationData?.latitude ?? null,
-        longitude: locationData?.longitude ?? null,
-        locationName: locationData?.name ?? null,
+  useEffect(() => {
+    void captureLocation();
+  }, [captureLocation]);
+
+  // ---- ticking clock ------------------------------------------------------
+  // The old screen froze this at mount via `useState(new Date())`, so a form
+  // left open for an hour displayed an hour-stale time.
+  useEffect(() => {
+    if (phase !== "form") return;
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  // ---- validation ---------------------------------------------------------
+  const missing = useMemo(() => {
+    const list: FieldKey[] = [];
+    if (!photoUri) list.push("photo");
+    if (!vehicleNumber.trim()) list.push("vehicle");
+    if (!materialType) list.push("material");
+    return list;
+  }, [photoUri, vehicleNumber, materialType]);
+
+  const isDirty = Boolean(photoUri) || vehicleNumber.trim().length > 0 || materialType !== null;
+  const busy = phase === "submitting";
+
+  const fieldError = (key: FieldKey): string | null => {
+    if (!showErrors || !missing.includes(key)) return null;
+    switch (key) {
+      case "photo":
+        return t.photo_required;
+      case "vehicle":
+        return t.vehicle_required;
+      case "material":
+        return t.material_required;
+    }
+  };
+
+  const scrollToField = useCallback((key: FieldKey, focus = false) => {
+    const y = fieldOffsets.current[key];
+    if (typeof y === "number") {
+      scrollerRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+    }
+    if (focus && key === "vehicle") {
+      // Let the scroll settle before raising the keyboard, otherwise the two
+      // fight and the field ends up half-hidden behind it.
+      setTimeout(() => vehicleRef.current?.focus(), 220);
+    }
+  }, []);
+
+  // ---- leaving ------------------------------------------------------------
+  /**
+   * `back()` is a documented no-op when there is nothing behind the current
+   * screen, and `/dispatch` can be entered directly (deep link, cold start, a
+   * notification). A Back button that silently does nothing is a dead end, so
+   * fall back to the dashboard in that case.
+   */
+  function leave() {
+    if (router.canGoBack()) router.back();
+    else router.replace("/dashboard");
+  }
+
+  // ---- unsaved changes ----------------------------------------------------
+  // Catches the Android hardware back gesture as well as the header button.
+  //
+  // `leavingRef` is the part that matters. Once the worker has confirmed they
+  // want to discard, this guard has to stand down — otherwise the navigation we
+  // trigger is intercepted by this very hook, the dialog springs open again, and
+  // the worker is stuck on a form they no longer want, pressing Back forever.
+  usePreventRemove(isDirty && phase === "form" && !leavingRef.current, () => {
+    setConfirmingLeave(true);
+  });
+
+  /** Header Back. Asks first only when there is genuinely something to lose. */
+  function requestLeave() {
+    if (!isDirty || phase !== "form") {
+      leave();
+      return;
+    }
+    setConfirmingLeave(true);
+  }
+
+  function confirmLeave() {
+    setConfirmingLeave(false);
+    leavingRef.current = true;
+    // Deliberately `router.back()` rather than re-dispatching the captured
+    // action: dispatching the raw GO_BACK did nothing under expo-router's
+    // history, so "Discard" closed the dialog but left the worker on the form
+    // with their data still filled in.
+    leave();
+  }
+
+  // ---- submit -------------------------------------------------------------
+  async function handleSubmit() {
+    if (submitInFlight.current) return;
+
+    if (missing.length > 0) {
+      setShowErrors(true);
+      setSubmitError(null);
+      scrollToField(missing[0], true);
+      return;
+    }
+
+    if (isOffline) {
+      setSubmitError(t.offline_cannot_submit);
+      return;
+    }
+
+    submitInFlight.current = true;
+    setPhase("submitting");
+    setSubmitError(null);
+
+    try {
+      const uri = photoUri!;
+      let result: CloudinaryUploadResult;
+
+      const cached = uploadedRef.current;
+      if (cached && cached.uri === uri) {
+        // Same photo, already uploaded: skip straight to the insert.
+        result = cached.result;
+      } else {
+        // On web the picker hands back a real `File`; natively it is a URI.
+        const source: string | Blob =
+          Platform.OS === "web" ? ((asset?.file as Blob | undefined) ?? uri) : uri;
+
+        try {
+          result = await uploadDispatchPhoto(source);
+        } catch (err) {
+          setPhase("form");
+          setSubmitError(
+            readableError(err).kind === "offline" ? t.offline_cannot_upload : t.photo_upload_failed,
+          );
+          return;
+        }
+        uploadedRef.current = { uri, result };
+      }
+
+      const payload: CreateDispatchInput = {
+        vehicleNumber: vehicleNumber.trim(),
+        materialType: materialType!,
+        photoUrl: result.secureUrl,
+        photoPublicId: result.publicId,
+        latitude: location.kind === "captured" ? location.latitude : null,
+        longitude: location.kind === "captured" ? location.longitude : null,
+        locationName: location.kind === "captured" ? location.name : null,
       };
 
-      const dbResult = await createDispatch(dispatchData);
+      const saved = await createDispatch(payload);
 
-      if (!dbResult.ok) {
-        console.error("Supabase insert error:", dbResult.error);
-        setErrorMessage(t.dispatch_save_failed);
-        setSubmissionState("error");
+      if (!saved.ok) {
+        // The upload stays cached, so retrying does not re-send the image.
+        setPhase("form");
+        setSubmitError(
+          readableError(saved.error).kind === "offline" ? t.no_connection : t.dispatch_save_failed,
+        );
         return;
       }
 
-      setLastDispatch(dispatchData);
-      setSubmissionState("success");
-
-    } catch (err) {
-      console.error("Unexpected submit error:", err);
-      setErrorMessage(t.check_internet);
-      setSubmissionState("error");
+      setSubmitted(payload);
+      setSubmittedAt(new Date().toISOString());
+      setPhase("success");
+    } catch {
+      setPhase("form");
+      setSubmitError(t.dispatch_save_failed);
+    } finally {
+      submitInFlight.current = false;
     }
   }
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
-    );
+  function clearSubmitError() {
+    if (submitError) setSubmitError(null);
   }
 
-  if (submissionState === "success" && lastDispatch) {
+  function resetForm() {
+    setAsset(null);
+    setPhotoUri(null);
+    setVehicleNumber("");
+    setMaterialType(null);
+    setShowErrors(false);
+    setSubmitError(null);
+    setSubmitted(null);
+    setSubmittedAt(null);
+    setPhase("form");
+    // The cached upload belongs to the previous photo; dropping it is what
+    // stops the next dispatch from reusing the old image.
+    uploadedRef.current = null;
+    scrollerRef.current?.scrollTo({ y: 0, animated: false });
+    void captureLocation();
+  }
+
+  // ---- success ------------------------------------------------------------
+  if (phase === "success" && submitted) {
     return (
-      <View style={styles.screen}>
-        <ScrollView contentContainerStyle={styles.successContent}>
-          <View style={styles.successIconContainer}>
-            <Text style={styles.successIcon}>✓</Text>
+      <Screen
+        scroll
+        center
+        footer={
+          <View style={styles.footerStack}>
+            {/* A worker logging a whole shift should not have to walk back
+                through the dashboard for every single load. */}
+            <Button title={t.log_another} onPress={resetForm} />
+            <Button
+              title={t.back_to_dashboard}
+              onPress={() => {
+                setSubmitted(null);
+                uploadedRef.current = null;
+                // `replace`, so hardware Back cannot land on a stale form.
+                router.replace("/dashboard");
+              }}
+              variant="outline"
+            />
           </View>
-          <Text style={styles.successTitle}>{t.dispatch_submitted}</Text>
+        }
+      >
+        <View style={styles.successBlock}>
+          <View style={styles.successIcon}>
+            <Text style={styles.successIconText}>✓</Text>
+          </View>
+          <Text style={styles.successTitle} accessibilityRole="header">
+            {t.dispatch_submitted}
+          </Text>
           <Text style={styles.successMessage}>{t.your_dispatch_recorded}</Text>
 
-          <View style={styles.successDetailsCard}>
-            <View style={styles.successRow}>
-              <Text style={styles.successLabel}>{t.vehicle_number}</Text>
-              <Text style={styles.successValue} numberOfLines={1} ellipsizeMode="tail">
-                {lastDispatch.vehicleNumber}
-              </Text>
-            </View>
-            <View style={styles.successRow}>
-              <Text style={styles.successLabel}>{t.material_type}</Text>
-              <Text style={styles.successValue} numberOfLines={1}>
-                {t[getMaterialLabelKey(lastDispatch.materialType)]}
-              </Text>
-            </View>
-            {lastDispatch.locationName && (
-              <View style={styles.successRow}>
-                <Text style={styles.successLabel}>{t.current_location}</Text>
-                <Text style={styles.successValue} numberOfLines={2} ellipsizeMode="tail">
-                  {lastDispatch.locationName}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <Pressable
-            style={styles.submitBtn}
-            onPress={() => router.replace("/dashboard")}
-          >
-            <Text style={styles.submitBtnText}>{t.back_to_dashboard}</Text>
-          </Pressable>
-        </ScrollView>
-      </View>
+          <Card>
+            <SummaryRow label={t.vehicle_number} value={submitted.vehicleNumber} />
+            <SummaryRow label={t.material_type} value={t[getMaterialLabelKey(submitted.materialType)]} />
+            {submitted.locationName ? (
+              <SummaryRow label={t.current_location} value={submitted.locationName} />
+            ) : null}
+            {submittedAt ? (
+              <SummaryRow label={t.submitted_at_label} value={timeLabel(submittedAt)} />
+            ) : null}
+          </Card>
+        </View>
+      </Screen>
     );
   }
 
-  const materialOptions: { key: MaterialType; label: string }[] = [
-    { key: "scrap", label: t.scrap_metal },
-    { key: "ferrous", label: t.ferrous_metal },
-    { key: "non_ferrous", label: t.non_ferrous_metal },
-    { key: "other", label: t.other },
-  ];
+  // ---- form ---------------------------------------------------------------
+  const locationBlocked = location.kind === "unavailable" && !location.canAskAgain;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <Screen
+      scroll={false}
+      keyboardAware
+      footer={
+        <View>
+          {showErrors && missing.length > 0 ? (
+            <View
+              style={styles.alert}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+            >
+              <Text style={styles.alertTitle}>
+                {format(t.fields_missing, { count: missing.length })}
+              </Text>
+              <Text style={styles.alertBody}>{t.fix_fields_hint}</Text>
+            </View>
+          ) : null}
+
+          {submitError ? (
+            <View
+              style={styles.alert}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+            >
+              <Text style={styles.alertBody}>{submitError}</Text>
+            </View>
+          ) : null}
+
+          <Button
+            title={busy ? t.submitting : t.submit_dispatch}
+            onPress={handleSubmit}
+            loading={busy}
+            // Only the busy state disables this. Previously the button was
+            // disabled for any non-"idle" state, so after one failed submit
+            // the worker could never try again and the Retry button had
+            // already been unmounted with the error message.
+            disabled={busy}
+          />
+        </View>
+      }
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        ref={scrollerRef}
+        style={styles.flex}
+        contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        showsVerticalScrollIndicator={false}
       >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>← {t.back}</Text>
-          </Pressable>
-          
-          <View style={styles.langSwitch}>
-            <Pressable
-              style={[styles.langBtn, language === "en" && styles.langBtnActive]}
-              onPress={() => setLanguage("en")}
-            >
-              <Text style={[styles.langText, language === "en" && styles.langTextActive]}>EN</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.langBtn, language === "hi" && styles.langBtnActive]}
-              onPress={() => setLanguage("hi")}
-            >
-              <Text style={[styles.langText, language === "hi" && styles.langTextActive]}>हिं</Text>
-            </Pressable>
-          </View>
+        <AppHeader title={t.new_dispatch} subtitle={t.log_new_sale} onBack={requestLeave} />
+
+        {isOffline ? <NetworkBanner t={t} /> : null}
+
+        {/* ---------------- photo ---------------- */}
+        <View onLayout={(e) => void (fieldOffsets.current.photo = e.nativeEvent.layout.y)}>
+          <Section title={t.photo_label} badge={{ label: t.required_label, tone: "required" }}>
+            <PhotoPicker
+              asset={asset}
+              uri={photoUri}
+              onChange={(nextAsset, nextUri) => {
+                setAsset(nextAsset);
+                setPhotoUri(nextUri);
+                // A new photo invalidates any earlier upload.
+                uploadedRef.current = null;
+                if (showErrors && nextUri) setShowErrors(false);
+                clearSubmitError();
+              }}
+              t={t}
+              error={fieldError("photo")}
+              disabled={busy}
+            />
+          </Section>
         </View>
 
-        <View style={styles.titleSection}>
-          <Text style={styles.pageTitle}>{t.new_dispatch}</Text>
-          <Text style={styles.pageSubtitle}>
-            {language === "hi" ? "नया डिस्पैच रिकॉर्ड बनाएं" : "Create a new dispatch record"}
-          </Text>
+        {/* ---------------- vehicle ---------------- */}
+        <View onLayout={(e) => void (fieldOffsets.current.vehicle = e.nativeEvent.layout.y)}>
+          <Section title={t.vehicle_number} badge={{ label: t.required_label, tone: "required" }}>
+            <Input
+              ref={vehicleRef}
+              value={vehicleNumber}
+              onChangeText={(next) => {
+                setVehicleNumber(next.toUpperCase());
+                if (showErrors && next.trim()) setShowErrors(false);
+                clearSubmitError();
+              }}
+              placeholder={t.enter_vehicle_number}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              // Stops the OS injecting smart quotes or dashes into a plate.
+              autoComplete="off"
+              spellCheck={false}
+              textContentType="none"
+              returnKeyType="done"
+              editable={!busy}
+              error={fieldError("vehicle")}
+              containerStyle={styles.flush}
+            />
+          </Section>
         </View>
 
-        {/* PHOTO SECTION */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t.take_photo} *</Text>
-          {photoUri ? (
-            <View style={styles.photoContainer}>
-              <Image
-                source={{ uri: photoUri }}
-                style={styles.photoPreview}
-                resizeMode="cover"
-              />
-              <Pressable style={styles.retakeBtn} onPress={handleTakePhoto}>
-                <Text style={styles.retakeBtnText}>{t.retake_photo}</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Pressable style={styles.takePhotoBtn} onPress={handleTakePhoto}>
-              <View style={styles.takePhotoIconContainer}>
-                <Text style={styles.takePhotoIcon}>📷</Text>
-              </View>
-              <Text style={styles.takePhotoText}>{t.take_photo}</Text>
-              <Text style={styles.takePhotoSubtext}>
-                {language === "hi" ? "फोटो जरूरी है" : "Photo is required"}
+        {/* ---------------- material ---------------- */}
+        <View onLayout={(e) => void (fieldOffsets.current.material = e.nativeEvent.layout.y)}>
+          <Section
+            title={t.material_type}
+            badge={{ label: t.required_label, tone: "required" }}
+            hint={t.select_material}
+          >
+            <MaterialTypePicker
+              value={materialType}
+              onChange={(next) => {
+                setMaterialType(next);
+                if (showErrors) setShowErrors(false);
+                clearSubmitError();
+              }}
+              t={t}
+              disabled={busy}
+              invalid={Boolean(fieldError("material"))}
+            />
+          </Section>
+        </View>
+
+        {/* ---------------- location (optional) ---------------- */}
+        <Section
+          title={t.current_location}
+          badge={{ label: t.optional, tone: "optional" }}
+          hint={t.location_permission_body}
+        >
+          <View style={styles.locationRow}>
+            <View style={styles.locationText}>
+              <Text style={styles.locationValue}>
+                {location.kind === "getting"
+                  ? t.getting_location
+                  : location.kind === "captured"
+                    ? (location.name ?? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`)
+                    : t.location_unavailable}
               </Text>
-            </Pressable>
-          )}
-        </View>
+              {location.kind === "captured" && location.name ? (
+                <Text style={styles.locationCoords}>
+                  {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+                </Text>
+              ) : null}
+            </View>
 
-        {/* VEHICLE NUMBER */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t.vehicle_number} *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder={t.enter_vehicle_number}
-            placeholderTextColor={theme.colors.textMuted}
-            value={vehicleNumber}
-            onChangeText={handleVehicleChange}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            maxLength={20}
-          />
-          <Text style={styles.helperText}>
-            {language === "hi" ? "पंजीकृत वाहन नंबर दर्ज करें" : "Enter the registered vehicle number"}
-          </Text>
-        </View>
-
-        {/* MATERIAL TYPE */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t.material_type} *</Text>
-          <View style={styles.materialGrid}>
-            {materialOptions.map((opt) => (
+            {location.kind !== "getting" ? (
               <Pressable
-                key={opt.key}
-                style={[
-                  styles.materialOption,
-                  materialType === opt.key && styles.materialOptionActive,
-                ]}
-                onPress={() => handleSelectMaterial(opt.key)}
+                onPress={() => {
+                  // Once the OS prompt is permanently blocked, the only route is
+                  // Settings — say so instead of re-requesting into a wall.
+                  if (locationBlocked) setLocationPrompt(true);
+                  else void captureLocation();
+                }}
+                disabled={busy}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={locationBlocked ? t.open_settings : t.refresh}
+                style={({ pressed }) => [styles.locationAction, pressed && styles.pressed]}
               >
-                {materialType === opt.key && (
-                  <View style={styles.checkmark}>
-                    <Text style={styles.checkmarkText}>✓</Text>
-                  </View>
-                )}
-                <Text
-                  style={[
-                    styles.materialOptionText,
-                    materialType === opt.key && styles.materialOptionTextActive,
-                  ]}
-                  numberOfLines={2}
-                >
-                  {opt.label}
+                <Text style={styles.locationActionText}>
+                  {locationBlocked ? t.open_settings : t.refresh}
                 </Text>
               </Pressable>
-            ))}
+            ) : null}
           </View>
-        </View>
+        </Section>
 
-        {/* LOCATION */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t.current_location}</Text>
-          <View style={styles.infoCard}>
-            {locationStatus === "getting" && (
-              <View style={styles.infoRow}>
-                <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text style={styles.infoText}>{t.getting_location}</Text>
-              </View>
-            )}
-            {locationStatus === "captured" && (
-              <View style={styles.infoRow}>
-                <View style={styles.infoIconContainer}>
-                  <Text style={styles.infoIcon}>✓</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.infoText}>{t.location_captured}</Text>
-                  {locationData?.name ? (
-                    <Text style={styles.infoSubtext} numberOfLines={2} ellipsizeMode="tail">
-                      {locationData.name}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            )}
-            {locationStatus === "unavailable" && (
-              <View>
-                <View style={styles.infoRow}>
-                  <View style={styles.infoIconContainer}>
-                    <Text style={styles.warningIcon}>⚠️</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoText}>{t.location_unavailable}</Text>
-                    <Text style={styles.infoSubtext}>
-                      {language === "hi"
-                        ? "आप बिना स्थान के भी जमा कर सकते हैं"
-                        : "You can still submit without location"}
-                    </Text>
-                  </View>
-                </View>
-                <Pressable style={styles.retryLocationBtn} onPress={captureLocation}>
-                  <Text style={styles.retryLocationBtnText}>
-                    {language === "hi" ? "स्थान पुनः प्राप्त करें" : "Retry Location"}
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* DATE & TIME */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{t.date_time}</Text>
-          <View style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <View style={styles.infoIconContainer}>
-                <Text style={styles.infoIcon}>🕒</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.infoText}>
-                  {currentTime.toLocaleDateString([], {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })} • {currentTime.toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </Text>
-                <Text style={styles.infoSubtext}>{t.auto_captured}</Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* REVIEW */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t.review_dispatch}</Text>
-          <View style={styles.reviewCard}>
+        {/* ---------------- review ---------------- */}
+        <Section title={t.review_dispatch} hint={t.tap_to_edit}>
+          <Card style={styles.reviewCard}>
             <ReviewRow
-              label={t.take_photo}
-              value={photoUri ? "✓" : "✕"}
-              valueColor={photoUri ? theme.colors.primary : theme.colors.danger}
+              label={t.photo_label}
+              ok={Boolean(photoUri)}
+              required
+              onPress={() => scrollToField("photo")}
             />
             <ReviewRow
               label={t.vehicle_number}
-              value={vehicleNumber.trim() || "-"}
-              valueColor={theme.colors.text}
+              value={vehicleNumber.trim() || undefined}
+              ok={Boolean(vehicleNumber.trim())}
+              required
+              onPress={() => scrollToField("vehicle", true)}
             />
             <ReviewRow
               label={t.material_type}
-              value={materialType ? t[getMaterialLabelKey(materialType)] : "-"}
-              valueColor={theme.colors.text}
+              value={materialType ? t[getMaterialLabelKey(materialType)] : undefined}
+              ok={Boolean(materialType)}
+              required
+              onPress={() => scrollToField("material")}
             />
             <ReviewRow
               label={t.current_location}
-              value={locationStatus === "captured" ? "✓" : "✕"}
-              valueColor={locationStatus === "captured" ? theme.colors.primary : theme.colors.textMuted}
+              value={location.kind === "captured" ? (location.name ?? t.location_captured) : undefined}
+              ok={location.kind === "captured"}
+              // Location is genuinely optional. The old checklist drew a grey
+              // cross for it, which read as a failure.
+              onPress={() => void captureLocation()}
             />
-          </View>
-        </View>
+          </Card>
+        </Section>
 
-        {/* SUBMIT & STATES */}
-        {submissionState === "uploading" || submissionState === "saving" ? (
-          <View style={styles.processingContainer}>
-            <ActivityIndicator size="small" color="#FFF" />
-            <Text style={styles.processingText}>
-              {submissionState === "uploading" ? t.uploading_photo : t.saving_dispatch}
+        {/* ---------------- date and time ---------------- */}
+        <Section title={t.date_time} hint={t.auto_captured}>
+          <Card>
+            <Text style={styles.clock} accessibilityLiveRegion="polite">
+              {clockLabel(now)}
             </Text>
-          </View>
-        ) : (
-          <>
-            {errorMessage && (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
-                {submissionState === "error" && (
-                  <Pressable style={styles.retryBtn} onPress={handleSubmit}>
-                    <Text style={styles.retryBtnText}>{t.retry}</Text>
-                  </Pressable>
-                )}
-              </View>
-            )}
-            <Pressable
-              style={[
-                styles.submitBtn,
-                submissionState !== "idle" && styles.submitBtnDisabled,
-              ]}
-              onPress={handleSubmit}
-              disabled={submissionState !== "idle"}
-            >
-              <Text style={styles.submitBtnText}>{t.submit_dispatch}</Text>
-            </Pressable>
-          </>
-        )}
-        
-        <View style={{ height: 40 }} />
+          </Card>
+        </Section>
       </ScrollView>
-    </KeyboardAvoidingView>
+
+      <ConfirmDialog
+        visible={confirmingLeave}
+        title={t.discard_title}
+        body={t.discard_body}
+        confirmLabel={t.discard}
+        cancelLabel={t.keep_editing}
+        onConfirm={confirmLeave}
+        onCancel={() => setConfirmingLeave(false)}
+        destructive
+      />
+
+      <ConfirmDialog
+        visible={locationPrompt}
+        title={t.location_permission_title}
+        body={t.location_permission_body}
+        confirmLabel={t.open_settings}
+        cancelLabel={t.cancel}
+        onConfirm={async () => {
+          setLocationPrompt(false);
+          try {
+            await Linking.openSettings();
+          } catch {
+            toast.show(t.something_went_wrong, "error");
+          }
+        }}
+        onCancel={() => setLocationPrompt(false)}
+      />
+    </Screen>
   );
 }
 
 function ReviewRow({
   label,
   value,
-  valueColor,
+  ok,
+  required = false,
+  onPress,
 }: {
   label: string;
-  value: string;
-  valueColor: string;
+  value?: string;
+  ok: boolean;
+  required?: boolean;
+  onPress?: () => void;
 }) {
+  const { t } = useLanguage();
+  const summary = ok ? (value ?? t.ok) : required ? t.complete_required_fields : t.not_recorded;
+
   return (
-    <View style={styles.reviewRow}>
-      <Text style={styles.reviewLabel} numberOfLines={1}>
-        {label}
-      </Text>
-      <Text
-        style={[styles.reviewValue, { color: valueColor }]}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${summary}`}
+      accessibilityState={{ disabled: !onPress }}
+      style={({ pressed }) => [styles.reviewRow, pressed && onPress ? styles.pressed : null]}
+    >
+      <View style={[styles.reviewMark, ok ? styles.reviewMarkOk : required ? styles.reviewMarkMissing : null]}>
+        <Text style={[styles.reviewMarkText, ok && styles.reviewMarkTextOk]}>
+          {ok ? "✓" : required ? "!" : "–"}
+        </Text>
+      </View>
+
+      <View style={styles.reviewText}>
+        <Text style={styles.reviewLabel}>
+          {label}
+          {required ? <Text style={styles.reviewRequired}> *</Text> : null}
+        </Text>
+        <Text style={[styles.reviewValue, !ok && required ? styles.reviewValueMissing : null]} numberOfLines={2}>
+          {summary}
+        </Text>
+      </View>
+
+      {onPress ? <Text style={styles.reviewChevron}>›</Text> : null}
+    </Pressable>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue} numberOfLines={2}>
         {value}
       </Text>
     </View>
@@ -557,473 +666,133 @@ function ReviewRow({
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
+  flex: { flex: 1 },
+  content: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingBottom: theme.spacing.xxl,
   },
-  
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: theme.colors.background,
-  },
-  
-  scrollContent: {
-    padding: theme.spacing.lg,
-  },
-  
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: theme.spacing.lg,
-  },
-  
-  backBtn: {
-    padding: 8,
-  },
-  
-  backText: {
-    fontSize: theme.textSizes.md,
-    fontWeight: "600",
-    color: theme.colors.primary,
-  },
-  
-  langSwitch: {
-    flexDirection: "row",
-    backgroundColor: theme.colors.surface,
+  flush: { marginBottom: 0 },
+  pressed: { opacity: 0.7 },
+  footerStack: { gap: theme.spacing.sm },
+
+  alert: {
+    backgroundColor: theme.colors.danger + "12",
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "40",
     borderRadius: theme.radius.md,
+    padding: theme.spacing.sm + 2,
+    marginBottom: theme.spacing.sm,
+  },
+  alertTitle: { color: theme.colors.danger, fontSize: theme.textSizes.sm, fontWeight: "800" },
+  alertBody: { color: theme.colors.danger, fontSize: theme.textSizes.xs, lineHeight: 16, marginTop: 2 },
+
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    padding: 3,
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.md,
   },
-  
-  langBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  locationText: { flex: 1, minWidth: 0 },
+  locationValue: { fontSize: theme.textSizes.sm, color: theme.colors.text, fontWeight: "600" },
+  locationCoords: { fontSize: theme.textSizes.xs, color: theme.colors.textMuted, marginTop: 3 },
+  locationAction: {
+    // Was a 278x41 strip; now a real 48dp target.
+    minHeight: 48,
+    minWidth: 92,
+    paddingHorizontal: theme.spacing.md,
     borderRadius: theme.radius.sm,
-    minWidth: 44,
+    backgroundColor: theme.colors.primary + "14",
     alignItems: "center",
+    justifyContent: "center",
   },
-  
-  langBtnActive: {
-    backgroundColor: theme.colors.primary,
-  },
-  
-  langText: {
+  locationActionText: {
+    color: theme.colors.primary,
     fontSize: theme.textSizes.xs,
-    fontWeight: "700",
-    color: theme.colors.textMuted,
+    fontWeight: "800",
+    textAlign: "center",
   },
-  
-  langTextActive: {
-    color: "#FFFFFF",
+
+  reviewCard: { padding: 0, overflow: "hidden" },
+  reviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    minHeight: 60,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
   },
-  
-  titleSection: {
-    marginBottom: theme.spacing.xl,
+  reviewMark: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.textMuted + "1F",
   },
-  
-  pageTitle: {
+  reviewMarkOk: { backgroundColor: theme.colors.primaryLight },
+  reviewMarkMissing: { backgroundColor: theme.colors.danger + "22" },
+  reviewMarkText: { fontSize: 13, fontWeight: "900", color: theme.colors.textMuted },
+  reviewMarkTextOk: { color: "#065F46" },
+  reviewText: { flex: 1, minWidth: 0 },
+  reviewLabel: { fontSize: theme.textSizes.sm, color: theme.colors.text, fontWeight: "700" },
+  reviewRequired: { color: theme.colors.danger },
+  reviewValue: { fontSize: theme.textSizes.xs, color: theme.colors.textMuted, marginTop: 2 },
+  reviewValueMissing: { color: theme.colors.danger, fontWeight: "700" },
+  reviewChevron: { color: theme.colors.textMuted, fontSize: 22 },
+
+  clock: {
     fontSize: theme.textSizes.xl,
     fontWeight: "800",
     color: theme.colors.text,
-    marginBottom: 4,
-  },
-  
-  pageSubtitle: {
-    fontSize: theme.textSizes.sm,
-    color: theme.colors.textMuted,
-  },
-  
-  section: {
-    marginBottom: theme.spacing.lg,
-  },
-  
-  sectionLabel: {
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-  },
-  
-  sectionTitle: {
-    fontSize: theme.textSizes.lg,
-    fontWeight: "800",
-    color: theme.colors.text,
-    marginBottom: theme.spacing.md,
-  },
-  
-  helperText: {
-    fontSize: theme.textSizes.xs,
-    color: theme.colors.textMuted,
-    marginTop: 6,
-  },
-  
-  photoContainer: {
-    alignItems: "center",
-  },
-  
-  photoPreview: {
-    width: "100%",
-    height: 220,
-    borderRadius: theme.radius.lg,
-    backgroundColor: theme.colors.surface,
-    marginBottom: theme.spacing.md,
-  },
-  
-  retakeBtn: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  
-  retakeBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  
-  takePhotoBtn: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 2,
-    borderColor: theme.colors.primary,
-    borderStyle: "dashed",
-    borderRadius: theme.radius.lg,
-    paddingVertical: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  
-  takePhotoIconContainer: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: theme.colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: theme.spacing.md,
-  },
-  
-  takePhotoIcon: {
-    fontSize: 32,
-  },
-  
-  takePhotoText: {
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-    color: theme.colors.primary,
-    marginBottom: 4,
-  },
-  
-  takePhotoSubtext: {
-    fontSize: theme.textSizes.sm,
-    color: theme.colors.textMuted,
-  },
-  
-  input: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    padding: 16,
-    fontSize: theme.textSizes.md,
-    fontWeight: "600",
-    color: theme.colors.text,
-    minHeight: 56,
-  },
-  
-  materialGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing.sm,
-  },
-  
-  materialOption: {
-    flex: 1,
-    minWidth: "45%",
-    backgroundColor: theme.colors.surface,
-    borderWidth: 2,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 80,
-    position: "relative",
-  },
-  
-  materialOptionActive: {
-    backgroundColor: theme.colors.primaryLight,
-    borderColor: theme.colors.primary,
-  },
-  
-  checkmark: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: theme.colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  
-  checkmarkText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  
-  materialOptionText: {
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-    color: theme.colors.text,
-    textAlign: "center",
-  },
-  
-  materialOptionTextActive: {
-    color: theme.colors.primary,
-  },
-  
-  infoCard: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    padding: 16,
-  },
-  
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  
-  infoIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  
-  infoIcon: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: theme.colors.primary,
-  },
-  
-  warningIcon: {
-    fontSize: 18,
-  },
-  
-  infoText: {
-    fontSize: theme.textSizes.md,
-    fontWeight: "600",
-    color: theme.colors.text,
-  },
-  
-  infoSubtext: {
-    fontSize: theme.textSizes.sm,
-    color: theme.colors.textMuted,
-    marginTop: 2,
-  },
-  
-  retryLocationBtn: {
-    marginTop: 12,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
-    borderRadius: theme.radius.md,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  
-  retryLocationBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-  
-  reviewCard: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-  },
-  
-  reviewRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  
-  reviewLabel: {
-    fontSize: theme.textSizes.sm,
-    color: theme.colors.textMuted,
-    fontWeight: "500",
-    flex: 1,
-    marginRight: theme.spacing.md,
-  },
-  
-  reviewValue: {
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    flex: 1.5,
-    textAlign: "right",
-  },
-  
-  submitBtn: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    paddingVertical: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: theme.spacing.md,
-    minHeight: 60,
-  },
-  
-  submitBtnDisabled: {
-    opacity: 0.6,
-  },
-  
-  submitBtnText: {
-    color: "#FFFFFF",
-    fontSize: theme.textSizes.lg,
-    fontWeight: "800",
-  },
-  
-  // Processing & Error
-  processingContainer: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    paddingVertical: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: theme.spacing.md,
-    minHeight: 60,
-    flexDirection: "row",
-    gap: 12,
-  },
-  
-  processingText: {
-    color: "#FFFFFF",
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  
-  errorContainer: {
-    backgroundColor: theme.colors.danger + "15",
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.md,
-    marginTop: theme.spacing.md,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: theme.colors.danger + "30",
-  },
-  
-  errorText: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    textAlign: "center",
-    marginBottom: theme.spacing.sm,
-  },
-  
-  retryBtn: {
-    backgroundColor: theme.colors.danger,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
-  },
-  
-  retryBtnText: {
-    color: "#FFFFFF",
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
   },
 
-  // Success Screen
-  successContent: {
-    flex: 1,
-    padding: theme.spacing.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  
-  successIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+  successBlock: { alignItems: "center", width: "100%" },
+  successIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: theme.colors.primaryLight,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
   },
-  
-  successIcon: {
-    fontSize: 48,
-    fontWeight: "800",
-    color: theme.colors.primary,
-  },
-  
+  successIconText: { fontSize: 38, color: theme.colors.primary, fontWeight: "900" },
   successTitle: {
     fontSize: theme.textSizes.xl,
     fontWeight: "800",
     color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
     textAlign: "center",
   },
-  
   successMessage: {
-    fontSize: theme.textSizes.md,
+    fontSize: theme.textSizes.sm,
     color: theme.colors.textMuted,
-    marginBottom: theme.spacing.xl,
     textAlign: "center",
+    marginTop: 4,
+    marginBottom: theme.spacing.lg,
+    lineHeight: 19,
   },
-  
-  successDetailsCard: {
-    width: "100%",
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.xl,
-  },
-  
-  successRow: {
+  summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: theme.spacing.md,
+    gap: theme.spacing.md,
+    paddingVertical: theme.spacing.sm + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
   },
-  
-  successLabel: {
-    fontSize: theme.textSizes.sm,
-    color: theme.colors.textMuted,
-    fontWeight: "600",
+  summaryLabel: { fontSize: theme.textSizes.xs, color: theme.colors.textMuted, fontWeight: "700" },
+  summaryValue: {
     flex: 1,
-  },
-  
-  successValue: {
-    fontSize: theme.textSizes.md,
+    fontSize: theme.textSizes.sm,
     color: theme.colors.text,
     fontWeight: "700",
-    flex: 2,
     textAlign: "right",
-    marginLeft: theme.spacing.md,
   },
 });

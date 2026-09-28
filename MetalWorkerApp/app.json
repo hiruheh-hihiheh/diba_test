@@ -32,6 +32,22 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow MetalWorker to open your photos so you can attach an existing scrap photo to a dispatch.",
+          "cameraPermission": "Allow MetalWorker to use the camera to photograph the scrap load you are dispatching.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow MetalWorker to record where a dispatch was made. Your location is saved with the dispatch and is not tracked in the background.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
       ]
     ],
     "experiments": {

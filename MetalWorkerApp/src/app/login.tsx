@@ -1,39 +1,33 @@
-import { useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import { router } from "expo-router";
-
-import { theme } from "../constants/theme";
-import { getTranslations, type Language } from "../constants/translations";
-import { supabase, usernameToEmail } from "../services/supabase";
-import { updateLastLogin } from "../services/profile";
+import { useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { LanguageSwitch } from "../components/ui/LanguageSwitch";
+import { Screen } from "../components/ui/Screen";
+import { supabase, usernameToEmail } from "../services/supabase";
+import { updateLastLogin } from "../services/profile";
+import { theme } from "../constants/theme";
+import { useLanguage } from "../contexts/LanguageContext";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { readableError } from "../utils/readableError";
 
 export default function LoginScreen() {
-  // TODO: To persist language choice across app restarts, install 
-  // @react-native-async-storage/async-storage and replace this state 
-  // with AsyncStorage.getItem/setItem logic.
-  const [language, setLanguage] = useState<Language>("en");
-  const t = getTranslations(language);
+  const { t } = useLanguage();
+  const { isOffline } = useNetworkStatus();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A second tap while the first request is in flight used to fire a second
+  // sign-in; this keeps the button honest as well as disabled.
+  const inFlight = useRef(false);
 
   async function handleLogin() {
-    setError(null);
+    if (inFlight.current) return;
+
     const cleanUsername = username.trim().toLowerCase();
 
     if (!cleanUsername || !password) {
@@ -41,260 +35,217 @@ export default function LoginScreen() {
       return;
     }
 
+    if (isOffline) {
+      setError(t.no_connection);
+      return;
+    }
+
+    inFlight.current = true;
     setLoading(true);
+    setError(null);
 
-    const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
-      email: usernameToEmail(cleanUsername),
-      password,
-    });
+    try {
+      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: usernameToEmail(cleanUsername),
+        password,
+      });
 
-    if (signInError || !authData.user) {
-      const isInvalidCreds = signInError?.message
-        ?.toLowerCase()
-        .includes("invalid login credentials");
-      
-      setError(isInvalidCreds ? t.wrong_credentials : t.something_went_wrong);
+      if (signInError || !authData.user) {
+        const raw = signInError?.message ?? "";
+        const isBadCreds = /invalid login credentials/i.test(raw);
+
+        if (isBadCreds) {
+          setError(t.wrong_credentials);
+        } else {
+          const readable = readableError(signInError);
+          setError(readable.kind === "offline" ? t.no_connection : t.could_not_sign_in);
+        }
+        return;
+      }
+
+      // A signed-in user still needs an active, non-admin profile. Doing this
+      // here means a disabled or admin account never reaches a dashboard.
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", authData.user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        // Do not sign out: the sign-in worked and a dead connection is not a
+        // reason to throw the session away.
+        setError(readableError(profileError).kind === "offline" ? t.no_connection : t.could_not_sign_in);
+        return;
+      }
+
+      if (!profile) {
+        await supabase.auth.signOut();
+        setError(t.login_failed);
+        return;
+      }
+
+      if (!profile.is_active) {
+        await supabase.auth.signOut();
+        setError(t.account_inactive);
+        return;
+      }
+
+      if (profile.role === "admin") {
+        await supabase.auth.signOut();
+        setError(t.admin_login_unsupported);
+        return;
+      }
+
+      // Best-effort: a missing RLS policy here must not block the sign-in.
+      void updateLastLogin();
+    } catch {
+      setError(t.could_not_sign_in);
+    } finally {
+      inFlight.current = false;
       setLoading(false);
-      return;
     }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role, is_active")
-      .eq("id", authData.user.id)
-      .single();
-
-    if (profileError || !profile) {
-      await supabase.auth.signOut();
-      setError(t.something_went_wrong || "Profile not found.");
-      setLoading(false);
-      return;
-    }
-
-    if (!profile.is_active) {
-      await supabase.auth.signOut();
-      setError(language === "hi" ? "आपका खाता निष्क्रिय है।" : "Your account is inactive.");
-      setLoading(false);
-      return;
-    }
-
-    if (profile.role === "admin") {
-      await supabase.auth.signOut();
-      setError(language === "hi" ? "प्रशासक लॉगिन यहाँ समर्थित नहीं है।" : "Admin login is not supported here.");
-      setLoading(false);
-      return;
-    }
-
-    if (profile.role !== "worker" && profile.role !== "processor") {
-      await supabase.auth.signOut();
-      setError(t.something_went_wrong || "Invalid user role.");
-      setLoading(false);
-      return;
-    }
-
-    // Update last login in the background. 
-    // We do not block navigation if this fails, as the user is already authenticated.
-    updateLastLogin().catch((err) => {
-      console.warn("Failed to update last_login_at:", err);
-    });
-
-    if (profile.role === "processor") {
-      router.replace("/processor-dashboard");
-    } else {
-      router.replace("/dashboard");
-    }
-    
-    setLoading(false);
   }
-
-  function clearErrorOnChange(text: string, setter: (v: string) => void) {
-    setter(text);
-    if (error) setError(null);
-  }
-
-  const togglePasswordText = showPassword
-    ? language === "hi"
-      ? "छिपाएँ"
-      : "Hide"
-    : language === "hi"
-    ? "दिखाएँ"
-    : "Show";
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Language Switcher */}
-        <View style={styles.languageRow}>
-          <TouchableOpacity
-            style={[
-              styles.langButton,
-              language === "en" && styles.langButtonActive,
-            ]}
-            onPress={() => setLanguage("en")}
-            activeOpacity={0.7}
-          >
-            <Text
-              style={[
-                styles.langText,
-                language === "en" && styles.langTextActive,
-              ]}
-            >
-              English
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.langButton,
-              language === "hi" && styles.langButtonActive,
-            ]}
-            onPress={() => setLanguage("hi")}
-            activeOpacity={0.7}
-          >
-            <Text
-              style={[
-                styles.langText,
-                language === "hi" && styles.langTextActive,
-              ]}
-            >
-              हिंदी
-            </Text>
-          </TouchableOpacity>
+    <Screen scroll center keyboardAware testID="login-screen">
+      <View style={styles.top}>
+        <LanguageSwitch />
+      </View>
+
+      <View style={styles.brand}>
+        <View style={styles.logo}>
+          <Text style={styles.logoText}>MW</Text>
         </View>
+        <Text style={styles.appName}>{t.app_name}</Text>
+        <Text style={styles.subtitle}>{t.login_subtitle}</Text>
+      </View>
 
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.appName}>{t.app_name}</Text>
-          <Text style={styles.subtitle}>{t.login_subtitle}</Text>
-        </View>
+      <View style={styles.form}>
+        <Input
+          label={t.username}
+          value={username}
+          onChangeText={(next) => {
+            setUsername(next);
+            // Clear the error as soon as the worker starts fixing it, rather
+            // than leaving a stale red box under the field.
+            if (error) setError(null);
+          }}
+          placeholder={t.enter_username}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="username"
+          textContentType="username"
+          returnKeyType="next"
+          editable={!loading}
+          hint={t.username_help}
+        />
 
-        {/* Form */}
-        <View style={styles.form}>
-          <Input
-            label={t.username}
-            placeholder={t.enter_username}
-            value={username}
-            onChangeText={(text: string) => clearErrorOnChange(text, setUsername)}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
-
-          <View style={styles.passwordContainer}>
-            <Input
-              label={t.password}
-              placeholder={t.enter_password}
-              value={password}
-              onChangeText={(text: string) => clearErrorOnChange(text, setPassword)}
-              secureTextEntry={!showPassword}
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-            />
-            <TouchableOpacity
-              style={styles.togglePassword}
+        <Input
+          label={t.password}
+          value={password}
+          onChangeText={(next) => {
+            setPassword(next);
+            if (error) setError(null);
+          }}
+          placeholder={t.enter_password}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="current-password"
+          textContentType="password"
+          secureTextEntry={!showPassword}
+          editable={!loading}
+          returnKeyType="go"
+          onSubmitEditing={handleLogin}
+          accessory={
+            <Pressable
               onPress={() => setShowPassword((prev) => !prev)}
-              activeOpacity={0.7}
+              // 48x48 so the toggle is not a 35px sliver beside the field.
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={showPassword ? t.hide_password : t.show_password}
+              accessibilityState={{ selected: showPassword }}
+              style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
             >
-              <Text style={styles.togglePasswordText}>{togglePasswordText}</Text>
-            </TouchableOpacity>
+              <Text style={styles.toggleText}>{showPassword ? "🙈" : "👁"}</Text>
+            </Pressable>
+          }
+        />
+
+        {error ? (
+          <View style={styles.errorBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
+            <Text style={styles.errorText}>{error}</Text>
           </View>
+        ) : null}
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <Button
-            title={loading ? t.logging_in : t.login}
-            loading={loading}
-            disabled={loading}
-            onPress={handleLogin}
-          />
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        <Button
+          title={loading ? t.logging_in : t.login}
+          onPress={handleLogin}
+          loading={loading}
+          disabled={loading || (!username.trim() && !password)}
+        />
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: theme.spacing.lg,
-    justifyContent: "center",
-  },
-  languageRow: {
+  top: {
     flexDirection: "row",
-    alignSelf: "flex-end",
+    justifyContent: "flex-end",
+    paddingTop: theme.spacing.sm,
     marginBottom: theme.spacing.xl,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 4,
   },
-  langButton: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 8,
-    borderRadius: theme.radius.sm,
-  },
-  langButtonActive: {
+  brand: { alignItems: "center", marginBottom: theme.spacing.xl },
+  logo: {
+    width: 68,
+    height: 68,
+    borderRadius: theme.radius.xl,
     backgroundColor: theme.colors.primary,
-  },
-  langText: {
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    color: theme.colors.textMuted,
-  },
-  langTextActive: {
-    color: "#FFFFFF",
-  },
-  header: {
     alignItems: "center",
-    marginBottom: theme.spacing.xl,
-  },
-  appName: {
-    fontSize: 32,
-    fontWeight: "800",
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
-  },
-  subtitle: {
-    fontSize: theme.textSizes.md,
-    color: theme.colors.textMuted,
-    textAlign: "center",
-  },
-  form: {
-    width: "100%",
-    maxWidth: 400,
-    alignSelf: "center",
-  },
-  passwordContainer: {
-    position: "relative",
+    justifyContent: "center",
     marginBottom: theme.spacing.md,
   },
-  togglePassword: {
-    position: "absolute",
-    right: 12,
-    top: 42, // Adjusts to align with the input text area
-    padding: 8,
+  logoText: {
+    color: "#FFFFFF",
+    fontSize: theme.textSizes.xl,
+    fontWeight: "900",
+    letterSpacing: 0.5,
   },
-  togglePasswordText: {
-    color: theme.colors.primary,
+  appName: {
+    fontSize: theme.textSizes.xl,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+  subtitle: {
     fontSize: theme.textSizes.sm,
-    fontWeight: "600",
+    color: theme.colors.textMuted,
+    marginTop: 4,
+    textAlign: "center",
+    paddingHorizontal: theme.spacing.lg,
+    lineHeight: 19,
+  },
+  form: { width: "100%" },
+  toggle: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: -6,
+  },
+  togglePressed: { opacity: 0.6 },
+  toggleText: { fontSize: 18 },
+  errorBox: {
+    backgroundColor: theme.colors.danger + "12",
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "33",
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
   },
   errorText: {
     color: theme.colors.danger,
-    fontSize: theme.textSizes.md,
-    textAlign: "center",
-    marginBottom: theme.spacing.md,
-    fontWeight: "500",
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    lineHeight: 19,
   },
 });

@@ -1,102 +1,44 @@
-import {
-  useEffect,
-  useState,
-} from "react";
+import { router } from "expo-router";
+import { useEffect, useRef } from "react";
 
-import {
-  ActivityIndicator,
-  View,
-} from "react-native";
+import { Screen } from "../components/ui/Screen";
+import { LoadingState } from "../components/ui/States";
+import { useLanguage } from "../contexts/LanguageContext";
+import { homeForRole, useSession } from "../contexts/SessionContext";
 
-import { useRouter } from "expo-router";
-
-import { supabase } from "../services/supabase";
-import { theme } from "../constants/theme";
-
-
+/**
+ * Boot gate only. All of the session logic lives in `<SessionProvider>` so that
+ * there is exactly one place that decides where an authenticated user belongs.
+ *
+ * The previous version queried the profile here and called `signOut()` whenever
+ * the query came back empty — which meant one bar of signal on a worker's
+ * phone logged them out in the middle of a shift.
+ */
 export default function Index() {
-
-  const router = useRouter();
-
-  const [loading, setLoading] =
-    useState(true);
-
+  const { status, role } = useSession();
+  const { t } = useLanguage();
+  const redirected = useRef(false);
 
   useEffect(() => {
+    if (redirected.current) return;
 
-    let mounted = true;
-
-
-    async function checkSession() {
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-
-      if (!mounted) return;
-
-
-      if (session) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role, is_active")
-          .eq("id", session.user.id)
-          .single();
-
-        if (!profile || !profile.is_active) {
-          await supabase.auth.signOut();
-          router.replace("/login");
-        } else if (profile.role === "processor") {
-          router.replace("/processor-dashboard");
-        } else if (profile.role === "worker") {
-          router.replace("/dashboard");
-        } else {
-          await supabase.auth.signOut();
-          router.replace("/login");
-        }
-      } else {
-        router.replace("/login");
-      }
-
-      setLoading(false);
+    if (status === "signedOut") {
+      redirected.current = true;
+      router.replace("/login");
+      return;
     }
 
-
-    checkSession();
-
-
-    return () => {
-      mounted = false;
-    };
-
-  }, [router]);
-
+    if (status === "signedIn") {
+      redirected.current = true;
+      router.replace(homeForRole(role));
+    }
+    // "unreachable" is rendered in place by <SessionGate> on the next screen,
+    // and resolves through the provider's own redirect when it recovers.
+  }, [status, role]);
 
   return (
-
-    <View
-      style={{
-        flex: 1,
-        justifyContent:
-          "center",
-        alignItems:
-          "center",
-
-        backgroundColor:
-          theme.colors.background,
-      }}
-    >
-
-      <ActivityIndicator
-        size="large"
-        color={
-          theme.colors.primary
-        }
-      />
-
-    </View>
-
+    <Screen scroll={false} center>
+      <LoadingState label={t.loading} />
+    </Screen>
   );
-
 }
