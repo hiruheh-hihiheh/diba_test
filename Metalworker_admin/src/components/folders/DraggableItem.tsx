@@ -1,5 +1,9 @@
 // src/components/folders/DraggableItem.tsx
 // Wraps any child to make it draggable via long-press + pan.
+//
+/* eslint-disable react-hooks/immutability -- SharedValue `.value` writes inside
+   `"worklet"` functions are Reanimated runtime operations, not React render
+   mutations. The React Compiler lint does not model the worklet runtime. */
 
 import React, { useCallback } from "react";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";

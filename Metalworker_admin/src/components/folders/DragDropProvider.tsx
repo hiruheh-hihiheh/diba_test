@@ -1,5 +1,9 @@
 // src/components/folders/DragDropProvider.tsx
 // Manages drag-and-drop state, drop zone registry, and renders floating ghost overlay.
+//
+/* eslint-disable react-hooks/immutability -- SharedValue `.value` writes are
+   dispatched through the Reanimated worklet runtime, not React state. The React
+   Compiler lint misreports these idiomatic writes as render-time mutations. */
 
 import React, {
   createContext,

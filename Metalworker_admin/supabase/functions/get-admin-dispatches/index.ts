@@ -114,14 +114,19 @@ Deno.serve(async (req) => {
         );
       }
 
+      // Build the update payload explicitly: `location_name` is nullable and
+      // only overwritten when the client actually supplies the key, so an
+      // admin clearing the field (null) is honoured while a stale JS `undefined`
+      // (from older client versions) can no longer wipe the stored value.
+      const updatePayload: Record<string, unknown> = {};
+      if (input.vehicle_number !== undefined) updatePayload.vehicle_number = input.vehicle_number;
+      if (input.material_type !== undefined) updatePayload.material_type = input.material_type;
+      if (input.status !== undefined) updatePayload.status = input.status;
+      if ("location_name" in input) updatePayload.location_name = input.location_name;
+
       const { data, error } = await adminClient
         .from("dispatches")
-        .update({
-          vehicle_number: input.vehicle_number,
-          material_type: input.material_type,
-          location_name: input.location_name,
-          status: input.status,
-        })
+        .update(updatePayload)
         .eq("id", id)
         .select("*")
         .maybeSingle();

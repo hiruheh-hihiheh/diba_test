@@ -103,7 +103,7 @@ export function BillGroupForm({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={saving ? undefined : onClose}>
       <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           style={styles.keyboard}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -37,13 +38,7 @@ export function GroupPhotoPreviewModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (visible) {
-      loadPhotos();
-    }
-  }, [visible]);
-
-  async function loadPhotos() {
+  const loadPhotos = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -54,10 +49,18 @@ export function GroupPhotoPreviewModal({
     } finally {
       setLoading(false);
     }
-  }
+  }, [fetchPhotos]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (visible) {
+        void loadPhotos();
+      }
+    }, [visible, loadPhotos])
+  );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
         <View style={styles.modalContent}>
           {/* Header */}

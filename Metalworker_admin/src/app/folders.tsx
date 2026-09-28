@@ -13,11 +13,12 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import { useAdminGate } from "../hooks/useAdminGate";
 import { supabase } from "../services/supabase";
 import {
   fetchFolders,
@@ -53,11 +54,14 @@ export default function FoldersScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  const { checking: authChecking } = useAdminGate();
+
   const [folders, setFolders] = useState<AdminFolder[]>([]);
   const [allItems, setAllItems] = useState<
     { type: FolderItemType; id: string; label: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [previewItem, setPreviewItem] = useState<{
@@ -71,49 +75,67 @@ export default function FoldersScreen() {
     null
   );
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
-  
+
+  // Transient banner for drop/create/rename/delete feedback.
+  const [flash, setFlash] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const flashTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showFlash = useCallback((type: "success" | "error", text: string) => {
+    setFlash({ type, text });
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    };
+  }, []);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [itemTypeFilter, setItemTypeFilter] = useState<FolderItemType | "all">("all");
-
-  /* ── Auth guard ── */
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-    });
-  }, []);
 
   /* ── Data loading ── */
   const loadData = useCallback(async () => {
     try {
-      setLoading(true);
-      const [folderList, items, countsRes] = await Promise.all([
+      const [folderList, items] = await Promise.all([
         fetchFolders(),
         fetchAllItems(),
-        supabase.from("folder_items").select("folder_id"),
       ]);
+      setError(null);
       setFolders(folderList);
       setAllItems(items);
 
+      // Count items per folder from the association table (row-light query).
+      const { data: itemRows, error: countError } = await supabase
+        .from("folder_items")
+        .select("folder_id");
+      if (countError) throw new Error(countError.message);
+
       const counts: Record<string, number> = {};
-      if (countsRes.data) {
-        for (const row of countsRes.data) {
+      if (itemRows) {
+        for (const row of itemRows) {
           counts[row.folder_id] = (counts[row.folder_id] || 0) + 1;
         }
       }
       setFolderCounts(counts);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to load folders.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      setError(
+        err instanceof Error ? err.message : "Failed to load folders."
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadData();
+    }, [loadData])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -207,13 +229,13 @@ export default function FoldersScreen() {
       const isDuplicate =
         msg.toLowerCase().includes("duplicate") ||
         msg.toLowerCase().includes("unique") ||
-        msg.toLowerCase().includes("already exists");
+        msg.toLowerCase().includes("already exists") ||
+        msg.includes("23505");
       const displayMsg = isDuplicate
         ? `This item is already in "${folder.name}".`
         : msg;
 
-      if (Platform.OS === "web") window.alert(displayMsg);
-      else Alert.alert("Error", displayMsg);
+      showFlash("error", displayMsg);
       return;
     }
 
@@ -222,14 +244,8 @@ export default function FoldersScreen() {
       ...prev,
       [zoneId]: (prev[zoneId] || 0) + 1,
     }));
-    
-    const successMsg = `Added to "${folder.name}"`;
-    if (Platform.OS === "web") {
-      // Brief non-blocking feedback — using a simple approach
-      // (no toast library needed)
-    } else {
-      Alert.alert("✓ Added", successMsg);
-    }
+
+    showFlash("success", `Added to "${folder.name}"`);
   }
 
   /* ── Render ── */
@@ -269,12 +285,38 @@ export default function FoldersScreen() {
             </View>
           </View>
 
-          {loading ? (
+          {authChecking || loading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={theme.colors.primary} />
             </View>
+          ) : error ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>Failed to load folders: {error}</Text>
+              <Pressable onPress={loadData}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
           ) : (
             <>
+              {flash ? (
+                <View
+                  style={[
+                    styles.flashBanner,
+                    flash.type === "error" && styles.flashBannerError,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.flashText,
+                      flash.type === "error" && styles.flashTextError,
+                    ]}
+                  >
+                    {flash.type === "error" ? "⚠ " : "✓ "}
+                    {flash.text}
+                  </Text>
+                </View>
+              ) : null}
+
               {/* ── Available Items (draggable) ── */}
               {allItems.length > 0 && (
                 <View style={styles.sectionCard}>
@@ -542,6 +584,51 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
   loadingContainer: {
     paddingVertical: theme.spacing.xl * 2,
     alignItems: "center",
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: theme.colors.danger + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+  },
+  errorBannerText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  retryText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
+  },
+  flashBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.success + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.success + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+  },
+  flashBannerError: {
+    backgroundColor: theme.colors.danger + "15",
+    borderColor: theme.colors.danger + "40",
+  },
+  flashText: {
+    color: theme.colors.success,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    flex: 1,
+  },
+  flashTextError: {
+    color: theme.colors.danger,
   },
 
   /* ── Available Items section ── */

@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -56,7 +56,6 @@ export default function GroupBillsScreen() {
 
   const loadGroups = useCallback(async () => {
     try {
-      setLoading(true);
       const list = await fetchBillGroups();
       setGroups(list);
     } catch (err) {
@@ -68,9 +67,11 @@ export default function GroupBillsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadGroups();
-  }, [loadGroups]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadGroups();
+    }, [loadGroups])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -79,6 +80,19 @@ export default function GroupBillsScreen() {
   }, [loadGroups]);
 
   async function handleSave(input: BillGroupInput, photos: GroupPhoto[]) {
+    // Collect per-photo failures instead of aborting the whole save silently.
+    const failures: string[] = [];
+
+    const safe = async (fn: () => Promise<unknown>, what: string) => {
+      try {
+        await fn();
+      } catch (err) {
+        failures.push(
+          `${what}: ${err instanceof Error ? err.message : "unknown error"}`
+        );
+      }
+    };
+
     if (editingItem) {
       // Update group
       const res = await updateBillGroup(editingItem.id, input);
@@ -92,35 +106,54 @@ export default function GroupBillsScreen() {
       // Remove deleted photos
       for (const ep of existingPhotos) {
         if (!keepIds.has(ep.id)) {
-          await removeBillGroupPhoto(ep.id);
+          await safe(() => removeBillGroupPhoto(ep.id), "Remove photo");
         }
       }
 
       // Add new photos
       for (const p of photos) {
         if (!p.id || !existingIds.has(p.id)) {
-          await addBillGroupPhoto(editingItem.id, p.photo_url, p.photo_public_id);
+          await safe(
+            () =>
+              addBillGroupPhoto(editingItem.id, p.photo_url, p.photo_public_id),
+            "Add photo"
+          );
         }
       }
 
       // Reorder remaining
       const updatedPhotos = await fetchBillGroupPhotos(editingItem.id);
       if (updatedPhotos.length > 0) {
-        await reorderBillGroupPhotos(
-          updatedPhotos.map((p, i) => ({ id: p.id, position: i }))
+        await safe(
+          () =>
+            reorderBillGroupPhotos(
+              updatedPhotos.map((p, i) => ({ id: p.id, position: i }))
+            ),
+          "Reorder photos"
         );
       }
     } else {
       // Create group
       const res = await createBillGroup(input);
       if (!res.ok || !res.data) throw new Error(res.error || "Failed to create.");
+      const groupId = res.data.id;
 
       // Add photos
       for (const p of photos) {
-        await addBillGroupPhoto(res.data.id, p.photo_url, p.photo_public_id);
+        await safe(
+          () => addBillGroupPhoto(groupId, p.photo_url, p.photo_public_id),
+          "Add photo"
+        );
       }
     }
     await loadGroups();
+
+    if (failures.length > 0) {
+      const msg =
+        "Saved, but some photos could not be synced: " + failures.join("; ");
+      if (Platform.OS === "web") window.alert(msg);
+      else Alert.alert("Partial Success", msg);
+    }
   }
 
   async function handleEdit(item: BillGroup) {
@@ -256,6 +289,7 @@ export default function GroupBillsScreen() {
       </ScrollView>
 
       <BillGroupForm
+        key={editingItem?.id ?? "new"}
         visible={showForm}
         onClose={() => {
           setShowForm(false);

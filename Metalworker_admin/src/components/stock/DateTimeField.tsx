@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+// The v57 package exposes a named export sharing the default import's
+// identifier; the default import is the intended API for this picker.
+// eslint-disable-next-line import/no-named-as-default
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,12 +12,12 @@ import {
   Text,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
-import type { Session } from "@supabase/supabase-js";
+import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import { useAdminGate } from "../hooks/useAdminGate";
 import {
   createWorkerUser,
   deleteWorker,
@@ -26,6 +25,7 @@ import {
   updateWorkerProfile,
   updateWorkerUsername,
 } from "../services/admin";
+import { fetchSystemCounts, type SystemCounts } from "../services/counts";
 import {
   fetchAdminDispatches,
   getMaterialLabel,
@@ -101,15 +101,18 @@ function StatCard({
   value,
   color,
   icon,
+  onPress,
 }: {
   title: string;
   value: number;
   color: string;
   icon: string;
+  onPress?: () => void;
 }) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
-  return (
+
+  const card = (
     <View style={[styles.statCard, { borderLeftColor: color }]}>
       <View style={[styles.statIcon, { backgroundColor: color + "15" }]}>
         <Text style={[styles.statIconText, { color }]}>{icon}</Text>
@@ -117,6 +120,19 @@ function StatCard({
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statTitle}>{title}</Text>
     </View>
+  );
+
+  if (!onPress) return card;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}: ${value}. Open ${title}`}
+      style={({ pressed }) => [{ flexGrow: 1, flexBasis: "47%" }, pressed && { opacity: 0.8 }]}
+    >
+      {card}
+    </Pressable>
   );
 }
 
@@ -340,17 +356,44 @@ export default function DashboardScreen() {
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
   const router = useRouter();
-  const [session, setSession] = useState<Session | null>(null);
-  const [sessionLoading, setSessionLoading] = useState(true);
+  const { session, checking: sessionLoading } = useAdminGate();
 
   const [workers, setWorkers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [workerError, setWorkerError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Transient banner for completed user actions (success / errors).
+  const [flashMessage, setFlashMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const flashTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showFlash = useCallback(
+    (type: "success" | "error", text: string) => {
+      setFlashMessage({ type, text });
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlashMessage(null), 3500);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    };
+  }, []);
 
   // Dispatch data
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [dispatchLoading, setDispatchLoading] = useState(true);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
+
+  // System overview counts (jobs / folders / stock / documents)
+  const [systemCounts, setSystemCounts] = useState<SystemCounts | null>(null);
+  const [countsLoading, setCountsLoading] = useState(true);
+  const [countsError, setCountsError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
@@ -389,43 +432,27 @@ export default function DashboardScreen() {
     ============================
   */
 
-  useEffect(() => {
-    let mounted = true;
-
-    const initializeSession = async () => {
-      const { data } = await supabase.auth.getSession();
-
-      if (mounted) {
-        setSession(data.session);
-        setSessionLoading(false);
-      }
-    };
-
-    initializeSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      if (mounted) {
-        setSession(newSession);
-        setSessionLoading(false);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+  const loadCounts = useCallback(async () => {
+    try {
+      const counts = await fetchSystemCounts();
+      setCountsError(null);
+      setSystemCounts(counts);
+    } catch (error) {
+      setCountsError(
+        error instanceof Error ? error.message : "Failed to load system counts."
+      );
+    } finally {
+      setCountsLoading(false);
+    }
   }, []);
 
   const loadWorkers = useCallback(async () => {
     try {
-      setLoading(true);
       const list = await fetchWorkers();
+      setWorkerError(null);
       setWorkers(list);
     } catch (error) {
-      Alert.alert(
-        "Error",
+      setWorkerError(
         error instanceof Error ? error.message : "Failed to load workers."
       );
     } finally {
@@ -435,10 +462,9 @@ export default function DashboardScreen() {
 
   const loadDispatches = useCallback(async () => {
     try {
-      setDispatchLoading(true);
-      setDispatchError(null);
       const res = await fetchAdminDispatches();
       if (res.ok && res.data) {
+        setDispatchError(null);
         setDispatches(res.data);
       } else {
         setDispatchError(res.error || "Failed to load dispatches.");
@@ -452,18 +478,21 @@ export default function DashboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    if (session) {
-      loadWorkers();
-      loadDispatches();
-    }
-  }, [session, loadWorkers, loadDispatches]);
+  useFocusEffect(
+    useCallback(() => {
+      if (session) {
+        void loadWorkers();
+        void loadDispatches();
+        void loadCounts();
+      }
+    }, [session, loadWorkers, loadDispatches, loadCounts])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadWorkers(), loadDispatches()]);
+    await Promise.all([loadWorkers(), loadDispatches(), loadCounts()]);
     setRefreshing(false);
-  }, [loadWorkers, loadDispatches]);
+  }, [loadWorkers, loadDispatches, loadCounts]);
 
   /*
     ============================
@@ -611,6 +640,9 @@ export default function DashboardScreen() {
       setAddPassword("");
       setAddRole("worker");
       await loadWorkers();
+      showFlash("success", `User "${cleanUsername}" created successfully.`);
+      setShowAddModal(false);
+      setAddMessage(null);
     } catch (error) {
       setAddMessage({
         type: "error",
@@ -693,10 +725,9 @@ export default function DashboardScreen() {
       setEditMessage({ type: "success", text: "User updated successfully." });
       await loadWorkers();
 
-      setTimeout(() => {
-        setShowEditModal(false);
-        setEditMessage(null);
-      }, 1000);
+      showFlash("success", `User "${cleanUsername}" updated successfully.`);
+      setShowEditModal(false);
+      setEditMessage(null);
     } catch (error) {
       setEditMessage({
         type: "error",
@@ -720,6 +751,7 @@ export default function DashboardScreen() {
 
         if (res.ok) {
           await loadWorkers();
+          showFlash("success", `User "${worker.username}" deleted.`);
         } else {
           if (Platform.OS === "web") {
             window.alert(res.error || "Failed to delete worker.");
@@ -782,8 +814,8 @@ export default function DashboardScreen() {
         return;
       }
 
-      setSession(null);
       setWorkers([]);
+      setDispatches([]);
 
       router.dismissAll();
       router.replace("/login");
@@ -802,12 +834,6 @@ export default function DashboardScreen() {
     RENDER
     ============================
   */
-  useEffect(() => {
-    if (!sessionLoading && !session) {
-      router.replace("/login");
-    }
-  }, [session, sessionLoading, router]);
-
   if (sessionLoading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -882,26 +908,106 @@ export default function DashboardScreen() {
             value={dispatchStats.total}
             color={theme.colors.primary}
             icon="📦"
+            onPress={() => router.push("/dispatch")}
           />
           <StatCard
             title="Needs Review"
             value={dispatchStats.submitted}
             color="#F59E0B"
             icon="⏳"
+            onPress={() => router.push("/dispatch")}
           />
           <StatCard
             title="Approved"
             value={dispatchStats.approved}
             color={theme.colors.success}
             icon="✓"
+            onPress={() => router.push("/dispatch")}
           />
           <StatCard
             title="Rejected"
             value={dispatchStats.rejected}
             color={theme.colors.danger}
             icon="✕"
+            onPress={() => router.push("/dispatch")}
           />
         </View>
+
+        {/* ==============================
+            SECTION 2B — SYSTEM OVERVIEW
+            ============================== */}
+        <SectionHeader
+          title="System Overview"
+          subtitle="Jobs, stock, folders & documents"
+        />
+
+        {countsLoading ? (
+          <View style={styles.inlineLoader}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.inlineLoaderText}>
+              Loading system overview...
+            </Text>
+          </View>
+        ) : countsError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>⚠ {countsError}</Text>
+            <Pressable onPress={loadCounts}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : systemCounts ? (
+          <View style={styles.overviewGrid}>
+            <StatCard
+              title="Labour Jobs"
+              value={systemCounts.jobsLabour}
+              color="#F59E0B"
+              icon="🧰"
+              onPress={() => router.push("/jobs-labour")}
+            />
+            <StatCard
+              title="Material Jobs"
+              value={systemCounts.jobsWithMaterial}
+              color="#10B981"
+              icon="🔩"
+              onPress={() => router.push("/jobs-with-material")}
+            />
+            <StatCard
+              title="Folders"
+              value={systemCounts.folders}
+              color={theme.colors.primary}
+              icon="📁"
+              onPress={() => router.push("/folders")}
+            />
+            <StatCard
+              title="Owner Stock"
+              value={systemCounts.ownerStock}
+              color={theme.colors.primary}
+              icon="🏠"
+              onPress={() => router.push("/stock-owner")}
+            />
+            <StatCard
+              title="Company Stock"
+              value={systemCounts.companyStock}
+              color="#8B5CF6"
+              icon="🏭"
+              onPress={() => router.push("/stock-company")}
+            />
+            <StatCard
+              title="Bill Groups"
+              value={systemCounts.billGroups}
+              color="#F59E0B"
+              icon="📄"
+              onPress={() => router.push("/group-bills")}
+            />
+            <StatCard
+              title="Drawing Groups"
+              value={systemCounts.drawingGroups}
+              color={theme.colors.success}
+              icon="✏️"
+              onPress={() => router.push("/group-drawings")}
+            />
+          </View>
+        ) : null}
 
         {dispatchLoading && (
           <View style={styles.inlineLoader}>
@@ -1211,6 +1317,26 @@ export default function DashboardScreen() {
           subtitle={`${userStats.total} Users`}
         />
 
+        {/* TRANSIENT ACTION FEEDBACK */}
+        {flashMessage ? (
+          <View
+            style={[
+              styles.flashBanner,
+              flashMessage.type === "error" && styles.flashBannerError,
+            ]}
+          >
+            <Text
+              style={[
+                styles.flashText,
+                flashMessage.type === "error" && styles.flashTextError,
+              ]}
+            >
+              {flashMessage.type === "error" ? "⚠ " : "✓ "}
+              {flashMessage.text}
+            </Text>
+          </View>
+        ) : null}
+
         {/* SEARCH & FILTER */}
         <View style={styles.searchSection}>
           <Input
@@ -1267,6 +1393,15 @@ export default function DashboardScreen() {
             <View style={styles.emptyState}>
               <ActivityIndicator color={theme.colors.primary} />
             </View>
+          ) : workerError ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>
+                Failed to load users: {workerError}
+              </Text>
+              <Pressable onPress={loadWorkers}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.foldersWrapper}>
               <FolderSection
@@ -1295,6 +1430,7 @@ export default function DashboardScreen() {
         visible={showAddModal}
         animationType="slide"
         presentationStyle="pageSheet"
+        onRequestClose={() => setShowAddModal(false)}
       >
         <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
           <KeyboardAvoidingView
@@ -1379,6 +1515,7 @@ export default function DashboardScreen() {
         visible={showEditModal}
         animationType="slide"
         presentationStyle="pageSheet"
+        onRequestClose={() => setShowEditModal(false)}
       >
         <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
           <KeyboardAvoidingView
@@ -1544,10 +1681,10 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
 
   /* STATS */
   statCard: {
-    width: "48%" as unknown as number,
     flexGrow: 1,
     flexShrink: 0,
-    flexBasis: "47%" as unknown as number,
+    flexBasis: "47%",
+    minWidth: "46%",
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
@@ -1610,6 +1747,29 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderColor: theme.colors.danger + "40",
     padding: theme.spacing.md,
     marginBottom: theme.spacing.lg,
+  },
+  flashBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.success + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.success + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+  },
+  flashBannerError: {
+    backgroundColor: theme.colors.danger + "15",
+    borderColor: theme.colors.danger + "40",
+  },
+  flashText: {
+    color: theme.colors.success,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
+    flex: 1,
+  },
+  flashTextError: {
+    color: theme.colors.danger,
   },
   errorBannerText: {
     color: theme.colors.danger,

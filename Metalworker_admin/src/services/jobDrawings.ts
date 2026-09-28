@@ -57,21 +57,29 @@ export async function deleteJobDrawing(id: string): Promise<{ ok: boolean; error
 }
 
 export async function setPrimaryDrawing(jobId: string, drawingId: string): Promise<{ ok: boolean; error?: string }> {
-  // First, set all drawings for this job to not primary
-  const { error: resetError } = await supabase
-    .from(TABLE)
-    .update({ is_primary: false })
-    .eq("job_id", jobId);
-
-  if (resetError) return { ok: false, error: resetError.message };
-
-  // Then, set the selected drawing to primary
+  // Set the target first: if the second write fails below, the job is left
+  // with the requested primary (plus possibly a stale flag elsewhere), never
+  // with *no* primary. Stray flags are resolved by the next successful call.
   const { error: setError } = await supabase
     .from(TABLE)
     .update({ is_primary: true })
     .eq("id", drawingId);
 
   if (setError) return { ok: false, error: setError.message };
+
+  // Clear any other primary flags for this job, keeping the selected one.
+  const { error: resetError } = await supabase
+    .from(TABLE)
+    .update({ is_primary: false })
+    .eq("job_id", jobId)
+    .neq("id", drawingId);
+
+  if (resetError) {
+    return {
+      ok: false,
+      error: `${resetError.message} (the selected drawing is primary, but clearing previous primaries failed.)`,
+    };
+  }
 
   return { ok: true };
 }

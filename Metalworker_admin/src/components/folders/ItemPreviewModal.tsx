@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -51,33 +52,27 @@ export function ItemPreviewModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (visible) {
-      loadDetails();
-    }
-  }, [visible, itemId, itemType]);
-
-  async function loadDetails() {
+  const loadDetails = useCallback(async () => {
     try {
-      setLoading(true);
-      setError(null);
-      setDetails(null);
-      setPhotos([]);
-
       switch (itemType) {
         case "owner_stock": {
           const data = await fetchOwnerStock(itemId);
+          setError(null);
           setDetails(data);
+          setPhotos([]);
           break;
         }
         case "company_stock": {
           const data = await fetchCompanyStock(itemId);
+          setError(null);
           setDetails(data);
+          setPhotos([]);
           break;
         }
         case "bill_group": {
           const data = await fetchBillGroup(itemId);
           const p = await fetchBillGroupPhotos(itemId);
+          setError(null);
           setDetails(data);
           setPhotos(p.sort((a, b) => a.position - b.position));
           break;
@@ -85,6 +80,7 @@ export function ItemPreviewModal({
         case "drawing_group": {
           const data = await fetchDrawingGroup(itemId);
           const p = await fetchDrawingGroupPhotos(itemId);
+          setError(null);
           setDetails(data);
           setPhotos(p.sort((a, b) => a.position - b.position));
           break;
@@ -97,7 +93,15 @@ export function ItemPreviewModal({
     } finally {
       setLoading(false);
     }
-  }
+  }, [itemType, itemId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (visible) {
+        void loadDetails();
+      }
+    }, [visible, loadDetails])
+  );
 
   function renderField(label: string, value: any) {
     if (value === null || value === undefined || value === "") return null;
@@ -189,7 +193,7 @@ export function ItemPreviewModal({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
         <View style={styles.modalContent}>
           {/* Header */}

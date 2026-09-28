@@ -13,7 +13,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -52,7 +52,6 @@ export default function StockOwnerScreen() {
 
   const loadStocks = useCallback(async () => {
     try {
-      setLoading(true);
       const list = await fetchOwnerStocks();
       setStocks(list);
     } catch (err) {
@@ -64,9 +63,11 @@ export default function StockOwnerScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadStocks();
-  }, [loadStocks]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadStocks();
+    }, [loadStocks])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -249,6 +250,7 @@ export default function StockOwnerScreen() {
 
       {/* Form Modal */}
       <OwnerStockForm
+        key={editingItem?.id ?? "new"}
         visible={showForm}
         onClose={() => {
           setShowForm(false);

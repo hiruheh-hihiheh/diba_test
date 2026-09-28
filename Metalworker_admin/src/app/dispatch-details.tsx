@@ -1,8 +1,7 @@
 // src/app/dispatch-details.tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -13,11 +12,13 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import { useAdminGate } from "../hooks/useAdminGate";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import {
   fetchDispatchById,
   updateDispatch,
@@ -26,18 +27,24 @@ import {
   getStatusColor,
 } from "../services/dispatch";
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
+import { notify } from "../utils/notify";
 
 export default function DispatchDetailsScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  const { checking: authChecking } = useAdminGate();
+
   const params = useLocalSearchParams<{ id?: string | string[] }>();
-const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [dispatch, setDispatch] = useState<Dispatch | null>(null);
-  const [loading, setLoading] = useState(true);
+  // If there is no id, skip the initial loading state so the error view
+  // renders immediately instead of a perpetual spinner.
+  const [loading, setLoading] = useState(!!dispatchId);
   const [error, setError] = useState<string | null>(null);
 
+  const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -49,17 +56,10 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [editStatus, setEditStatus] = useState<DispatchStatus>("submitted");
 
-  useEffect(() => {
-    if (dispatchId) {
-      loadDispatch();
-    }
-  }, [dispatchId]);
-
-  const loadDispatch = async () => {
+  const loadDispatch = React.useCallback(async () => {
     if (!dispatchId) return;
 
     try {
-      setLoading(true);
       setError(null);
       const res = await fetchDispatchById(dispatchId);
 
@@ -78,7 +78,15 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
     } finally {
       setLoading(false);
     }
-  };
+  }, [dispatchId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // `loadDispatch` no-ops when the id is missing; the error view below
+      // handles that case (initialized with loading=false).
+      void loadDispatch();
+    }, [loadDispatch])
+  );
 
   const startEditing = () => {
     setIsEditing(true);
@@ -100,38 +108,30 @@ const dispatchId = Array.isArray(params.id) ? params.id[0] : params.id;
 
     const trimmedVehicle = editVehicleNumber.trim();
     if (!trimmedVehicle) {
-      Alert.alert("Validation Error", "Vehicle number is required");
+      notify("Validation Error", "Vehicle number is required");
       return;
     }
-
-
 
     try {
       setSaving(true);
       const updateData: UpdateDispatchInput = {
         vehicle_number: trimmedVehicle,
         material_type: editMaterialType,
-location_name: editLocationName.trim() || null,
-status: editStatus,
+        location_name: editLocationName.trim() || null,
+        status: editStatus,
       };
 
       const res = await updateDispatch(dispatchId, updateData);
 
       if (res.ok) {
-        Alert.alert("Success", "Dispatch updated successfully", [
-          {
-            text: "OK",
-            onPress: () => {
-              setIsEditing(false);
-              loadDispatch();
-            },
-          },
-        ]);
+        setIsEditing(false);
+        await loadDispatch();
+        notify("Success", "Dispatch updated successfully");
       } else {
-        Alert.alert("Error", res.error || "Failed to update dispatch");
+        notify("Error", res.error || "Failed to update dispatch");
       }
     } catch (err) {
-      Alert.alert(
+      notify(
         "Error",
         err instanceof Error ? err.message : "Failed to update dispatch"
       );
@@ -141,21 +141,7 @@ status: editStatus,
   };
 
   const confirmDelete = () => {
-    Alert.alert(
-      "Delete Dispatch",
-      "Are you sure you want to delete this dispatch? This action cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: performDelete,
-        },
-      ]
-    );
+    setConfirmDeleteVisible(true);
   };
 
   const performDelete = async () => {
@@ -166,17 +152,14 @@ status: editStatus,
       const res = await deleteDispatch(dispatchId);
 
       if (res.ok) {
-        Alert.alert("Success", "Dispatch deleted successfully", [
-          {
-            text: "OK",
-            onPress: () => router.back(),
-          },
-        ]);
+        setConfirmDeleteVisible(false);
+        notify("Success", "Dispatch deleted successfully");
+        router.back();
       } else {
-        Alert.alert("Error", res.error || "Failed to delete dispatch");
+        notify("Error", res.error || "Failed to delete dispatch");
       }
     } catch (err) {
-      Alert.alert(
+      notify(
         "Error",
         err instanceof Error ? err.message : "Failed to delete dispatch"
       );
@@ -190,7 +173,7 @@ status: editStatus,
     return date.toLocaleString();
   };
 
-  if (loading) {
+  if (authChecking || loading) {
     return (
       <SafeAreaView style={styles.loadingContainer} edges={["top", "left", "right"]}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -202,9 +185,16 @@ status: editStatus,
     return (
       <SafeAreaView style={styles.errorContainer} edges={["top", "left", "right"]}>
         <Text style={styles.errorText}>{error || "Dispatch not found"}</Text>
-        <Pressable style={styles.retryBtn} onPress={loadDispatch}>
-          <Text style={styles.retryBtnText}>Retry</Text>
-        </Pressable>
+        <View style={styles.errorActions}>
+          {dispatchId ? (
+            <Pressable style={styles.retryBtn} onPress={loadDispatch}>
+              <Text style={styles.retryBtnText}>Retry</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.retryBtn} onPress={() => router.back()}>
+            <Text style={styles.retryBtnText}>Go Back</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
@@ -475,6 +465,17 @@ status: editStatus,
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <ConfirmDialog
+        visible={confirmDeleteVisible}
+        title="Delete Dispatch"
+        message={`Delete dispatch by ${dispatch.worker_username || "worker"}? This action cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onConfirm={performDelete}
+        onCancel={() => setConfirmDeleteVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -510,6 +511,10 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.md,
     fontWeight: "700",
+  },
+  errorActions: {
+    flexDirection: "row",
+    gap: theme.spacing.sm,
   },
 
   screen: {

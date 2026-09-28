@@ -1,26 +1,24 @@
 // src/app/dispatch.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import type { Session } from "@supabase/supabase-js";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import { useAdminGate } from "../hooks/useAdminGate";
 import {
   fetchAdminDispatches,
   getStatusColor,
 } from "../services/dispatch";
-import { supabase } from "../services/supabase";
 import type { Dispatch, DispatchStatus } from "../types/dispatch";
 
 import { Input } from "../components/ui/Input";
@@ -35,55 +33,43 @@ export default function DispatchScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
-  const [session, setSession] = useState<Session | null>(null);
+  const { checking: authChecking } = useAdminGate();
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<DispatchStatus | "all">("all");
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-    });
-  }, []);
-
   const loadDispatches = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await fetchAdminDispatches();
       if (res.ok && res.data) {
         setDispatches(res.data);
       } else {
         const msg = res.error || "Failed to load dispatches.";
-        if (Platform.OS === "web") {
-          window.alert(msg);
-        } else {
-          Alert.alert("Error", msg);
-        }
+        setError(msg);
       }
-    } catch (error) {
+    } catch (err) {
       const msg =
-        error instanceof Error ? error.message : "Failed to load dispatches.";
-      if (Platform.OS === "web") {
-        window.alert(msg);
-      } else {
-        Alert.alert("Error", msg);
-      }
+        err instanceof Error ? err.message : "Failed to load dispatches.";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-useFocusEffect(
-  useCallback(() => {
-    if (session) {
-      void loadDispatches();
-    }
-  }, [session, loadDispatches])
-);
+  useFocusEffect(
+    useCallback(() => {
+      if (!authChecking) {
+        void loadDispatches();
+      }
+    }, [authChecking, loadDispatches])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -158,7 +144,7 @@ useFocusEffect(
     });
   };
 
-  if (!session) {
+  if (authChecking) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -182,6 +168,9 @@ useFocusEffect(
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
         {/* HEADER */}
         <View style={styles.header}>
@@ -246,6 +235,17 @@ useFocusEffect(
               </Text>
             </Pressable>
           </View>
+
+          {error && !loading && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>
+                Failed to load dispatches: {error}
+              </Text>
+              <Pressable onPress={onRefresh}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
+          )}
 
           {loading && dispatches.length === 0 ? (
             <View style={styles.emptyState}>
@@ -505,6 +505,28 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: theme.colors.danger + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  errorBannerText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  retryText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
   },
   emptyState: {
     paddingVertical: theme.spacing.xl,

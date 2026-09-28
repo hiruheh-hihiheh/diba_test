@@ -5,13 +5,13 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { Platform } from "react-native";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";

@@ -4,7 +4,36 @@ export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 } as const;
 export const radius = { sm: 8, md: 12, lg: 16, xl: 24 } as const;
 export const textSizes = { xs: 12, sm: 14, md: 16, lg: 20, xl: 28 } as const;
 
-export const darkColors = {
+/**
+ * Shape shared by both palettes.
+ *
+ * Previously `ThemeColors` was `typeof darkColors` and `ThemeContext` cast
+ * `lightColors as typeof darkColors` — a type lie that hid palette drift
+ * (a key added to one palette and forgotten in the other) from the compiler.
+ * Declaring the interface explicitly means TypeScript now enforces that both
+ * palettes define the exact same keys.
+ */
+export interface ThemeColors {
+  background: string;
+  surface: string;
+  surfaceSecondary: string;
+  surfaceHover: string;
+  primary: string;
+  primaryHover: string;
+  primaryMuted: string;
+  text: string;
+  textSecondary: string;
+  textMuted: string;
+  border: string;
+  borderHover: string;
+  success: string;
+  danger: string;
+  warning: string;
+  primaryButtonText: string;
+  secondaryButtonText: string;
+}
+
+export const darkColors: ThemeColors = {
   background: "#000000",
   surface: "#141414",
   surfaceSecondary: "#0A0A0A",
@@ -22,9 +51,9 @@ export const darkColors = {
   warning: "#F59E0B",
   primaryButtonText: "#FFFFFF",
   secondaryButtonText: "#FFFFFF",
-} as const;
+};
 
-export const lightColors = {
+export const lightColors: ThemeColors = {
   background: "#FFFFFF",
   surface: "#FFFFFF",
   surfaceSecondary: "#F7F7F7",
@@ -42,17 +71,11 @@ export const lightColors = {
   warning: "#D97706",
   primaryButtonText: "#000000",
   secondaryButtonText: "#111111",
-} as const;
+};
 
-export type ThemeColors = typeof darkColors;
-
-// We export a fallback theme object so types can still be inferred if needed
-// However, components should use `const { theme } = useTheme();`
-export const theme = {
-  colors: darkColors,
-  spacing,
-  radius,
-  textSizes,
-} as const;
-
-export type AppTheme = typeof theme;
+export interface AppTheme {
+  colors: ThemeColors;
+  spacing: typeof spacing;
+  radius: typeof radius;
+  textSizes: typeof textSizes;
+}

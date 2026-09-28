@@ -51,8 +51,14 @@ export async function renameFolder(
 export async function deleteFolder(
   id: string
 ): Promise<{ ok: boolean; error?: string }> {
-  // Delete folder items first
-  await supabase.from("folder_items").delete().eq("folder_id", id);
+  // Delete folder items first; surface the error instead of silently
+  // proceeding and leaving orphaned folder_items rows behind.
+  const { error: itemsError } = await supabase
+    .from("folder_items")
+    .delete()
+    .eq("folder_id", id);
+
+  if (itemsError) return { ok: false, error: itemsError.message };
 
   const { error } = await supabase
     .from("admin_folders")

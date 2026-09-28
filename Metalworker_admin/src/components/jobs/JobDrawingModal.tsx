@@ -1,5 +1,5 @@
 // src/components/jobs/JobDrawingModal.tsx
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState } from "react";
 import {
   Modal,
   View,
@@ -9,18 +9,20 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
-  Alert,
   Platform,
   Linking,
 } from "react-native";
+import { useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { Job } from "../../types/job";
 import type { JobDrawing } from "../../types/jobDrawing";
 import { fetchJobDrawings, createJobDrawing, deleteJobDrawing, setPrimaryDrawing } from "../../services/jobDrawings";
 import { uploadPhoto } from "../../services/cloudinary";
 import { getJobTypeLabel } from "../../types/job";
+import { notify } from "../../utils/notify";
 
 interface Props {
   visible: boolean;
@@ -33,29 +35,35 @@ export function JobDrawingModal({ visible, onClose, job }: Props) {
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
   const [drawings, setDrawings] = useState<JobDrawing[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Starts true so the initial fetch shows a spinner without a synchronous
+  // setState in the mount effect (the modal remounts per job via its `key`).
+  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (job && visible) {
-      loadDrawings();
-    }
-  }, [job, visible]);
-
-  async function loadDrawings() {
+  const loadDrawings = useCallback(async () => {
     if (!job) return;
-    setLoading(true);
-    setError(null);
+
     try {
       const data = await fetchJobDrawings(job.id);
+      setError(null);
       setDrawings(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load drawings.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [job]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (job && visible) {
+        void loadDrawings();
+      }
+    }, [job, visible, loadDrawings])
+  );
 
   if (!job) return null;
 
@@ -117,29 +125,24 @@ export function JobDrawingModal({ visible, onClose, job }: Props) {
   }
 
   async function handleDelete(drawingId: string) {
-    Alert.alert(
-      "Confirm Delete",
-      "Are you sure you want to delete this drawing?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setError(null);
-            try {
-              const res = await deleteJobDrawing(drawingId);
-              if (!res.ok) throw new Error(res.error || "Failed to delete drawing.");
-              
-              Alert.alert("Success", "Drawing deleted. (Cloudinary cleanup deferred).");
-              await loadDrawings();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "Failed to delete.");
-            }
-          }
-        }
-      ]
-    );
+    setConfirmDeleteId(drawingId);
+  }
+
+  async function performDelete(drawingId: string) {
+    setError(null);
+    try {
+      setDeleting(true);
+      const res = await deleteJobDrawing(drawingId);
+      if (!res.ok) throw new Error(res.error || "Failed to delete drawing.");
+
+      notify("Success", "Drawing deleted.");
+      setConfirmDeleteId(null);
+      await loadDrawings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function handleMakePrimary(drawingId: string) {
@@ -148,14 +151,18 @@ export function JobDrawingModal({ visible, onClose, job }: Props) {
     try {
       const res = await setPrimaryDrawing(job.id, drawingId);
       if (!res.ok) throw new Error(res.error || "Failed to set primary.");
-      await loadDrawings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to set primary.");
+    } finally {
+      // Refresh in both cases: on partial failure the service still leaves the
+      // requested drawing primary, so the list must reflect actual state.
+      void loadDrawings();
     }
   }
 
   return (
-    <Modal
+    <>
+      <Modal
       visible={visible}
       animationType="slide"
       transparent={true}
@@ -274,7 +281,21 @@ export function JobDrawingModal({ visible, onClose, job }: Props) {
           </View>
         </View>
       </View>
-    </Modal>
+      </Modal>
+
+      <ConfirmDialog
+        visible={!!confirmDeleteId}
+        title="Confirm Delete"
+        message="Are you sure you want to delete this drawing? This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onConfirm={() => {
+          if (confirmDeleteId) performDelete(confirmDeleteId);
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
+    </>
   );
 }
 

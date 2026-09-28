@@ -94,6 +94,12 @@ export function OwnerStockForm({
     ) {
       return "Processing start must be before processing end.";
     }
+    if (amountPurchase.trim()) {
+      const parsed = Number(amountPurchase);
+      if (isNaN(parsed) || parsed < 0) {
+        return "Amount Purchase must be a valid non-negative number.";
+      }
+    }
     return null;
   }
 
@@ -142,7 +148,12 @@ export function OwnerStockForm({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={saving ? undefined : onClose}
+    >
       <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           style={styles.keyboard}

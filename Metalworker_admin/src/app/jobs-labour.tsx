@@ -1,9 +1,7 @@
 // src/app/jobs-labour.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,11 +9,11 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
-import { supabase } from "../services/supabase";
+import { useAdminGate } from "../hooks/useAdminGate";
 import { fetchJobsByType } from "../services/jobs";
 import type { Job } from "../types/job";
 import { Input } from "../components/ui/Input";
@@ -27,36 +25,36 @@ export default function JobsLabourScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  const { checking: authChecking } = useAdminGate();
+
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [editOpenSeq, setEditOpenSeq] = useState(0);
   const [drawingModalJob, setDrawingModalJob] = useState<Job | null>(null);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-    });
-  }, []);
 
   const loadJobs = useCallback(async () => {
     try {
-      setLoading(true);
       const list = await fetchJobsByType("labour");
+      setError(null);
       setJobs(list);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load jobs.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      setError(
+        err instanceof Error ? err.message : "Failed to load jobs."
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadJobs();
-  }, [loadJobs]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadJobs();
+    }, [loadJobs])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -115,9 +113,16 @@ export default function JobsLabourScreen() {
         <View style={styles.spacer} />
 
         {/* List */}
-        {loading ? (
+        {authChecking || loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={theme.colors.primary} />
+          </View>
+        ) : error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>Failed to load jobs: {error}</Text>
+            <Pressable onPress={loadJobs}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
           </View>
         ) : filteredJobs.length === 0 ? (
           <View style={styles.emptyState}>
@@ -137,7 +142,10 @@ export default function JobsLabourScreen() {
               <Pressable 
                 key={item.id} 
                 style={({ pressed }) => [styles.jobCard, pressed && styles.jobCardPressed]}
-                onPress={() => setEditingJob(item)}
+                onPress={() => {
+                  setEditingJob(item);
+                  setEditOpenSeq((s) => s + 1);
+                }}
               >
                 <View style={styles.jobCardHeader}>
                   <Text style={styles.jobNo}>{item.job_no || "No Job #"}</Text>
@@ -195,6 +203,7 @@ export default function JobsLabourScreen() {
       </ScrollView>
 
       <JobEditModal
+        key={editingJob ? `${editingJob.id}-${editOpenSeq}` : "edit-none"}
         visible={!!editingJob}
         onClose={() => setEditingJob(null)}
         job={editingJob}
@@ -205,6 +214,7 @@ export default function JobsLabourScreen() {
       />
 
       <JobDrawingModal
+        key={drawingModalJob?.id ?? "drawing-none"}
         visible={!!drawingModalJob}
         onClose={() => setDrawingModalJob(null)}
         job={drawingModalJob}
@@ -245,6 +255,28 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     marginTop: 2,
   },
   spacer: { height: theme.spacing.lg },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: theme.colors.danger + "15",
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.danger + "40",
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  errorBannerText: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.sm,
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  retryText: {
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "700",
+  },
   loadingContainer: {
     paddingVertical: theme.spacing.xl * 2,
     alignItems: "center",

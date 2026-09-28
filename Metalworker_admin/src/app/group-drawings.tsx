@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -56,7 +56,6 @@ export default function GroupDrawingsScreen() {
 
   const loadGroups = useCallback(async () => {
     try {
-      setLoading(true);
       const list = await fetchDrawingGroups();
       setGroups(list);
     } catch (err) {
@@ -68,9 +67,11 @@ export default function GroupDrawingsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadGroups();
-  }, [loadGroups]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadGroups();
+    }, [loadGroups])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -79,6 +80,19 @@ export default function GroupDrawingsScreen() {
   }, [loadGroups]);
 
   async function handleSave(input: DrawingGroupInput, photos: GroupPhoto[]) {
+    // Collect per-photo failures instead of aborting the whole save silently.
+    const failures: string[] = [];
+
+    const safe = async (fn: () => Promise<unknown>, what: string) => {
+      try {
+        await fn();
+      } catch (err) {
+        failures.push(
+          `${what}: ${err instanceof Error ? err.message : "unknown error"}`
+        );
+      }
+    };
+
     if (editingItem) {
       const res = await updateDrawingGroup(editingItem.id, input);
       if (!res.ok) throw new Error(res.error || "Failed to update.");
@@ -89,31 +103,54 @@ export default function GroupDrawingsScreen() {
 
       for (const ep of existingPhotos) {
         if (!keepIds.has(ep.id)) {
-          await removeDrawingGroupPhoto(ep.id);
+          await safe(() => removeDrawingGroupPhoto(ep.id), "Remove photo");
         }
       }
 
       for (const p of photos) {
         if (!p.id || !existingIds.has(p.id)) {
-          await addDrawingGroupPhoto(editingItem.id, p.photo_url, p.photo_public_id);
+          await safe(
+            () =>
+              addDrawingGroupPhoto(
+                editingItem.id,
+                p.photo_url,
+                p.photo_public_id
+              ),
+            "Add photo"
+          );
         }
       }
 
       const updatedPhotos = await fetchDrawingGroupPhotos(editingItem.id);
       if (updatedPhotos.length > 0) {
-        await reorderDrawingGroupPhotos(
-          updatedPhotos.map((p, i) => ({ id: p.id, position: i }))
+        await safe(
+          () =>
+            reorderDrawingGroupPhotos(
+              updatedPhotos.map((p, i) => ({ id: p.id, position: i }))
+            ),
+          "Reorder photos"
         );
       }
     } else {
       const res = await createDrawingGroup(input);
       if (!res.ok || !res.data) throw new Error(res.error || "Failed to create.");
+      const groupId = res.data.id;
 
       for (const p of photos) {
-        await addDrawingGroupPhoto(res.data.id, p.photo_url, p.photo_public_id);
+        await safe(
+          () => addDrawingGroupPhoto(groupId, p.photo_url, p.photo_public_id),
+          "Add photo"
+        );
       }
     }
     await loadGroups();
+
+    if (failures.length > 0) {
+      const msg =
+        "Saved, but some photos could not be synced: " + failures.join("; ");
+      if (Platform.OS === "web") window.alert(msg);
+      else Alert.alert("Partial Success", msg);
+    }
   }
 
   async function handleEdit(item: DrawingGroup) {
@@ -247,6 +284,7 @@ export default function GroupDrawingsScreen() {
       </ScrollView>
 
       <DrawingGroupForm
+        key={editingItem?.id ?? "new"}
         visible={showForm}
         onClose={() => {
           setShowForm(false);

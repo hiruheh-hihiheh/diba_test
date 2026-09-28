@@ -32,11 +32,16 @@ export function Button({
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const unavailable = disabled || loading;
+  const textColor =
+    variant === "ghost" ? theme.colors.text : theme.colors.primaryButtonText;
 
   return (
     <Pressable
       onPress={onPress}
       disabled={unavailable}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: unavailable, busy: loading }}
       style={({ pressed }) => [
         styles.base,
         variant === "primary" ? styles.primary : styles.ghost,
@@ -46,32 +51,41 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "ghost" ? theme.colors.text : theme.colors.primaryButtonText} />
-      ) : (
-        <Text style={[styles.text, variant === "ghost" && styles.ghostText]}>
-          {title}
-        </Text>
-      )}
+        <ActivityIndicator color={textColor} size="small" />
+      ) : null}
+      <Text
+        style={[
+          styles.text,
+          variant === "ghost" && styles.ghostText,
+          loading && styles.textWhileLoading,
+        ]}
+      >
+        {loading ? `${title}…` : title}
+      </Text>
     </Pressable>
   );
 }
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  base: {
-    minHeight: 50,
-    borderRadius: theme.radius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: theme.spacing.md,
-  },
-  primary: { backgroundColor: theme.colors.primary },
-  ghost: {
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  pressed: { opacity: 0.85 },
-  disabled: { opacity: 0.5 },
-  text: { color: theme.colors.primaryButtonText, fontSize: theme.textSizes.md, fontWeight: "600" },
-  ghostText: { color: theme.colors.text },
-});
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    base: {
+      minHeight: 50,
+      borderRadius: theme.radius.md,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+    },
+    primary: { backgroundColor: theme.colors.primary },
+    ghost: {
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    pressed: { opacity: 0.85 },
+    disabled: { opacity: 0.5 },
+    text: { color: theme.colors.primaryButtonText, fontSize: theme.textSizes.md, fontWeight: "600" },
+    ghostText: { color: theme.colors.text },
+    textWhileLoading: { opacity: 0.9 },
+  });

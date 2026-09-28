@@ -1,5 +1,5 @@
 // src/components/jobs/JobEditModal.tsx
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   Modal,
   View,
@@ -9,7 +9,6 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Alert,
 } from "react-native";
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -18,6 +17,7 @@ import { Button } from "../ui/Button";
 import type { Job, JobInput } from "../../types/job";
 import { updateJob } from "../../services/jobs";
 import { getJobTypeLabel } from "../../types/job";
+import { notify } from "../../utils/notify";
 
 interface Props {
   visible: boolean;
@@ -30,28 +30,29 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
-  const [formData, setFormData] = useState<JobInput>({});
+  // The parent keys this component with `${job.id}-${openSequence}`, so every
+  // open remounts it and the form initializes fresh from the job record. No
+  // effect is needed to reset the form.
+  const [formData, setFormData] = useState<JobInput>(() =>
+    job
+      ? {
+          job_no: job.job_no,
+          job_given_date: job.job_given_date,
+          po_status: job.po_status,
+          tool_description: job.tool_description,
+          tool_part: job.tool_part,
+          quantity: job.quantity,
+          expected_completion_date: job.expected_completion_date,
+          expected_completion_note: job.expected_completion_note,
+          current_machining_status: job.current_machining_status,
+          status: job.status,
+          drawing_status: job.drawing_status,
+          drawing_status_note: job.drawing_status_note,
+          model_status: job.model_status,
+        }
+      : {}
+  );
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (job && visible) {
-      setFormData({
-        job_no: job.job_no,
-        job_given_date: job.job_given_date,
-        po_status: job.po_status,
-        tool_description: job.tool_description,
-        tool_part: job.tool_part,
-        quantity: job.quantity,
-        expected_completion_date: job.expected_completion_date,
-        expected_completion_note: job.expected_completion_note,
-        current_machining_status: job.current_machining_status,
-        status: job.status,
-        drawing_status: job.drawing_status,
-        drawing_status_note: job.drawing_status_note,
-        model_status: job.model_status,
-      });
-    }
-  }, [job, visible]);
 
   if (!job) return null;
 
@@ -64,9 +65,10 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
       }
       onSaved();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Something went wrong.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify(
+        "Error",
+        err instanceof Error ? err.message : "Something went wrong."
+      );
     } finally {
       setLoading(false);
     }
@@ -109,6 +111,7 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>JOB INFORMATION</Text>
               <Input
+                label="Job No"
                 placeholder="Job No"
                 value={formData.job_no || ""}
                 onChangeText={(val) => updateField("job_no", val)}
@@ -118,16 +121,19 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>SCHEDULING</Text>
               <Input
+                label="Job Given Date (YYYY-MM-DD)"
                 placeholder="Job Given Date (YYYY-MM-DD)"
                 value={formData.job_given_date || ""}
                 onChangeText={(val) => updateField("job_given_date", val)}
               />
               <Input
+                label="Expected Completion Date (YYYY-MM-DD)"
                 placeholder="Expected Completion Date (YYYY-MM-DD)"
                 value={formData.expected_completion_date || ""}
                 onChangeText={(val) => updateField("expected_completion_date", val)}
               />
               <Input
+                label="Expected Completion Note"
                 placeholder="Expected Completion Note"
                 value={formData.expected_completion_note || ""}
                 onChangeText={(val) => updateField("expected_completion_note", val)}
@@ -137,16 +143,19 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>PURCHASE / TOOL</Text>
               <Input
+                label="PO Status"
                 placeholder="PO Status"
                 value={formData.po_status || ""}
                 onChangeText={(val) => updateField("po_status", val)}
               />
               <Input
+                label="Tool / Part"
                 placeholder="Tool / Part"
                 value={formData.tool_part || ""}
                 onChangeText={(val) => updateField("tool_part", val)}
               />
               <Input
+                label="Tool Description"
                 placeholder="Tool Description"
                 value={formData.tool_description || ""}
                 onChangeText={(val) => updateField("tool_description", val)}
@@ -156,16 +165,19 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>PRODUCTION</Text>
               <Input
+                label="Quantity"
                 placeholder="Quantity"
                 value={formData.quantity || ""}
                 onChangeText={(val) => updateField("quantity", val)}
               />
               <Input
+                label="Status"
                 placeholder="Status"
                 value={formData.status || ""}
                 onChangeText={(val) => updateField("status", val)}
               />
               <Input
+                label="Current Machining Status"
                 placeholder="Current Machining Status"
                 value={formData.current_machining_status || ""}
                 onChangeText={(val) => updateField("current_machining_status", val)}
@@ -175,16 +187,19 @@ export function JobEditModal({ visible, onClose, job, onSaved }: Props) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>DOCUMENTATION</Text>
               <Input
+                label="DRG Status"
                 placeholder="DRG Status"
                 value={formData.drawing_status || ""}
                 onChangeText={(val) => updateField("drawing_status", val)}
               />
               <Input
+                label="Model Status"
                 placeholder="Model Status"
                 value={formData.model_status || ""}
                 onChangeText={(val) => updateField("model_status", val)}
               />
               <Input
+                label="DRG Status Note"
                 placeholder="DRG Status Note"
                 value={formData.drawing_status_note || ""}
                 onChangeText={(val) => updateField("drawing_status_note", val)}

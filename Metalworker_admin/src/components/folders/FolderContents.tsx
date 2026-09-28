@@ -2,7 +2,7 @@
 // Folder items with drag-to-reorder + available items with drag-to-add.
 // Wraps its own DragDropProvider + ScrollView for proper ghost positioning.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 
+import { useFocusEffect } from "expo-router";
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import type { FolderItemDisplay, FolderItemType } from "../../types/folder";
@@ -60,6 +61,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     { type: FolderItemType; id: string; label: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [previewItem, setPreviewItem] = useState<{
@@ -77,8 +79,8 @@ export function FolderContents({ folderId }: FolderContentsProps) {
   const itemYPositions = useRef<
     Map<string, { y: number; height: number }>
   >(new Map());
-  /** Screen-relative Y of the folder-items container */
-  const containerY = useRef(0);
+  /** Monotonic counter for optimistic temp ids (kept pure for the compiler). */
+  const tempIdSeq = useRef(0);
 
   /* ── Data loading ── */
 
@@ -86,27 +88,31 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     try {
       const rawItems = await fetchFolderItems(folderId);
       const resolved = await resolveFolderItemLabels(rawItems);
+      setError(null);
       setItems(resolved);
 
       const avail = await fetchAvailableItems(folderId);
       setAvailable(avail);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to load folder contents.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      // Inline error banner (instead of a misleading empty state).
+      setError(
+        err instanceof Error ? err.message : "Failed to load folder contents."
+      );
     }
   }, [folderId]);
 
   const initialLoad = useCallback(async () => {
-    setLoading(true);
+    // `loading` starts as true so no synchronous setState is needed here.
     await loadData();
     setLoading(false);
   }, [loadData]);
 
-  useEffect(() => {
-    initialLoad();
-  }, [initialLoad]);
+  useFocusEffect(
+    useCallback(() => {
+      // `loading` starts as true; initialLoad only clears it when done.
+      void initialLoad();
+    }, [initialLoad])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -126,7 +132,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     const prevAvailable = available;
 
     const optimisticItem: FolderItemDisplay = {
-      id: `temp-${Date.now()}`,
+      id: `temp-${++tempIdSeq.current}`,
       folder_id: folderId,
       item_type: itemType,
       item_id: itemId,
@@ -168,7 +174,6 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       // Optimistic UI
       const prevItems = items;
       const prevAvailable = available;
-      const removedItem = items.find((i) => i.id === folderItemId);
       setItems((prev) => prev.filter((i) => i.id !== folderItemId));
 
       const res = await removeItemFromFolder(folderItemId);
@@ -257,7 +262,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     const prevAvailable = available;
     
     const optimisticAdded = itemsToAdd.map((a, i) => ({
-      id: `temp-${Date.now()}-${i}`,
+      id: `temp-${++tempIdSeq.current}`,
       folder_id: folderId,
       item_type: a.type,
       item_id: a.id,
@@ -426,6 +431,25 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     );
   }
 
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorTitle}>Failed to load folder contents.</Text>
+        <Text style={styles.errorDetail}>{error}</Text>
+        <Pressable
+          style={styles.retryBtn}
+          onPress={() => {
+            setError(null);
+            setLoading(true);
+            void initialLoad();
+          }}
+        >
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <DragDropProvider
       onDrop={handleDrop}
@@ -441,12 +465,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       >
         {/* ── Items in this Folder ── */}
         <FolderDropTarget zoneId={DROP_ZONE_ID}>
-          <View
-            style={styles.sectionCard}
-            onLayout={(e) => {
-              containerY.current = e.nativeEvent.layout.y;
-            }}
-          >
+          <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>
               Items in Folder ({items.length})
             </Text>
@@ -772,6 +791,36 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     paddingVertical: theme.spacing.xl,
     alignItems: "center",
     justifyContent: "center",
+  },
+  errorContainer: {
+    flex: 1,
+    padding: theme.spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.sm,
+  },
+  errorTitle: {
+    color: theme.colors.danger,
+    fontSize: theme.textSizes.md,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  errorDetail: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.sm,
+    textAlign: "center",
+    marginBottom: theme.spacing.sm,
+  },
+  retryBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.md,
+  },
+  retryBtnText: {
+    color: theme.colors.primaryButtonText,
+    fontSize: theme.textSizes.sm,
+    fontWeight: "600",
   },
   scrollContent: {
     padding: theme.spacing.lg,

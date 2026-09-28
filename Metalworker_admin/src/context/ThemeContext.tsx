@@ -1,7 +1,22 @@
 // src/context/ThemeContext.tsx
-import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useMemo,
+} from "react";
+import { useColorScheme } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { darkColors, lightColors, spacing, radius, textSizes, AppTheme } from "../constants/theme";
+import {
+  darkColors,
+  lightColors,
+  spacing,
+  radius,
+  textSizes,
+  type AppTheme,
+} from "../constants/theme";
 
 export type ThemeMode = "light" | "dark";
 
@@ -17,7 +32,11 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 const THEME_STORAGE_KEY = "metalworker-theme";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [themeMode, setThemeModeState] = useState<ThemeMode>("dark");
+  const systemScheme = useColorScheme();
+  // Default to the OS preference so first-launch users aren't forced to dark.
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(
+    systemScheme === "light" ? "light" : "dark"
+  );
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -36,29 +55,38 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     loadTheme();
   }, []);
 
-  const setThemeMode = async (mode: ThemeMode) => {
+  const setThemeMode = useCallback((mode: ThemeMode) => {
     setThemeModeState(mode);
-    try {
-      await AsyncStorage.setItem(THEME_STORAGE_KEY, mode);
-    } catch (e) {
+    // Persist in the background; failure must not block the UI.
+    AsyncStorage.setItem(THEME_STORAGE_KEY, mode).catch((e) => {
       console.error("Failed to save theme", e);
-    }
-  };
+    });
+  }, []);
 
-  const toggleTheme = () => {
-    setThemeMode(themeMode === "dark" ? "light" : "dark");
-  };
+  const toggleTheme = useCallback(() => {
+    setThemeModeState((prev) => {
+      const next: ThemeMode = prev === "dark" ? "light" : "dark";
+      AsyncStorage.setItem(THEME_STORAGE_KEY, next).catch((e) => {
+        console.error("Failed to save theme", e);
+      });
+      return next;
+    });
+  }, []);
 
-  const theme = useMemo<AppTheme>(() => ({
-    colors: (themeMode === "light" ? lightColors : darkColors) as typeof darkColors,
-    spacing,
-    radius,
-    textSizes,
-  }), [themeMode]);
+  const theme = useMemo<AppTheme>(
+    () => ({
+      colors: themeMode === "light" ? lightColors : darkColors,
+      spacing,
+      radius,
+      textSizes,
+    }),
+    [themeMode]
+  );
 
-  if (!isLoaded) {
-    return null; // Don't render until theme is loaded to prevent flash
-  }
+  // Render children immediately instead of returning null while AsyncStorage
+  // resolves: a slow/stalled storage previously produced a blank screen.
+  // `isLoaded` is kept so future callers may opt into a splash if needed.
+  void isLoaded;
 
   return (
     <ThemeContext.Provider value={{ themeMode, theme, setThemeMode, toggleTheme }}>
