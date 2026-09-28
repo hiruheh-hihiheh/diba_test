@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -106,7 +104,7 @@ Deno.serve(async (req) => {
     // READ AND VALIDATE REQUEST DATA
     // =====================================
 
-    let body;
+    let body: Record<string, unknown>;
     try {
       body = await req.json();
     } catch {
@@ -148,7 +146,7 @@ Deno.serve(async (req) => {
 
     const { data: targetProfile, error: targetError } = await adminClient
       .from("profiles")
-      .select("role")
+      .select("role, username")
       .eq("id", id)
       .maybeSingle();
 
@@ -194,15 +192,36 @@ Deno.serve(async (req) => {
     }
 
     // =====================================
+    // CAPTURE CURRENT AUTH IDENTITY (for rollback)
+    // =====================================
+
+    const { data: existingAuth, error: getAuthError } =
+      await adminClient.auth.admin.getUserById(id);
+
+    if (getAuthError || !existingAuth.user) {
+      console.error("Failed to read current auth credentials:", getAuthError);
+      return json(
+        { ok: false, error: "Failed to read the current auth credentials." },
+        500
+      );
+    }
+
+    const previousEmail = existingAuth.user.email;
+    const previousMetadata = existingAuth.user.user_metadata ?? {};
+
+    // =====================================
     // UPDATE AUTH USER EMAIL AND METADATA
     // =====================================
 
     const newEmail = `${newUsername}@metalworker.local`;
 
+    // Preserve `role` in metadata — create-user writes { username, role }, so
+    // the rename path must not silently drop the role it depends on.
     const { error: updateAuthError } = await adminClient.auth.admin.updateUserById(id, {
       email: newEmail,
       user_metadata: {
         username: newUsername,
+        role: targetProfile.role,
       },
     });
 
@@ -222,7 +241,47 @@ Deno.serve(async (req) => {
 
     if (updateProfileError) {
       console.error("Update profile error:", updateProfileError);
-      return json({ ok: false, error: "Failed to update profile username: " + updateProfileError.message }, 500);
+
+      // Compensating rollback. The auth credential has ALREADY changed while
+      // profiles.username is stale — that leaves the account un-loginable
+      // under the name shown in the admin UI. Restore the auth credential so
+      // the two stay in agreement.
+      if (previousEmail && previousMetadata) {
+        const { error: rollbackError } = await adminClient.auth.admin.updateUserById(
+          id,
+          {
+            email: previousEmail,
+            user_metadata: previousMetadata,
+          }
+        );
+
+        if (rollbackError) {
+          console.error("Rollback of auth credentials failed:", rollbackError);
+          return json(
+            {
+              ok: false,
+              error:
+                "Failed to update the username, and restoring the previous credentials also failed. " +
+                "The account may need manual correction. Profile error: " +
+                updateProfileError.message +
+                "; rollback error: " +
+                rollbackError.message,
+            },
+            500
+          );
+        }
+      }
+
+      return json(
+        {
+          ok: false,
+          error:
+            "Failed to update the username. The previous credentials were restored, so " +
+            "nothing was saved. " +
+            updateProfileError.message,
+        },
+        500
+      );
     }
 
     // =====================================
@@ -234,7 +293,7 @@ Deno.serve(async (req) => {
     return json({ ok: true });
 
   } catch (error) {
-    console.error("Unexpected delete-worker error:", error);
+    console.error("Unexpected update-worker-username error:", error);
     return json(
       {
         ok: false,

@@ -6,6 +6,7 @@ import type {
   BillGroupPhoto,
   BillGroupInput,
 } from "../types/billGroup";
+import { logAudit } from "./auditLog";
 
 const TABLE = "bill_groups";
 const PHOTOS_TABLE = "bill_group_photos";
@@ -45,6 +46,12 @@ export async function createBillGroup(
     .single();
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "group.bill.created",
+    targetType: "group",
+    targetId: data.id,
+    detail: { name: input.name ?? null },
+  });
   return { ok: true, data: data as BillGroup };
 }
 
@@ -55,18 +62,37 @@ export async function updateBillGroup(
   const { error } = await supabase.from(TABLE).update(input).eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "group.bill.updated",
+    targetType: "group",
+    targetId: id,
+    detail: { fields: Object.keys(input) },
+  });
   return { ok: true };
 }
 
 export async function deleteBillGroup(
   id: string
 ): Promise<{ ok: boolean; error?: string }> {
-  // Delete photos first
-  await supabase.from(PHOTOS_TABLE).delete().eq("bill_group_id", id);
+  // Delete photos first. If that step fails we must NOT delete the group or
+  // report success — otherwise orphaned photo rows are left behind while the
+  // UI claims the group is gone.
+  const { error: photosError } = await supabase
+    .from(PHOTOS_TABLE)
+    .delete()
+    .eq("bill_group_id", id);
+
+  if (photosError) {
+    return {
+      ok: false,
+      error: `Failed to remove group photos: ${photosError.message}`,
+    };
+  }
 
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({ action: "group.bill.deleted", targetType: "group", targetId: id });
   return { ok: true };
 }
 
@@ -92,13 +118,16 @@ export async function addBillGroupPhoto(
   photoUrl: string,
   photoPublicId: string
 ): Promise<{ ok: boolean; data?: BillGroupPhoto; error?: string }> {
-  // Get next position
-  const { data: existing } = await supabase
+  // Get next position (surface read failures instead of silently collapsing
+  // every new photo onto position 0)
+  const { data: existing, error: readError } = await supabase
     .from(PHOTOS_TABLE)
     .select("position")
     .eq("bill_group_id", groupId)
     .order("position", { ascending: false })
     .limit(1);
+
+  if (readError) return { ok: false, error: readError.message };
 
   const nextPosition =
     existing && existing.length > 0 ? existing[0].position + 1 : 0;
@@ -133,13 +162,31 @@ export async function removeBillGroupPhoto(
 export async function reorderBillGroupPhotos(
   photos: { id: string; position: number }[]
 ): Promise<{ ok: boolean; error?: string }> {
+  // Sequential updates (a position write affects the whole order, so parallel
+  // writes race). If later writes fail, earlier ones are already persisted —
+  // report that partial state explicitly instead of a bare failure.
+  let failed = 0;
+  let firstError: string | null = null;
+
   for (const photo of photos) {
     const { error } = await supabase
       .from(PHOTOS_TABLE)
       .update({ position: photo.position })
       .eq("id", photo.id);
 
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      failed++;
+      if (!firstError) firstError = error.message;
+    }
+  }
+
+  if (failed > 0) {
+    return {
+      ok: false,
+      error:
+        `${failed} of ${photos.length} photo positions failed to save` +
+        (firstError ? ` (${firstError})` : ""),
+    };
   }
   return { ok: true };
 }

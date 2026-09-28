@@ -1,0 +1,30 @@
+{
+  // Standalone type-check for the Supabase Edge Functions.
+  //
+  // Edge functions run on Deno Deploy, not in the Expo/React Native bundle,
+  // so they are excluded from the root `tsconfig.json` and type-checked here
+  // with a DOM-lib (for Request/Response) plus the Deno shim in deno.d.ts.
+  //
+  // The deployed import specifier `npm:@supabase/supabase-js@2` (resolved by
+  // Deno at runtime) is mapped to the locally installed package only so the
+  // compiler can resolve its types — the import string in the source must
+  // stay untouched for deployment.
+  //
+  // Verify with:  npx tsc -p supabase/functions/tsconfig.json --noEmit
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "npm:@supabase/supabase-js@2": ["../../node_modules/@supabase/supabase-js"]
+    }
+  },
+  "include": ["./**/*.ts"]
+}

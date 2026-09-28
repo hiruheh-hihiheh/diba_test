@@ -1,11 +1,9 @@
 // src/app/stock-owner.tsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,12 +11,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
-import { supabase } from "../services/supabase";
+import { useAdminGate } from "../hooks/useAdminGate";
+import { useFocusLoader } from "../hooks/useFocusLoader";
 import {
   fetchOwnerStocks,
   createOwnerStock,
@@ -28,27 +27,29 @@ import {
 import type { OwnerStock, OwnerStockInput } from "../types/ownerStock";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { OwnerStockForm } from "../components/stock/OwnerStockForm";
+import { notify } from "../utils/notify";
 
 export default function StockOwnerScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  // Centralized admin gate (role + active check, transient-tolerant). This
+  // screen previously ran a bare `getSession()` check that neither verified
+  // the role nor handled transient network failures.
+  const { checking: authChecking } = useAdminGate();
+
   const [stocks, setStocks] = useState<OwnerStock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
 
   // Form state
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<OwnerStock | null>(null);
 
-  // Auth guard
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-    });
-  }, []);
+  // Cross-platform delete confirmation (Alert/confirm are no-ops on web)
+  const [deleteTarget, setDeleteTarget] = useState<OwnerStock | null>(null);
 
   const loadStocks = useCallback(async () => {
     try {
@@ -56,24 +57,13 @@ export default function StockOwnerScreen() {
       setStocks(list);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load stocks.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadStocks();
-    }, [loadStocks])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadStocks();
-    setRefreshing(false);
-  }, [loadStocks]);
+  const { refreshing, onRefresh } = useFocusLoader(loadStocks);
 
   const filteredStocks = useMemo(() => {
     if (!search.trim()) return stocks;
@@ -104,39 +94,32 @@ export default function StockOwnerScreen() {
     setShowForm(true);
   }
 
-  function handleDelete(item: OwnerStock) {
-    const doDelete = async () => {
-      const res = await deleteOwnerStock(item.id);
-      if (res.ok) {
-        await loadStocks();
-      } else {
-        const msg = res.error || "Failed to delete.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
-      }
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          `Delete owner stock "${item.folder_no || item.source_of_metal || "record"}"?`
-        )
-      ) {
-        doDelete();
-      }
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const res = await deleteOwnerStock(deleteTarget.id);
+    setDeleteTarget(null);
+    if (res.ok) {
+      await loadStocks();
     } else {
-      Alert.alert("Delete Stock", "Are you sure you want to delete this record?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
+      notify("Error", res.error || "Failed to delete.");
     }
-  }
+  }, [deleteTarget, loadStocks]);
 
   function formatDate(dateStr: string | null): string {
     if (!dateStr) return "—";
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "—";
     return d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  if (authChecking) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -149,7 +132,13 @@ export default function StockOwnerScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
+          >
             <Text style={styles.backBtnText}>← Back</Text>
           </Pressable>
           <View style={styles.headerInfo}>
@@ -166,6 +155,7 @@ export default function StockOwnerScreen() {
           value={search}
           onChangeText={setSearch}
           autoCapitalize="none"
+          accessibilityLabel="Search stocks"
         />
         <Button
           title="+ Add Owner Stock"
@@ -232,12 +222,16 @@ export default function StockOwnerScreen() {
                   <Pressable
                     onPress={() => handleEdit(item)}
                     style={styles.actionBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${item.folder_no || "owner stock"}`}
                   >
                     <Text style={styles.actionText}>Edit</Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => handleDelete(item)}
+                    onPress={() => setDeleteTarget(item)}
                     style={styles.actionBtnDanger}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${item.folder_no || "owner stock"}`}
                   >
                     <Text style={styles.actionTextDanger}>Delete</Text>
                   </Pressable>
@@ -247,6 +241,16 @@ export default function StockOwnerScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        title="Delete Stock"
+        message={`Delete owner stock "${deleteTarget?.folder_no || deleteTarget?.source_of_metal || "record"}"?`}
+        confirmLabel="Delete"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* Form Modal */}
       <OwnerStockForm
@@ -277,6 +281,7 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
   },
   backBtn: {
     marginBottom: theme.spacing.sm,
+    alignSelf: "flex-start",
   },
   backBtnText: {
     color: theme.colors.primary,
@@ -385,6 +390,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.primary + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionText: {
@@ -398,6 +405,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.danger + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionTextDanger: {

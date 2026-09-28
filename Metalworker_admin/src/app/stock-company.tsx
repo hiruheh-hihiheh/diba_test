@@ -1,11 +1,9 @@
 // src/app/stock-company.tsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,12 +11,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
-import { supabase } from "../services/supabase";
+import { useAdminGate } from "../hooks/useAdminGate";
+import { useFocusLoader } from "../hooks/useFocusLoader";
 import {
   fetchCompanyStocks,
   createCompanyStock,
@@ -28,25 +27,28 @@ import {
 import type { CompanyStock, CompanyStockInput } from "../types/companyStock";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { CompanyStockForm } from "../components/stock/CompanyStockForm";
+import { notify } from "../utils/notify";
 
 export default function StockCompanyScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  // Centralized admin gate (role + active check, transient-tolerant). This
+  // screen previously ran a bare `getSession()` check that neither verified
+  // the role nor handled transient network failures.
+  const { checking: authChecking } = useAdminGate();
+
   const [stocks, setStocks] = useState<CompanyStock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
 
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<CompanyStock | null>(null);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-    });
-  }, []);
+  // Cross-platform delete confirmation (Alert/confirm are no-ops on web)
+  const [deleteTarget, setDeleteTarget] = useState<CompanyStock | null>(null);
 
   const loadStocks = useCallback(async () => {
     try {
@@ -54,24 +56,13 @@ export default function StockCompanyScreen() {
       setStocks(list);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load stocks.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadStocks();
-    }, [loadStocks])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadStocks();
-    setRefreshing(false);
-  }, [loadStocks]);
+  const { refreshing, onRefresh } = useFocusLoader(loadStocks);
 
   const filteredStocks = useMemo(() => {
     if (!search.trim()) return stocks;
@@ -102,39 +93,32 @@ export default function StockCompanyScreen() {
     setShowForm(true);
   }
 
-  function handleDelete(item: CompanyStock) {
-    const doDelete = async () => {
-      const res = await deleteCompanyStock(item.id);
-      if (res.ok) {
-        await loadStocks();
-      } else {
-        const msg = res.error || "Failed to delete.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
-      }
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          `Delete company stock "${item.company_name || item.folder_no || "record"}"?`
-        )
-      ) {
-        doDelete();
-      }
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const res = await deleteCompanyStock(deleteTarget.id);
+    setDeleteTarget(null);
+    if (res.ok) {
+      await loadStocks();
     } else {
-      Alert.alert("Delete Stock", "Are you sure you want to delete this record?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
+      notify("Error", res.error || "Failed to delete.");
     }
-  }
+  }, [deleteTarget, loadStocks]);
 
   function formatDate(dateStr: string | null): string {
     if (!dateStr) return "—";
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "—";
     return d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  if (authChecking) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -147,10 +131,16 @@ export default function StockCompanyScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
+          >
             <Text style={styles.backBtnText}>← Back</Text>
           </Pressable>
-          <View>
+          <View style={styles.headerInfo}>
             <Text style={styles.headerTitle}>Stock by Company</Text>
             <Text style={styles.headerSubtitle}>
               {stocks.length} Records
@@ -164,6 +154,7 @@ export default function StockCompanyScreen() {
           value={search}
           onChangeText={setSearch}
           autoCapitalize="none"
+          accessibilityLabel="Search stocks"
         />
         <Button
           title="+ Add Company Stock"
@@ -234,12 +225,16 @@ export default function StockCompanyScreen() {
                   <Pressable
                     onPress={() => handleEdit(item)}
                     style={styles.actionBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${item.company_name || "company stock"}`}
                   >
                     <Text style={styles.actionText}>Edit</Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => handleDelete(item)}
+                    onPress={() => setDeleteTarget(item)}
                     style={styles.actionBtnDanger}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${item.company_name || "company stock"}`}
                   >
                     <Text style={styles.actionTextDanger}>Delete</Text>
                   </Pressable>
@@ -250,6 +245,17 @@ export default function StockCompanyScreen() {
         )}
       </ScrollView>
 
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        title="Delete Stock"
+        message={`Delete company stock "${deleteTarget?.company_name || deleteTarget?.folder_no || "record"}"?`}
+        confirmLabel="Delete"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* Form Modal */}
       <CompanyStockForm
         key={editingItem?.id ?? "new"}
         visible={showForm}
@@ -278,12 +284,14 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
   },
   backBtn: {
     marginBottom: theme.spacing.sm,
+    alignSelf: "flex-start",
   },
   backBtnText: {
     color: theme.colors.primary,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
   },
+  headerInfo: {},
   headerTitle: {
     color: theme.colors.text,
     fontSize: theme.textSizes.xl,
@@ -385,6 +393,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.primary + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionText: {
@@ -398,6 +408,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.danger + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionTextDanger: {

@@ -7,6 +7,7 @@ import type {
   FolderItemType,
   FolderItemDisplay,
 } from "../types/folder";
+import { logAudit } from "./auditLog";
 
 /* ──────────────────────────────────────────────
    FOLDER CRUD
@@ -32,6 +33,12 @@ export async function createFolder(
     .single();
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.created",
+    targetType: "folder",
+    targetId: data.id,
+    detail: { name },
+  });
   return { ok: true, data: data as AdminFolder };
 }
 
@@ -45,6 +52,12 @@ export async function renameFolder(
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.renamed",
+    targetType: "folder",
+    targetId: id,
+    detail: { to: name },
+  });
   return { ok: true };
 }
 
@@ -66,6 +79,7 @@ export async function deleteFolder(
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({ action: "folder.deleted", targetType: "folder", targetId: id });
   return { ok: true };
 }
 
@@ -80,10 +94,44 @@ export async function fetchFolderItems(
     .from("folder_items")
     .select("*")
     .eq("folder_id", folderId)
-    .order("position", { ascending: true });
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true });
 
   if (error) throw new Error(error.message);
   return (data ?? []) as FolderItem[];
+}
+
+/**
+ * Pre-check which of the given (type, id) pairs are already present in the
+ * folder. This mirrors the `(folder_id, item_type, item_id)` uniqueness of the
+ * DB index (see supabase/migrations) so the app stays correct even before the
+ * migration is applied and turns raw Postgres violations into clear messages.
+ */
+async function findDuplicateFolderItems(
+  folderId: string,
+  items: { type: FolderItemType; id: string }[]
+): Promise<{
+  duplicates: { type: FolderItemType; id: string }[];
+  error: string | null;
+}> {
+  if (items.length === 0) return { duplicates: [], error: null };
+
+  const { data, error } = await supabase
+    .from("folder_items")
+    .select("item_type, item_id")
+    .eq("folder_id", folderId)
+    .in("item_id", items.map((i) => i.id));
+
+  if (error) return { duplicates: [], error: error.message };
+
+  const present = new Set(
+    ((data ?? []) as { item_type: string; item_id: string }[]).map(
+      (r) => `${r.item_type}:${r.item_id}`
+    )
+  );
+
+  const duplicates = items.filter((i) => present.has(`${i.type}:${i.id}`));
+  return { duplicates, error: null };
 }
 
 export async function addItemToFolder(
@@ -91,13 +139,26 @@ export async function addItemToFolder(
   itemType: FolderItemType,
   itemId: string
 ): Promise<{ ok: boolean; error?: string }> {
-  // Get the next position
-  const { data: existing } = await supabase
+  // Reject duplicates up-front instead of relying on a string-matched
+  // Postgres error (which only exists once the DB unique index is applied).
+  const dup = await findDuplicateFolderItems(folderId, [
+    { type: itemType, id: itemId },
+  ]);
+  if (dup.error) return { ok: false, error: dup.error };
+  if (dup.duplicates.length > 0) {
+    return { ok: false, error: "This item is already in this folder." };
+  }
+
+  // Get the next position (surface read failures instead of silently
+  // collapsing every new item onto position 0).
+  const { data: existing, error: readError } = await supabase
     .from("folder_items")
     .select("position")
     .eq("folder_id", folderId)
     .order("position", { ascending: false })
     .limit(1);
+
+  if (readError) return { ok: false, error: readError.message };
 
   const nextPosition =
     existing && existing.length > 0 ? existing[0].position + 1 : 0;
@@ -110,6 +171,12 @@ export async function addItemToFolder(
   });
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.item_added",
+    targetType: "folder_item",
+    targetId: itemId,
+    detail: { folder_id: folderId, item_type: itemType },
+  });
   return { ok: true };
 }
 
@@ -122,6 +189,11 @@ export async function removeItemFromFolder(
     .eq("id", folderItemId);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.item_removed",
+    targetType: "folder_item",
+    targetId: folderItemId,
+  });
   return { ok: true };
 }
 
@@ -131,13 +203,30 @@ export async function addMultipleItemsToFolder(
 ): Promise<{ ok: boolean; error?: string }> {
   if (items.length === 0) return { ok: true };
 
-  // Get the next position
-  const { data: existing } = await supabase
+  // All-or-nothing on duplicates: if any candidate is already in the folder,
+  // insert nothing and say exactly why (no silent partial adds).
+  const dup = await findDuplicateFolderItems(folderId, items);
+  if (dup.error) return { ok: false, error: dup.error };
+  if (dup.duplicates.length > 0) {
+    return {
+      ok: false,
+      error:
+        dup.duplicates.length === items.length
+          ? "These items are already in this folder."
+          : `${dup.duplicates.length} of ${items.length} selected items are already in this folder, so none were added.`,
+    };
+  }
+
+  // Get the next position (surface read failures instead of silently
+  // collapsing every new item onto position 0).
+  const { data: existing, error: readError } = await supabase
     .from("folder_items")
     .select("position")
     .eq("folder_id", folderId)
     .order("position", { ascending: false })
     .limit(1);
+
+  if (readError) return { ok: false, error: readError.message };
 
   let nextPosition =
     existing && existing.length > 0 ? existing[0].position + 1 : 0;
@@ -156,6 +245,11 @@ export async function addMultipleItemsToFolder(
   const { error } = await supabase.from("folder_items").insert(insertData);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.items_added",
+    targetType: "folder_item",
+    detail: { folder_id: folderId, count: items.length, item_ids: items.map((i) => i.id) },
+  });
   return { ok: true };
 }
 
@@ -170,12 +264,19 @@ export async function removeMultipleItemsFromFolder(
     .in("id", folderItemIds);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "folder.items_removed",
+    targetType: "folder_item",
+    detail: { count: folderItemIds.length, item_ids: folderItemIds },
+  });
   return { ok: true };
 }
 
 /**
  * Batch-update positions for folder items.
  * Uses Promise.all instead of sequential updates (performance fix).
+ * If a subset of writes fails, the rest are already persisted — that partial
+ * state is reported explicitly so callers can refresh from the backend.
  */
 export async function reorderFolderItems(
   items: { id: string; position: number }[]
@@ -189,8 +290,28 @@ export async function reorderFolderItems(
     )
   );
 
-  const failed = results.find((r) => r.error);
-  if (failed?.error) return { ok: false, error: failed.error.message };
+  let failed = 0;
+  let firstError: string | null = null;
+  for (const r of results) {
+    if (r.error) {
+      failed++;
+      if (!firstError) firstError = r.error.message;
+    }
+  }
+
+  if (failed > 0) {
+    return {
+      ok: false,
+      error:
+        `${failed} of ${items.length} positions failed to save` +
+        (firstError ? ` (${firstError})` : ""),
+    };
+  }
+  void logAudit({
+    action: "folder.reordered",
+    targetType: "folder_item",
+    detail: { count: items.length },
+  });
   return { ok: true };
 }
 

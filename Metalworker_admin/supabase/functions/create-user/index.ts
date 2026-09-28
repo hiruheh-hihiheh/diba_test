@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -29,36 +27,23 @@ Deno.serve(async (req) => {
 
   try {
     if (req.method !== "POST") {
-      return json(
-        { error: "Method not allowed" },
-        405
-      );
+      return json({ ok: false, error: "Method not allowed" }, 405);
     }
 
     // =====================================
     // GET SUPABASE ENVIRONMENT VARIABLES
     // =====================================
 
-    const supabaseUrl =
-      Deno.env.get("SUPABASE_URL");
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    const supabaseAnonKey =
-      Deno.env.get("SUPABASE_ANON_KEY");
-
-    const supabaseServiceRoleKey =
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (
-      !supabaseUrl ||
-      !supabaseAnonKey ||
-      !supabaseServiceRoleKey
-    ) {
-      console.error(
-        "Missing Supabase environment variables"
-      );
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+      console.error("Missing Supabase environment variables");
 
       return json(
         {
+          ok: false,
           error:
             "Server configuration error. Missing Supabase environment variables.",
         },
@@ -70,144 +55,92 @@ Deno.serve(async (req) => {
     // GET AUTHORIZATION TOKEN
     // =====================================
 
-    const authHeader =
-      req.headers.get("Authorization");
+    const authHeader = req.headers.get("Authorization");
 
     if (!authHeader) {
-      return json(
-        { error: "Not authenticated" },
-        401
-      );
+      return json({ ok: false, error: "Not authenticated" }, 401);
     }
 
     // =====================================
     // CLIENT TO IDENTIFY CALLING USER
     // =====================================
 
-    const authClient = createClient(
-      supabaseUrl,
-      supabaseAnonKey,
-      {
-        global: {
-          headers: {
-            Authorization: authHeader,
-          },
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: authHeader,
         },
-      }
-    );
+      },
+    });
 
-    const {
-      data: userData,
-      error: userError,
-    } = await authClient.auth.getUser();
+    const { data: userData, error: userError } = await authClient.auth.getUser();
 
     if (userError || !userData.user) {
-      console.error(
-        "Authentication error:",
-        userError
-      );
-
-      return json(
-        { error: "Not authenticated" },
-        401
-      );
+      console.error("Authentication error:", userError);
+      return json({ ok: false, error: "Not authenticated" }, 401);
     }
 
     // =====================================
     // ADMIN CLIENT
     // =====================================
 
-    const adminClient = createClient(
-      supabaseUrl,
-      supabaseServiceRoleKey
-    );
+    const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
 
     // =====================================
     // CHECK ADMIN PROFILE
     // =====================================
 
-    const {
-      data: adminProfile,
-      error: profileError,
-    } = await adminClient
+    const { data: adminProfile, error: profileError } = await adminClient
       .from("profiles")
       .select("role, is_active")
       .eq("id", userData.user.id)
       .single();
 
     if (profileError || !adminProfile) {
-      console.error(
-        "Admin profile error:",
-        profileError
-      );
-
-      return json(
-        {
-          error:
-            "Admin profile not found.",
-        },
-        403
-      );
+      console.error("Admin profile error:", profileError);
+      return json({ ok: false, error: "Admin profile not found." }, 403);
     }
 
     if (adminProfile.role !== "admin") {
-      return json(
-        {
-          error:
-            "Admin access only.",
-        },
-        403
-      );
+      return json({ ok: false, error: "Admin access only." }, 403);
     }
 
     if (!adminProfile.is_active) {
-      return json(
-        {
-          error:
-            "Your admin account is inactive.",
-        },
-        403
-      );
+      return json({ ok: false, error: "Your admin account is inactive." }, 403);
     }
 
     // =====================================
     // READ REQUEST DATA
     // =====================================
 
-    const body = await req.json();
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ ok: false, error: "Invalid JSON body" }, 400);
+    }
 
-    const username = String(
-      body?.username ?? ""
-    )
-      .trim()
-      .toLowerCase();
-
-    const password = String(
-      body?.password ?? ""
-    );
-
-    const roleInput = String(body?.role ?? "")
-      .trim()
-      .toLowerCase();
+    const username = String(body?.username ?? "").trim().toLowerCase();
+    const password = String(body?.password ?? "");
+    const roleInput = String(body?.role ?? "").trim().toLowerCase();
 
     if (roleInput !== "worker" && roleInput !== "processor") {
       return json(
-        { error: "A valid role is required: worker or processor." },
+        { ok: false, error: "A valid role is required: worker or processor." },
         400
       );
     }
-    
+
     const validatedRole = roleInput as "worker" | "processor";
 
     // =====================================
     // VALIDATE USERNAME
     // =====================================
 
-    if (
-      !/^[a-z0-9._-]{3,30}$/.test(username)
-    ) {
+    if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
       return json(
         {
+          ok: false,
           error:
             "Username must be 3-30 characters and can only contain letters, numbers, dots, underscores, or hyphens.",
         },
@@ -217,14 +150,14 @@ Deno.serve(async (req) => {
 
     if (validatedRole === "processor" && !username.endsWith("_processor")) {
       return json(
-        { error: "Processor usernames must end with _processor." },
+        { ok: false, error: "Processor usernames must end with _processor." },
         400
       );
     }
 
     if (validatedRole === "worker" && username.endsWith("_processor")) {
       return json(
-        { error: "Worker usernames cannot end with _processor." },
+        { ok: false, error: "Worker usernames cannot end with _processor." },
         400
       );
     }
@@ -235,110 +168,68 @@ Deno.serve(async (req) => {
 
     if (password.length < 6) {
       return json(
-        {
-          error:
-            "Password must be at least 6 characters.",
-        },
+        { ok: false, error: "Password must be at least 6 characters." },
         400
       );
     }
 
     if (username === "admin") {
-      return json(
-        {
-          error:
-            "This username is reserved.",
-        },
-        400
-      );
+      return json({ ok: false, error: "This username is reserved." }, 400);
     }
 
     // =====================================
     // CHECK IF USERNAME EXISTS
     // =====================================
 
-    const {
-      data: existingProfile,
-      error: existingError,
-    } = await adminClient
+    const { data: existingProfile, error: existingError } = await adminClient
       .from("profiles")
       .select("id")
       .eq("username", username)
       .maybeSingle();
 
     if (existingError) {
-      console.error(
-        "Username check error:",
-        existingError
-      );
-
-      return json(
-        {
-          error:
-            existingError.message,
-        },
-        500
-      );
+      console.error("Username check error:", existingError);
+      return json({ ok: false, error: existingError.message }, 500);
     }
 
     if (existingProfile) {
-      return json(
-        {
-          error:
-            "Username already exists.",
-        },
-        409
-      );
+      return json({ ok: false, error: "Username already exists." }, 409);
     }
 
     // =====================================
     // CREATE AUTH USER
     // =====================================
 
-    const email =
-      `${username}@metalworker.local`;
+    const email = `${username}@metalworker.local`;
 
     console.log(`Creating user: username=${username}, role=${validatedRole}`);
 
-    const {
-      data: createdData,
-      error: createError,
-    } = await adminClient.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        username,
-        role: validatedRole,
-      },
-    });
+    const { data: createdData, error: createError } =
+      await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          username,
+          role: validatedRole,
+        },
+      });
 
     if (createError || !createdData.user) {
-      console.error(
-        "User creation error:",
-        createError
-      );
-
+      console.error("User creation error:", createError);
       return json(
-        {
-          error:
-            createError?.message ??
-            "Failed to create worker.",
-        },
+        { ok: false, error: createError?.message ?? "Failed to create worker." },
         400
       );
     }
 
-    const workerId =
-      createdData.user.id;
+    const workerId = createdData.user.id;
 
     // =====================================
     // CREATE / UPDATE PROFILE
     // =====================================
 
-    const {
-      error: workerProfileError,
-    } = await adminClient
+    const { error: workerProfileError } = await adminClient
       .from("profiles")
       .upsert(
         {
@@ -353,22 +244,26 @@ Deno.serve(async (req) => {
       );
 
     if (workerProfileError) {
-      console.error(
-        "Profile creation error:",
-        workerProfileError
-      );
+      console.error("Profile creation error:", workerProfileError);
 
-      // Remove Auth user so we don't leave
-      // a broken/incomplete account behind
-      await adminClient.auth.admin.deleteUser(
+      // Remove the Auth user so we don't leave a broken/incomplete account
+      // behind — and verify the rollback actually happened so the error is
+      // honest about whether an orphan was left.
+      const { error: rollbackError } = await adminClient.auth.admin.deleteUser(
         workerId
       );
 
+      const orphanNote = rollbackError
+        ? " Additionally, removing the created authentication account failed and may require manual cleanup."
+        : "";
+
       return json(
         {
+          ok: false,
           error:
             "Worker authentication account was created, but the profile could not be created: " +
-            workerProfileError.message,
+            workerProfileError.message +
+            orphanNote,
         },
         500
       );
@@ -378,14 +273,11 @@ Deno.serve(async (req) => {
     // SUCCESS
     // =====================================
 
-    console.log(
-      `Profile created: username=${username}, role=${validatedRole}`
-    );
+    console.log(`Profile created: username=${username}, role=${validatedRole}`);
 
     return json({
       ok: true,
-      message:
-        "User created successfully.",
+      message: "User created successfully.",
       worker: {
         id: workerId,
         username,
@@ -395,17 +287,13 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error(
-      "Unexpected create-user error:",
-      error
-    );
+    console.error("Unexpected create-user error:", error);
 
     return json(
       {
+        ok: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Unexpected server error.",
+          error instanceof Error ? error.message : "Unexpected server error.",
       },
       500
     );

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { JobDrawing, JobDrawingInput } from "../types/jobDrawing";
+import { logAudit } from "./auditLog";
 
 const TABLE = "job_drawings";
 
@@ -57,13 +58,34 @@ export async function deleteJobDrawing(id: string): Promise<{ ok: boolean; error
 }
 
 export async function setPrimaryDrawing(jobId: string, drawingId: string): Promise<{ ok: boolean; error?: string }> {
-  // Set the target first: if the second write fails below, the job is left
-  // with the requested primary (plus possibly a stale flag elsewhere), never
-  // with *no* primary. Stray flags are resolved by the next successful call.
+  // Preferred path: the transactional `set_primary_drawing` RPC (migration
+  // 0002). Both writes happen in one transaction and the drawing is checked to
+  // belong to the job, so a crash can never leave a job with zero or two
+  // primaries, and a foreign drawing id can never be marked primary here.
+  const { error: rpcError } = await supabase.rpc("set_primary_drawing", {
+    p_job_id: jobId,
+    p_drawing_id: drawingId,
+  });
+
+  if (!rpcError) {
+    void logAudit({
+      action: "drawing.set_primary",
+      targetType: "job_drawing",
+      targetId: drawingId,
+      detail: { job_id: jobId, via: "rpc" },
+    });
+    return { ok: true };
+  }
+
+  // Fallback: the RPC is not deployed yet (migration pending). Keep the
+  // previous two-step behaviour — set the target first so a second-write
+  // failure never leaves the job with *no* primary — and scope the target
+  // write to the job so a foreign id cannot be marked primary.
   const { error: setError } = await supabase
     .from(TABLE)
     .update({ is_primary: true })
-    .eq("id", drawingId);
+    .eq("id", drawingId)
+    .eq("job_id", jobId);
 
   if (setError) return { ok: false, error: setError.message };
 
@@ -81,5 +103,11 @@ export async function setPrimaryDrawing(jobId: string, drawingId: string): Promi
     };
   }
 
+  void logAudit({
+    action: "drawing.set_primary",
+    targetType: "job_drawing",
+    targetId: drawingId,
+    detail: { job_id: jobId, via: "fallback" },
+  });
   return { ok: true };
 }

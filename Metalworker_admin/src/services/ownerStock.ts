@@ -2,6 +2,7 @@
 
 import { supabase } from "./supabase";
 import type { OwnerStock, OwnerStockInput } from "../types/ownerStock";
+import { logAudit } from "./auditLog";
 
 const TABLE = "owner_stock";
 
@@ -36,6 +37,12 @@ export async function createOwnerStock(
     .single();
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "stock.owner.created",
+    targetType: "stock",
+    targetId: data.id,
+    detail: { folder_no: input.folder_no ?? null, source: input.source_of_metal ?? null },
+  });
   return { ok: true, data: data as OwnerStock };
 }
 
@@ -46,6 +53,12 @@ export async function updateOwnerStock(
   const { error } = await supabase.from(TABLE).update(input).eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "stock.owner.updated",
+    targetType: "stock",
+    targetId: id,
+    detail: { fields: Object.keys(input) },
+  });
   return { ok: true };
 }
 
@@ -55,5 +68,6 @@ export async function deleteOwnerStock(
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({ action: "stock.owner.deleted", targetType: "stock", targetId: id });
   return { ok: true };
 }

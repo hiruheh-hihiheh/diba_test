@@ -68,15 +68,73 @@ export default function LoginScreen() {
       return;
     }
 
-    // 2. Query the profile
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role, is_active")
-      .eq("id", user.id)
-      .single();
+    // 2. Query the profile. A single transient network/server failure must not
+    //    throw a freshly-verified admin back out, so retry with backoff before
+    //    giving up. Only definitive answers (auth rejection, missing profile
+    //    row) sign the user out.
+    let profile: { role: string; is_active: boolean } | null = null;
+    let profileError: { message?: string; code?: string; status?: number } | null = null;
 
-    // 3. Validate profile lookup
-    if (profileError || !profile) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", user.id)
+        .single();
+      const postgrestErr = res.error as
+        | { message?: string; code?: string; status?: number }
+        | null;
+
+      if (!postgrestErr) {
+        profile = res.data;
+        break;
+      }
+
+      const status = postgrestErr.status ?? 0;
+      const code = postgrestErr.code ?? "";
+      const msg = (postgrestErr.message ?? "").toLowerCase();
+      const definitive =
+        status === 401 ||
+        status === 403 ||
+        code === "PGRST116" || // profile row does not exist
+        msg.includes("jwt") ||
+        msg.includes("no rows");
+
+      if (definitive || attempt === 2) {
+        profileError = postgrestErr;
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+
+    // 3. Validate the profile lookup. A definitive failure signs out; a
+    //    transient one keeps the session and lets the dashboard gate (which
+    //    re-verifies with retries) handle recovery.
+    if (profileError) {
+      const status = profileError.status ?? 0;
+      const code = profileError.code ?? "";
+      const msg = (profileError.message ?? "").toLowerCase();
+      const definitive =
+        status === 401 ||
+        status === 403 ||
+        code === "PGRST116" ||
+        msg.includes("jwt") ||
+        msg.includes("no rows");
+
+      if (definitive) {
+        await supabase.auth.signOut();
+        setError("Unable to verify administrator access.");
+      } else {
+        // Transient after retries — keep the session and let the protected
+        // gate re-verify instead of logging a valid admin out.
+        router.replace("/dashboard");
+      }
+      setLoading(false);
+      return;
+    }
+
+    if (!profile) {
       await supabase.auth.signOut();
       setError("Unable to verify administrator access.");
       setLoading(false);

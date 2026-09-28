@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -106,7 +104,7 @@ Deno.serve(async (req) => {
     // READ AND VALIDATE REQUEST DATA
     // =====================================
 
-    let body;
+    let body: Record<string, unknown>;
     try {
       body = await req.json();
     } catch {
@@ -160,6 +158,38 @@ Deno.serve(async (req) => {
     if (deleteError) {
       console.error("Delete user error:", deleteError);
       return json({ ok: false, error: "Failed to delete worker: " + deleteError.message }, 500);
+    }
+
+    // =====================================
+    // VERIFY PROFILE CASCADE
+    // =====================================
+
+    // The keyed user is gone (can no longer sign in), but this code assumed
+    // an ON DELETE CASCADE removes the profiles row. Verify that assumption —
+    // if the cascade is missing, an orphaned profile row persists and the
+    // admin list would keep showing it.
+    const { data: orphanProfile, error: orphanError } = await adminClient
+      .from("profiles")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (orphanError) {
+      console.error("Profile verification error:", orphanError);
+      return json({
+        ok: true,
+        warning:
+          "Account deleted, but the profile row could not be verified and may require manual cleanup.",
+      });
+    }
+
+    if (orphanProfile) {
+      console.warn(`Profile row remains after auth user deletion: ${id}`);
+      return json({
+        ok: true,
+        warning:
+          "Account deleted, but a profile row was left behind and may require manual cleanup.",
+      });
     }
 
     // =====================================

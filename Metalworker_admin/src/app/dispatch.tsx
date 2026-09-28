@@ -2,6 +2,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -484,11 +485,18 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    // react-native-web does not implement the native `shadow*` props; web
+    // wants a single `boxShadow` string, native the `shadow*` family.
+    ...Platform.select({
+      web: { boxShadow: "0 2px 4px rgba(0, 0, 0, 0.05)" },
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+    }),
   },
   listHeader: {
     flexDirection: "row",

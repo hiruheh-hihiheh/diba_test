@@ -294,13 +294,16 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       // optimistic UI
       const prevItems = items;
       setItems((prev) => prev.filter((i) => !selectedFolderItemIds.has(i.id)));
-      
+
       const idsToRemove = Array.from(selectedFolderItemIds);
       setSelectedFolderItemIds(new Set());
-      
+
       const res = await removeMultipleItemsFromFolder(idsToRemove);
       if (!res.ok) {
+        // Restore both the items AND the selection, so a failed bulk remove
+        // can be retried instead of leaving the selection silently lost.
         setItems(prevItems);
+        setSelectedFolderItemIds(new Set(idsToRemove));
         const msg = res.error || "Failed to remove items.";
         if (Platform.OS === "web") window.alert(msg);
         else Alert.alert("Error", msg);
@@ -346,7 +349,11 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     );
 
     if (!res.ok) {
+      // A partial reorder failure leaves some positions moved in the DB but
+      // not others — roll back the optimistic order, then refresh from the
+      // backend so the list reflects what actually persisted.
       setItems(prevItems);
+      await loadData();
       const msg = res.error || "Failed to reorder.";
       if (Platform.OS === "web") window.alert(msg);
       else Alert.alert("Error", msg);
@@ -395,7 +402,10 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     );
 
     if (!res.ok) {
+      // Partial reorder failures persist some writes — roll back the
+      // optimistic order, then refresh from the backend for the real state.
       setItems(prevItems);
+      await loadData();
       const msg = res.error || "Failed to reorder.";
       if (Platform.OS === "web") window.alert(msg);
       else Alert.alert("Error", msg);
@@ -1077,11 +1087,18 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: theme.spacing.md,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    // react-native-web does not implement the native `shadow*` props; web
+    // wants a single `boxShadow` string, native the `shadow*` family.
+    ...Platform.select({
+      web: { boxShadow: "0 4px 8px rgba(0, 0, 0, 0.3)" },
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+      },
+    }),
   },
   stickyActionHeader: {
     flexDirection: "row",

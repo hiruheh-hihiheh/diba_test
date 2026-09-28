@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { Profile } from "../types/profile";
+import { logAudit } from "./auditLog";
 
 export async function createWorkerUser(
   username: string,
@@ -16,6 +17,11 @@ export async function createWorkerUser(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({
+    action: "user.created",
+    targetType: "user",
+    detail: { username, role },
+  });
   return { ok: true };
 }
 
@@ -40,6 +46,12 @@ export async function updateWorkerProfile(
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "user.profile.updated",
+    targetType: "user",
+    targetId: id,
+    detail: { fields: Object.keys(updates) },
+  });
   return { ok: true };
 }
 
@@ -56,6 +68,12 @@ export async function updateWorkerUsername(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({
+    action: "user.username_changed",
+    targetType: "user",
+    targetId: id,
+    detail: { to: newUsername },
+  });
   return { ok: true };
 }
 
@@ -71,5 +89,6 @@ export async function deleteWorker(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({ action: "user.deleted", targetType: "user", targetId: id });
   return { ok: true };
 }

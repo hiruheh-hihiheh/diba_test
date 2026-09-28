@@ -6,6 +6,7 @@ import type {
   MaterialType,
   UpdateDispatchInput,
 } from "../types/dispatch";
+import { logAudit } from "./auditLog";
 
 export async function fetchAdminDispatches(): Promise<{
   ok: boolean;
@@ -63,6 +64,12 @@ export async function updateDispatch(
     return { ok: false, error: data?.error || "Failed to update dispatch." };
   }
 
+  void logAudit({
+    action: "dispatch.updated",
+    targetType: "dispatch",
+    targetId: id,
+    detail: { fields: Object.keys(input) },
+  });
   return { ok: true };
 }
 
@@ -81,6 +88,7 @@ export async function deleteDispatch(
     return { ok: false, error: data?.error || "Failed to delete dispatch." };
   }
 
+  void logAudit({ action: "dispatch.deleted", targetType: "dispatch", targetId: id });
   return { ok: true };
 }
 

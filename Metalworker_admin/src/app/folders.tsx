@@ -239,11 +239,9 @@ export default function FoldersScreen() {
       return;
     }
 
-    // Success feedback
-    setFolderCounts((prev) => ({
-      ...prev,
-      [zoneId]: (prev[zoneId] || 0) + 1,
-    }));
+    // Success: refresh from the backend so the folder count reflects the real
+    // folder_items rows (no hand-rolled counter that drifts from the DB).
+    await loadData();
 
     showFlash("success", `Added to "${folder.name}"`);
   }

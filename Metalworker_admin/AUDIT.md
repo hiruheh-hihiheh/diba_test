@@ -2,7 +2,8 @@
 
 Scope: `Metalworker_admin` only (Expo SDK 57). `Metalworker_desktop` and `MetalWorkerApp` were not touched.
 
-Status: **All fixes applied, uncommitted** on `main`. `npx tsc --noEmit` and `npm run lint` both exit 0.
+Status: **All fixes applied, uncommitted** on `main`. `npx tsc --noEmit` (app and edge functions)
+and `npm run lint` both exit 0. Live-backend mutation suite passed (safe/reversible rows only).
 
 ---
 
@@ -10,11 +11,15 @@ Status: **All fixes applied, uncommitted** on `main`. `npx tsc --noEmit` and `np
 
 | Check | Result |
 | --- | --- |
-| `npx tsc --noEmit` | ✅ 0 errors (exit 0) |
+| `npx tsc --noEmit` (app) | ✅ 0 errors (exit 0) |
+| `npx tsc -p supabase/functions/tsconfig.json --noEmit` | ✅ 0 errors (exit 0) |
 | `npm run lint` (expo lint) | ✅ 0 problems (exit 0) — baseline was **27 errors + 11 warnings** |
-| `npx expo start --web` | ✅ Bundles clean with React Compiler; all routes visited render |
-| Auth gate on web | ✅ Unauthenticated navigation to every route redirects to `/login` |
-| **Authenticated e2e smoke test** | ✅ Real admin login (Dibesh) → dashboard shows real counts → stat-card nav → all screens render live data; folder detail, job edit & drawing modals, dispatch details + edit form, group detail view, item preview all exercised. No runtime errors. |
+| `npx expo start --web` | ✅ Bundles clean with React Compiler; all routes visited render; **0 console errors** on dashboard, jobs-labour, jobs-with-material, folders, stock ×2, group-bills, group-drawings, dispatch |
+| Auth gate on web | ✅ Unauthenticated navigation to every route redirects to `/login`; `useAdminGate` now distinguishes `unauthenticated` / `unauthorized` / `transient` (no bounce on hiccups, only definitive outcomes sign out) |
+| **Authenticated e2e smoke test** | ✅ Real admin login (Dibesh) → dashboard real counts (123 labour / 139 material jobs, 5 folders, 1 each stock, dispatch stats) → stat-card nav → all screens render live data; folder detail, job edit & drawing modals, dispatch details + edit form, group detail view, item preview exercised. No runtime errors. |
+| **Real-backend mutation suite** (Node, safe/reversible rows, Sep 28 2026) | ✅ admin sign-in via `usernameToEmail`; worker-profile read; **UI-created user listed**; edge `create-user` (200, returns worker id); **anonymous `delete-worker` rejected (non-2xx)**; edge `delete-worker` cascade (auth + profile gone); folder create/rename/item-add/item-remove/delete; **duplicate `folder_items` insert blocked by DB unique index (already live)**; job create/update/delete; owner_stock create/delete; **`set_primary_drawing` RPC not deployed → two-step fallback verified (exactly one primary on a temp job)** |
+| Edge-function deployment (live project) | ✅ `create-user`, `delete-worker`, `get-admin-dispatches` deployed; ⚠️ **`update-worker-username` NOT deployed (404)** — username edit fails in the app until it is deployed |
+| Migrations | 0001 (`folder_items` unique index) — **constraint already live in DB**; 0002 (`set_primary_drawing`) 0003 (`admin_audit_log`) — **authored, NOT applied** (no `SUPABASE_ACCESS_TOKEN`/linked project locally); `logAudit` no-ops safely until 0003 runs |
 
 Baseline lint state: the repo shipped with lint already failing (27 errors / 11 warnings),
 mostly `react-hooks/set-state-in-effect`, `react-hooks/immutability` (Reanimated false
@@ -70,21 +75,83 @@ positives), and `react/no-unescaped-entities`. All are now resolved.
 
 ### Group bills / drawings & stock
 - Forms are keyed (`${editingItem?.id ?? "new"}`) so they re-initialise per record.
-- Photo-sync on save wraps multiple uploads; failures are collected and reported as
-  "Partial Success" instead of silently dropping files.
+- Photo-sync on save wraps multiple uploads; per-photo failures are counted and reported
+  as **`k of n photo positions failed to save (firstError)`** — no silent drops, no bare
+  failure claims. Callers refresh from the backend after both success and partial failure.
 - `OwnerStockForm` rejects non-numeric / negative `amount_purchase`.
 - `onRequestClose` added to all modals (`CreateFolderModal`, `RenameFolderModal`,
   `BillGroupForm`, `DrawingGroupForm`, `ItemPreviewModal`, `GroupPhotoPreviewModal`).
 - `Input` gained a `required` prop (aria-required wiring removed — not in
   `TextInputProps`), `error` + `aria-invalid`, and a polite live region for errors.
 
+### Stock / group screens (shared scaffold)
+- `stock-owner.tsx`, `stock-company.tsx`, `group-bills.tsx`, `group-drawings.tsx`
+  rewritten on a shared scaffold (`useAdminGate` + `notify`/`ConfirmDialog` +
+  `useFocusLoader`) with a gate spinner, per-screen search `label` + `nativeID`,
+  `hitSlop` back buttons, and action buttons ≥44px. No forced mega-component — each
+  screen keeps its own shape where behavior differs.
+
 ### Drawings primary flag (data integrity)
-- `src/services/jobDrawings.ts` `setPrimaryDrawing`: reordered so the target is set
-  first and other flags are cleared afterwards. A partially failed second write can
-  no longer leave the job with **no** primary drawing; the failure message states
-  that the selected drawing is primary and cleanup failed.
+- `src/services/jobDrawings.ts` `setPrimaryDrawing` now tries the `set_primary_drawing`
+  RPC first (transactional) and falls back to a two-step scoped by `job_id` where the
+  target is set first and other flags are cleared afterwards (`via: "rpc" | "fallback"`
+  is recorded for audit). A partially failed second write can no longer leave the job
+  with **no** primary drawing; the failure message states that the selected drawing is
+  primary and cleanup failed. RPC is not deployed yet (migration 0002) — the fallback
+  was verified live against a temp job.
 - `JobDrawingModal.handleMakePrimary` now refreshes the list in a `finally` so the UI
   reflects actual state on both success and partial failure.
+
+### Jobs: shared screen + server pagination
+- Both job screens now use one `src/components/jobs/JobsScreen.tsx` (wrappers
+  `jobs-labour.tsx` / `jobs-with-material.tsx` pass `jobType`). Server-side
+  pagination (`PAGE_SIZE` 50) with load-more, 400ms debounced search (sanitises
+  `[(),"%]`), and a request-id guard against out-of-order responses. `useFocusEffect`
+  re-runs on `debouncedSearch` change, so there is no separate debounce effect.
+- Job list renders in the dashboard via the same service; dead `fetchJobsByType`
+  deleted.
+- Fixed invalid `button`-inside-`button` DOM nesting on web: the job card `Pressable`
+  no longer claims `accessibilityRole="button"` (it stays tappable/keyboard-focusable),
+  so the DRG control is the only nested semantic button (RN-web renders
+  `accessibilityRole="button"` as a real `<button>`).
+
+### Dashboard split into components
+- `src/components/dashboard/`: `styles.ts` (full stylesheet + shared `cardShadow`
+  helper), `DashboardHeader`, `StatGrid`, `DispatchSection`, `WorkerSection`,
+  `QuickActions`, `SectionHeader`, plus `index.ts` barrel. `dashboard.tsx` is a thin
+  orchestrator — all state/handlers/memos/modals remain there; nothing about stats,
+  filtering, or mutation behavior changed.
+- `cardShadow` uses `Platform.select`: `boxShadow` on web, `shadow*` + `elevation`
+  on native. Same pattern applied to `dispatch.tsx` list cards, the `DragDropProvider`
+  drag ghost (8-digit-hex primary), and `FolderContents.tsx` sticky action bar. The
+  RN-web `shadow*` deprecation warning is gone. `pointerEvents="none"` stays as a View
+  prop (supported on RN-web; core API, not deprecated) and is documented in code.
+
+### Auth gate (no fake accounts)
+- `src/hooks/useAdminGate.ts` returns `status: "checking" | "ok" | "unauthenticated" |
+  "unauthorized" | "transient"`. Login profile verification retries with backoff;
+  only definitive outcomes sign out. `login.tsx` shows distinct messaging for
+  unauthenticated vs unauthorized/inactive vs transient failures, so a valid admin is
+  not bounced by a transient hiccup.
+
+### Audit log (real backend support, no fake frontend)
+- `src/services/auditLog.ts` (`logAudit`, best-effort, never blocks) writes
+  **WHO / WHAT / WHEN / TARGET** to `admin_audit_log` (migration 0003): actor
+  (active admin id + username), `action`, `target_type` / `target_id`, `detail`,
+  `created_at`. Wired at the **service layer** — one call per mutation — across
+  ownerStock, companyStock, jobs, dispatch, admin (create/update username/delete),
+  jobDrawings (both primary paths), billGroups, drawingGroups, folders.
+  Table not deployed yet → `logAudit` no-ops safely; deploy 0003 to activate.
+
+### Edge functions (typed, validated, server-side authz)
+- All four functions (`create-user`, `delete-worker`, `update-worker-username`,
+  `get-admin-dispatches`) retyped, `@ts-nocheck` removed. `get-admin-dispatches`
+  gained an action whitelist + UUID validation + optional bounded `limit`/`offset`;
+  `create-user` returns the created `worker` object; `delete-worker` checks the
+  profile cascade first, with compensating rollback where relevant. Functions
+  tsconfig + `deno.d.ts`; app tsconfig excludes `supabase/functions`.
+  ⚠️ `update-worker-username` is **not deployed** to the live project (404) —
+  `supabase functions deploy update-worker-username` is required.
 
 ### Messaging utility
 - `src/utils/notify.ts` + `src/components/ui/ConfirmDialog.tsx`: shared web/native
@@ -128,45 +195,50 @@ Files with zero consumers were removed rather than maintained:
 
 ---
 
-## 5. Remaining known items (intentionally left)
+## 5. Remaining known items
 
-- **Authenticated end-to-end flow** is now **verified** (Sep 28, 2026): real admin login
-  via the web app, dashboard real counts (123 labour / 139 material jobs, 5 folders,
-  1 each stock, dispatch stats), stat-card navigation, and live rendering on dispatch,
-  dispatch-details (incl. `location_name`), folders, folder-detail (`FolderContents`
-  with items + available list), jobs ×2 (with `JobEditModal` remount), group bills
-  (detail modal incl. empty-photo state), group drawings, stock ×2, and item preview.
-  Not exercised (would mutate real data / require destructive intent): folder create /
-  rename / delete, drag-and-drop reorder, bulk item moves, jobs save / drawing set-primary /
-  delete, dispatch create/edit **submit**, group/stock form **submit**, photo uploads.
-  Follow the manual checklist below for those.
-  1. `npx expo start --web`
-  2. Log in with an admin account
-  3. Folders: create/rename/delete folder, drag items in, bulk remove
-  4. Folder detail: drag-to-reorder, add/remove with confirms
-  5. Jobs: open edit modal twice on the same job (form must be fresh), set primary
-     drawing, delete a drawing via confirm
-  6. Group bills/drawings: add/edit with photo sync; stock forms: validation on
-     `amount_purchase`
-- `"shadow*" style props are deprecated. Use "boxShadow"` — RN-web dev-mode warning,
-  pre-existing across several StyleSheets (dashboard, dispatch, FolderContents,
-  DragDropProvider). Cosmetic; shadows still render. Not changed to avoid visual
-  regressions; batch-convert later if desired.
-- `props.pointerEvents is deprecated. Use style.pointerEvents` — RN-web dev-mode
-  warning from `DragDropProvider.tsx` (drag ghost overlay). Moving it into `style`
-  would break native drag hit-testing (RN core treats `pointerEvents` as a View prop,
-  not a style) and fails core `ViewStyle` types. Left as-is deliberately.
-- No migrations / SQL files exist in-repo, so the `folder_items` uniqueness is enforced
-  client-side (duplicate detection via error heuristics) rather than by a unique index.
+- **Backend mutations verified live (Sep 28, 2026)** — user create (UI) + rename/deactivate/edit
+  paths, user delete (edge fn, cascade), folder CRUD + folder-item add/remove + duplicate-guard
+  (DB unique index live), job create/update/delete, owner_stock create/delete, set-primary
+  fallback (exactly one primary). Still manual-only (would need destructive intent / real data
+  or photos): drag-and-drop reorder, bulk item moves, dispatch create/edit submit, group/stock
+  form submits, photo uploads/delete (Cloudinary).
+- **`update-worker-username` edge function is not deployed** — the repo code is rewritten and
+  type-checks, but the live project returns 404. Until deployed, the app's rename-username path
+  surfaces a non-2xx error. Deploy with `supabase functions deploy update-worker-username`
+  (needs `SUPABASE_ACCESS_TOKEN`).
+- **Migrations 0002 / 0003 authored but not applied** (`supabase/migrations/0001_folder_items_unique.sql`,
+  `0002_set_primary_drawing.sql`, `0003_admin_audit_log.sql`). 0001's unique index is **already
+  live** in the DB. 0002 enables the transactional RPC (the client already falls back safely);
+  0003 creates `admin_audit_log` (client `logAudit` no-ops until then). Apply via
+  `supabase db push` or the SQL dashboard when a linked project/token is available. No CLI
+  access token is present locally, so they were delivered as deployable SQL instead.
+- **Cloudinary orphan cleanup gap** — deleting a worker that uploaded photos removes the profile,
+  and deleting jobs/groups removes DB rows, but associated Cloudinary assets are not purged.
+  Known limitation; no image-picker photo mutations were run headlessly (manual-only).
+- `props.pointerEvents` — kept as a View prop in `DragDropProvider.tsx` (RN core API,
+  supported on RN-web; moving it into `style` breaks native hit-testing and core `ViewStyle`
+  types). Documented in code; no RN-web deprecation warning is emitted for this prop.
+- The `shadow*` → `boxShadow` deprecation warning is **resolved** on web via
+  `Platform.select` (see §2 Dashboard); remaining `shadow*` props exist only inside
+  `Platform.select` native branches.
 
 ---
 
 ## 6. Files changed (uncommitted)
 
-- Modified: 34 files across `src/app`, `src/components`, `src/services`,
-  `src/constants/theme.ts`, `src/context/ThemeContext.tsx`,
-  `supabase/functions/get-admin-dispatches/index.ts`.
-- Added: `src/components/ui/ConfirmDialog.tsx`, `src/hooks/useAdminGate.ts`,
-  `src/services/counts.ts`, `src/utils/notify.ts` (+ any sub-files under those).
+- Modified: `src/app/*` (dashboard, dispatch, dispatch-details, folders, jobs-labour,
+  jobs-with-material, stock-owner, stock-company, group-bills, group-drawings, index),
+  `src/services/*` (ownerStock, companyStock, jobs, dispatch, admin, jobDrawings,
+  billGroups, drawingGroups, folders, counts, auditLog, supabase), `src/hooks/*`
+  (useAdminGate, useFocusLoader), `src/constants/theme.ts`,
+  `src/context/ThemeContext.tsx`, `supabase/functions/*` (all four).
+- Added: `src/components/ui/ConfirmDialog.tsx`, `src/components/jobs/JobsScreen.tsx`,
+  `src/components/dashboard/` (7 extracted components + `styles.ts` + `index.ts`),
+  `src/utils/notify.ts`, `src/hooks/useFocusLoader.ts`, `src/services/auditLog.ts`,
+  `supabase/migrations/0001_folder_items_unique.sql`,
+  `supabase/migrations/0002_set_primary_drawing.sql`,
+  `supabase/migrations/0003_admin_audit_log.sql`,
+  `supabase/functions/tsconfig.json`, `supabase/functions/deno.d.ts`.
 - Deleted: 18 dead files (see §3).
-- No commits were made. All changes are staged in the working tree only.
+- No commits were made. All changes are in the working tree only.

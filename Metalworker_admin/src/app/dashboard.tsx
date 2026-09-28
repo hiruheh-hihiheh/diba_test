@@ -1,3 +1,5 @@
+// src/app/dashboard.tsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -26,330 +28,20 @@ import {
   updateWorkerUsername,
 } from "../services/admin";
 import { fetchSystemCounts, type SystemCounts } from "../services/counts";
-import {
-  fetchAdminDispatches,
-  getMaterialLabel,
-  getStatusColor,
-} from "../services/dispatch";
+import { fetchAdminDispatches } from "../services/dispatch";
 import { supabase } from "../services/supabase";
 import type { Profile } from "../types/profile";
 import type { Dispatch } from "../types/dispatch";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { ThemeToggle } from "../components/ui/ThemeToggle";
-
-/*
-  ============================
-  HELPERS
-  ============================
-*/
-
-function formatLastLogin(dateStr?: string | null): string {
-  if (!dateStr) return "Never logged in";
-
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return "Never logged in";
-
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const isYesterday = date.toDateString() === yesterday.toDateString();
-
-  const timeStr = date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  if (isToday) return `Today at ${timeStr}`;
-  if (isYesterday) return `Yesterday at ${timeStr}`;
-
-  return date.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatDispatchDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return "—";
-
-  const timeStr = date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  const dateFormatted = date.toLocaleDateString([], {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-
-  return `${dateFormatted}, ${timeStr}`;
-}
-
-/*
-  ============================
-  SUB-COMPONENTS
-  ============================
-*/
-
-function StatCard({
-  title,
-  value,
-  color,
-  icon,
-  onPress,
-}: {
-  title: string;
-  value: number;
-  color: string;
-  icon: string;
-  onPress?: () => void;
-}) {
-  const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
-
-  const card = (
-    <View style={[styles.statCard, { borderLeftColor: color }]}>
-      <View style={[styles.statIcon, { backgroundColor: color + "15" }]}>
-        <Text style={[styles.statIconText, { color }]}>{icon}</Text>
-      </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statTitle}>{title}</Text>
-    </View>
-  );
-
-  if (!onPress) return card;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${title}: ${value}. Open ${title}`}
-      style={({ pressed }) => [{ flexGrow: 1, flexBasis: "47%" }, pressed && { opacity: 0.8 }]}
-    >
-      {card}
-    </Pressable>
-  );
-}
-
-function DispatchRow({
-  dispatch,
-  onPress,
-  theme,
-}: {
-  dispatch: Dispatch;
-  onPress: (d: Dispatch) => void;
-  theme: any;
-}) {
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
-  const statusColor = getStatusColor(dispatch.status, theme);
-  return (
-    <Pressable onPress={() => onPress(dispatch)} style={styles.dispatchRow}>
-      <View style={styles.dispatchRowTop}>
-        <View style={styles.dispatchRowInfo}>
-          <Text style={styles.dispatchWorkerName} numberOfLines={1}>
-            {dispatch.worker_username}
-          </Text>
-          <Text style={styles.dispatchMeta} numberOfLines={1}>
-            {dispatch.vehicle_number} • {getMaterialLabel(dispatch.material_type)}
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.dispatchStatusBadge,
-            { backgroundColor: statusColor + "20" },
-          ]}
-        >
-          <Text style={[styles.dispatchStatusText, { color: statusColor }]}>
-            {dispatch.status.toUpperCase()}
-          </Text>
-        </View>
-      </View>
-      <Text style={styles.dispatchDate}>
-        {formatDispatchDate(dispatch.submitted_at)}
-      </Text>
-    </Pressable>
-  );
-}
-
-function WorkerRow({
-  worker,
-  onEdit,
-  onDelete,
-  isLast,
-}: {
-  worker: Profile;
-  onEdit: (w: Profile) => void;
-  onDelete: (w: Profile) => void;
-  isLast?: boolean;
-}) {
-  const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
-  return (
-    <View style={[styles.workerRow, isLast && styles.lastWorkerRow]}>
-      <View style={styles.workerRowMain}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {worker.username.charAt(0).toUpperCase()}
-          </Text>
-        </View>
-
-        <View style={styles.workerInfo}>
-          <View style={styles.workerNameRow}>
-            <Text style={styles.workerName} numberOfLines={1}>
-              {worker.username}
-            </Text>
-            <View
-              style={[
-                styles.statusBadge,
-                worker.role === "processor" ? { backgroundColor: theme.colors.primary + "20" } : { backgroundColor: "#8B5CF620" }
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statusText,
-                  worker.role === "processor" ? { color: theme.colors.primary } : { color: "#8B5CF6" }
-                ]}
-              >
-                {worker.role === "processor" ? "PROCESSOR" : "LABOUR"}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.statusBadge,
-                worker.is_active ? styles.statusActive : styles.statusInactive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statusText,
-                  worker.is_active ? styles.statusTextActive : styles.statusTextInactive,
-                ]}
-              >
-                {worker.is_active ? "Active" : "Inactive"}
-              </Text>
-            </View>
-          </View>
-
-          {worker.full_name ? (
-            <Text style={styles.muted} numberOfLines={1}>
-              {worker.full_name}
-            </Text>
-          ) : null}
-
-          <Text style={styles.mutedSmall}>
-            Created {new Date(worker.created_at).toLocaleDateString()} •{" "}
-            {formatLastLogin(worker.last_login_at)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.workerActions}>
-        <Pressable
-          onPress={() => onEdit(worker)}
-          style={styles.actionBtn}
-        >
-          <Text style={styles.actionText}>Edit</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => onDelete(worker)}
-          style={styles.actionBtnDanger}
-        >
-          <Text style={styles.actionTextDanger}>Delete</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function SectionHeader({
-  title,
-  subtitle,
-  rightElement,
-}: {
-  title: string;
-  subtitle?: string;
-  rightElement?: React.ReactNode;
-}) {
-  const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
-  return (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderLeft}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {subtitle ? (
-          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
-        ) : null}
-      </View>
-      {rightElement}
-    </View>
-  );
-}
-
-function FolderSection({
-  title,
-  users,
-  isExpanded,
-  onToggle,
-  onEdit,
-  onDelete,
-}: {
-  title: string;
-  users: Profile[];
-  isExpanded: boolean;
-  onToggle: () => void;
-  onEdit: (w: Profile) => void;
-  onDelete: (w: Profile) => void;
-}) {
-  const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
-  return (
-    <View style={styles.folderContainer}>
-      <Pressable style={styles.folderHeader} onPress={onToggle}>
-        <View style={styles.folderHeaderLeft}>
-          <Text style={styles.folderIcon}>📁</Text>
-          <Text style={styles.folderTitle}>{title}</Text>
-          <View style={styles.folderCountBadge}>
-            <Text style={styles.folderCountText}>{users.length}</Text>
-          </View>
-        </View>
-        <Text style={styles.folderToggleIcon}>
-          {isExpanded ? "▲" : "▼"}
-        </Text>
-      </Pressable>
-
-      {isExpanded && (
-        <View style={styles.folderContent}>
-          {users.length === 0 ? (
-            <View style={styles.emptyFolder}>
-              <Text style={styles.emptyFolderText}>No {title.toLowerCase()} users yet.</Text>
-            </View>
-          ) : (
-            users.map((item, index) => (
-              <WorkerRow
-                key={item.id}
-                worker={item}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                isLast={index === users.length - 1}
-              />
-            ))
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-/*
-  ============================
-  MAIN SCREEN
-  ============================
-*/
+import {
+  DashboardHeader,
+  StatGrid,
+  DispatchSection,
+  WorkerSection,
+  QuickActions,
+} from "../components/dashboard";
 
 export default function DashboardScreen() {
   const { theme } = useTheme();
@@ -494,6 +186,20 @@ export default function DashboardScreen() {
     setRefreshing(false);
   }, [loadWorkers, loadDispatches, loadCounts]);
 
+  const onNavigate = useCallback(
+    (route: string) => {
+      router.push(route as never);
+    },
+    [router]
+  );
+
+  const openAddModal = useCallback(() => {
+    setAddMessage(null);
+    setAddUsername("");
+    setAddPassword("");
+    setShowAddModal(true);
+  }, []);
+
   /*
     ============================
     COMPUTED DATA
@@ -555,8 +261,14 @@ export default function DashboardScreen() {
     return result;
   }, [workers, filter, search]);
 
-  const labourUsers = useMemo(() => filteredWorkers.filter(w => w.role === "worker"), [filteredWorkers]);
-  const processorUsers = useMemo(() => filteredWorkers.filter(w => w.role === "processor"), [filteredWorkers]);
+  const labourUsers = useMemo(
+    () => filteredWorkers.filter((w) => w.role === "worker"),
+    [filteredWorkers]
+  );
+  const processorUsers = useMemo(
+    () => filteredWorkers.filter((w) => w.role === "processor"),
+    [filteredWorkers]
+  );
 
   /*
     ============================
@@ -673,6 +385,35 @@ export default function DashboardScreen() {
     setEditMessage(null);
     setEditLoading(true);
 
+    const cleanUsername = editUsername.trim().toLowerCase();
+
+    // Validate the username up-front. This check previously ran AFTER the
+    // profile write had already been committed — an invalid suffix reported a
+    // failure while full_name/is_active silently persisted anyway.
+    const usernameChanging = cleanUsername !== editingWorker.username.toLowerCase();
+    if (usernameChanging) {
+      if (
+        editingWorker.role === "processor" &&
+        !cleanUsername.endsWith("_processor")
+      ) {
+        setEditMessage({
+          type: "error",
+          text: "Processor usernames must end with _processor.",
+        });
+        setEditLoading(false);
+        return;
+      }
+
+      if (editingWorker.role === "worker" && cleanUsername.endsWith("_processor")) {
+        setEditMessage({
+          type: "error",
+          text: "Worker usernames cannot end with _processor.",
+        });
+        setEditLoading(false);
+        return;
+      }
+    }
+
     try {
       const profileRes = await updateWorkerProfile(editingWorker.id, {
         full_name: editFullName.trim(),
@@ -688,36 +429,28 @@ export default function DashboardScreen() {
         return;
       }
 
-      const cleanUsername = editUsername.trim().toLowerCase();
-      if (cleanUsername !== editingWorker.username.toLowerCase()) {
-        if (editingWorker.role === "processor" && !cleanUsername.endsWith("_processor")) {
-          setEditMessage({
-            type: "error",
-            text: "Processor usernames must end with _processor.",
-          });
-          setEditLoading(false);
-          return;
-        }
-
-        if (editingWorker.role === "worker" && cleanUsername.endsWith("_processor")) {
-          setEditMessage({
-            type: "error",
-            text: "Worker usernames cannot end with _processor.",
-          });
-          setEditLoading(false);
-          return;
-        }
-
+      if (usernameChanging) {
         const usernameRes = await updateWorkerUsername(
           editingWorker.id,
           cleanUsername
         );
         if (!usernameRes.ok) {
+          // The profile write already committed. Be explicit about the partial
+          // state and refresh the list so it shows the true persisted values —
+          // otherwise the admin sees stale data and may re-submit.
+          await loadWorkers();
           setEditMessage({
             type: "error",
-            text: usernameRes.error || "Failed to update username.",
+            text:
+              (usernameRes.error || "Failed to update username.") +
+              " Name/status were saved, but the username was not changed.",
           });
-          setEditLoading(false);
+          showFlash(
+            "error",
+            `Name/status saved, but username change failed: ${
+              usernameRes.error ?? "unknown error"
+            }`
+          );
           return;
         }
       }
@@ -729,9 +462,16 @@ export default function DashboardScreen() {
       setShowEditModal(false);
       setEditMessage(null);
     } catch (error) {
+      // Refresh from the backend so the list reflects whichever step(s)
+      // committed even if the sequence threw part-way through.
+      await loadWorkers();
       setEditMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Something went wrong.",
+        text:
+          (error instanceof Error ? error.message : "Something went wrong.") +
+          (usernameChanging
+            ? " Some changes may have been saved before the failure."
+            : ""),
       });
     } finally {
       setEditLoading(false);
@@ -851,578 +591,57 @@ export default function DashboardScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* ==============================
-            SECTION 1 — HEADER
-            ============================== */}
-        <View style={styles.header}>
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>MetalWorker Admin</Text>
-            <Text style={styles.headerSubtitleLine}>
-              Dispatch & Workforce Overview
-            </Text>
-            <Text style={styles.headerSub}>
-              Signed in as{" "}
-              <Text style={styles.headerSubBold}>{adminUsername}</Text>
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <ThemeToggle />
-            <Pressable onPress={handleLogout} style={styles.logoutBtn}>
-              <Text style={styles.logoutText}>Logout</Text>
-            </Pressable>
-          </View>
-        </View>
+        <DashboardHeader adminUsername={adminUsername} onLogout={handleLogout} />
 
-        {/* ==============================
-            SECTION 2 — OVERVIEW STATISTICS
-            ============================== */}
-        <SectionHeader title="Overview" />
-
-        <View style={styles.overviewGrid}>
-          <StatCard
-            title="Labour"
-            value={userStats.labour}
-            color="#8B5CF6"
-            icon="🛠️"
-          />
-          <StatCard
-            title="Processor"
-            value={userStats.processor}
-            color={theme.colors.primary}
-            icon="⚙️"
-          />
-          <StatCard
-            title="Active Users"
-            value={userStats.active}
-            color={theme.colors.success}
-            icon="✓"
-          />
-          <StatCard
-            title="Inactive Users"
-            value={userStats.inactive}
-            color={theme.colors.textMuted}
-            icon="✕"
-          />
-          <StatCard
-            title="Total Dispatches"
-            value={dispatchStats.total}
-            color={theme.colors.primary}
-            icon="📦"
-            onPress={() => router.push("/dispatch")}
-          />
-          <StatCard
-            title="Needs Review"
-            value={dispatchStats.submitted}
-            color="#F59E0B"
-            icon="⏳"
-            onPress={() => router.push("/dispatch")}
-          />
-          <StatCard
-            title="Approved"
-            value={dispatchStats.approved}
-            color={theme.colors.success}
-            icon="✓"
-            onPress={() => router.push("/dispatch")}
-          />
-          <StatCard
-            title="Rejected"
-            value={dispatchStats.rejected}
-            color={theme.colors.danger}
-            icon="✕"
-            onPress={() => router.push("/dispatch")}
-          />
-        </View>
-
-        {/* ==============================
-            SECTION 2B — SYSTEM OVERVIEW
-            ============================== */}
-        <SectionHeader
-          title="System Overview"
-          subtitle="Jobs, stock, folders & documents"
+        <StatGrid
+          userStats={userStats}
+          dispatchStats={dispatchStats}
+          systemCounts={systemCounts}
+          countsLoading={countsLoading}
+          countsError={countsError}
+          onRetryCounts={loadCounts}
+          onNavigate={onNavigate}
         />
 
-        {countsLoading ? (
-          <View style={styles.inlineLoader}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={styles.inlineLoaderText}>
-              Loading system overview...
-            </Text>
-          </View>
-        ) : countsError ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>⚠ {countsError}</Text>
-            <Pressable onPress={loadCounts}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
-          </View>
-        ) : systemCounts ? (
-          <View style={styles.overviewGrid}>
-            <StatCard
-              title="Labour Jobs"
-              value={systemCounts.jobsLabour}
-              color="#F59E0B"
-              icon="🧰"
-              onPress={() => router.push("/jobs-labour")}
-            />
-            <StatCard
-              title="Material Jobs"
-              value={systemCounts.jobsWithMaterial}
-              color="#10B981"
-              icon="🔩"
-              onPress={() => router.push("/jobs-with-material")}
-            />
-            <StatCard
-              title="Folders"
-              value={systemCounts.folders}
-              color={theme.colors.primary}
-              icon="📁"
-              onPress={() => router.push("/folders")}
-            />
-            <StatCard
-              title="Owner Stock"
-              value={systemCounts.ownerStock}
-              color={theme.colors.primary}
-              icon="🏠"
-              onPress={() => router.push("/stock-owner")}
-            />
-            <StatCard
-              title="Company Stock"
-              value={systemCounts.companyStock}
-              color="#8B5CF6"
-              icon="🏭"
-              onPress={() => router.push("/stock-company")}
-            />
-            <StatCard
-              title="Bill Groups"
-              value={systemCounts.billGroups}
-              color="#F59E0B"
-              icon="📄"
-              onPress={() => router.push("/group-bills")}
-            />
-            <StatCard
-              title="Drawing Groups"
-              value={systemCounts.drawingGroups}
-              color={theme.colors.success}
-              icon="✏️"
-              onPress={() => router.push("/group-drawings")}
-            />
-          </View>
-        ) : null}
-
-        {dispatchLoading && (
-          <View style={styles.inlineLoader}>
-            <ActivityIndicator
-              size="small"
-              color={theme.colors.primary}
-            />
-            <Text style={styles.inlineLoaderText}>
-              Loading dispatch data...
-            </Text>
-          </View>
-        )}
-
-        {dispatchError && !dispatchLoading && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>
-              ⚠ {dispatchError}
-            </Text>
-            <Pressable onPress={loadDispatches}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {/* ==============================
-            SECTION 3 — NEEDS ATTENTION
-            ============================== */}
-        <SectionHeader
-          title="Needs Attention"
-          subtitle="Dispatches awaiting review"
+        <DispatchSection
+          dispatchLoading={dispatchLoading}
+          dispatchError={dispatchError}
+          needsAttention={needsAttention}
+          recentDispatches={recentDispatches}
+          onPressDispatch={handleDispatchPress}
+          onRetryDispatches={loadDispatches}
+          onViewAll={() => router.push("/dispatch")}
         />
 
-        <View style={styles.sectionCard}>
-          {dispatchLoading ? (
-            <View style={styles.emptyState}>
-              <ActivityIndicator color={theme.colors.primary} />
-            </View>
-          ) : needsAttention.length === 0 ? (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateIcon}>✓</Text>
-              <Text style={styles.emptyStateTitle}>All Clear</Text>
-              <Text style={styles.emptyStateText}>
-                No dispatches require attention.
-              </Text>
-            </View>
-          ) : (
-            <>
-              {needsAttention.map((d) => (
-                <DispatchRow
-                  key={d.id}
-                  dispatch={d}
-                  onPress={handleDispatchPress}
-                  theme={theme}
-                />
-              ))}
-            </>
-          )}
-
-          <Pressable
-            style={styles.viewAllBtn}
-            onPress={() => router.push("/dispatch")}
-          >
-            <Text style={styles.viewAllText}>View All Dispatches →</Text>
-          </Pressable>
-        </View>
-
-        {/* ==============================
-            SECTION 4 — RECENT DISPATCHES
-            ============================== */}
-        <SectionHeader
-          title="Recent Dispatches"
-          subtitle="Latest activity"
+        <QuickActions
+          onNavigate={onNavigate}
+          onAddUser={openAddModal}
+          onRefresh={onRefresh}
         />
 
-        <View style={styles.sectionCard}>
-          {dispatchLoading ? (
-            <View style={styles.emptyState}>
-              <ActivityIndicator color={theme.colors.primary} />
-            </View>
-          ) : recentDispatches.length === 0 ? (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateIcon}>📦</Text>
-              <Text style={styles.emptyStateTitle}>No Dispatches Yet</Text>
-              <Text style={styles.emptyStateText}>
-                Dispatch records will appear here once workers submit them.
-              </Text>
-            </View>
-          ) : (
-            <>
-              {recentDispatches.map((d) => (
-                <DispatchRow
-                  key={d.id}
-                  dispatch={d}
-                  onPress={handleDispatchPress}
-                  theme={theme}
-                />
-              ))}
-            </>
-          )}
-
-          <Pressable
-            style={styles.viewAllBtn}
-            onPress={() => router.push("/dispatch")}
-          >
-            <Text style={styles.viewAllText}>View All Dispatches →</Text>
-          </Pressable>
-        </View>
-
-        {/* ==============================
-            SECTION 5 — QUICK ACTIONS
-            ============================== */}
-        <SectionHeader title="Quick Actions" />
-
-        <View style={styles.quickActionsRow}>
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/dispatch")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: theme.colors.primary + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>📦</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>View Dispatches</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => {
-              setAddMessage(null);
-              setAddUsername("");
-              setAddPassword("");
-              setShowAddModal(true);
-            }}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: theme.colors.success + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>+</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Add User</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={onRefresh}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: "#F59E0B" + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>↻</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Refresh All</Text>
-          </Pressable>
-        </View>
-
-        {/* ==============================
-            SECTION 5B — ADMIN NAVIGATION
-            ============================== */}
-        <View style={styles.divider} />
-
-        <SectionHeader
-          title="Jobs"
-          subtitle="Manage work orders"
+        <WorkerSection
+          userTotal={userStats.total}
+          filteredCount={filteredWorkers.length}
+          loading={loading}
+          workerError={workerError}
+          refreshing={refreshing}
+          search={search}
+          filter={filter}
+          labourExpanded={labourExpanded}
+          processorExpanded={processorExpanded}
+          labourUsers={labourUsers}
+          processorUsers={processorUsers}
+          flashMessage={flashMessage}
+          onSearchChange={setSearch}
+          onFilterChange={setFilter}
+          onToggleLabour={() => setLabourExpanded(!labourExpanded)}
+          onToggleProcessor={() => setProcessorExpanded(!processorExpanded)}
+          onAddUser={openAddModal}
+          onRefresh={onRefresh}
+          onRetryWorkers={loadWorkers}
+          onEdit={openEdit}
+          onDelete={handleDelete}
         />
-        <View style={styles.quickActionsRow}>
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/jobs-labour" as any)}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: "#F59E0B" + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>🧰</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Labour Jobs</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/jobs-with-material" as any)}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: "#10B981" + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>🔩</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>With Material (BO)</Text>
-          </Pressable>
-        </View>
-
-        <SectionHeader
-          title="Stock"
-          subtitle="Manage stock records"
-        />
-        <View style={styles.quickActionsRow}>
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/stock-owner")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: theme.colors.primary + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>🏠</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Stock by Owner</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/stock-company")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: "#8B5CF6" + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>🏭</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Stock by Company</Text>
-          </Pressable>
-        </View>
-
-        <SectionHeader
-          title="Documents"
-          subtitle="Bills & drawings"
-        />
-        <View style={styles.quickActionsRow}>
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/group-bills")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: "#F59E0B" + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>📄</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Group Bill</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/group-drawings")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: theme.colors.success + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>✏️</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Group Drawing</Text>
-          </Pressable>
-        </View>
-
-        <SectionHeader
-          title="Folders"
-          subtitle="Organize items"
-        />
-        <View style={styles.quickActionsRow}>
-          <Pressable
-            style={styles.quickActionCard}
-            onPress={() => router.push("/folders")}
-          >
-            <View
-              style={[
-                styles.quickActionIcon,
-                { backgroundColor: theme.colors.primary + "20" },
-              ]}
-            >
-              <Text style={styles.quickActionIconText}>📁</Text>
-            </View>
-            <Text style={styles.quickActionLabel}>Manage Folders</Text>
-          </Pressable>
-        </View>
-
-        {/* ==============================
-            SECTION 6 — WORKER MANAGEMENT
-            ============================== */}
-        <View style={styles.divider} />
-
-        <SectionHeader
-          title="User Management"
-          subtitle={`${userStats.total} Users`}
-        />
-
-        {/* TRANSIENT ACTION FEEDBACK */}
-        {flashMessage ? (
-          <View
-            style={[
-              styles.flashBanner,
-              flashMessage.type === "error" && styles.flashBannerError,
-            ]}
-          >
-            <Text
-              style={[
-                styles.flashText,
-                flashMessage.type === "error" && styles.flashTextError,
-              ]}
-            >
-              {flashMessage.type === "error" ? "⚠ " : "✓ "}
-              {flashMessage.text}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* SEARCH & FILTER */}
-        <View style={styles.searchSection}>
-          <Input
-            placeholder="Search users..."
-            value={search}
-            onChangeText={setSearch}
-            autoCapitalize="none"
-          />
-
-          <View style={styles.filterRow}>
-            {(["all", "active", "inactive"] as const).map((f) => (
-              <Pressable
-                key={f}
-                style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
-                onPress={() => setFilter(f)}
-              >
-                <Text
-                  style={[
-                    styles.filterText,
-                    filter === f && styles.filterTextActive,
-                  ]}
-                >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Button
-            title="+ Add New User"
-            onPress={() => {
-              setAddMessage(null);
-              setAddUsername("");
-              setAddPassword("");
-              setShowAddModal(true);
-            }}
-          />
-        </View>
-
-        {/* WORKER LIST */}
-        <View style={styles.listCard}>
-          <View style={styles.workerHeader}>
-            <Text style={styles.cardTitle}>
-              Users ({filteredWorkers.length})
-            </Text>
-            <Pressable onPress={onRefresh} disabled={refreshing}>
-              <Text style={styles.refreshText}>
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </Text>
-            </Pressable>
-          </View>
-
-          {loading ? (
-            <View style={styles.emptyState}>
-              <ActivityIndicator color={theme.colors.primary} />
-            </View>
-          ) : workerError ? (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorBannerText}>
-                Failed to load users: {workerError}
-              </Text>
-              <Pressable onPress={loadWorkers}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View style={styles.foldersWrapper}>
-              <FolderSection
-                title="LABOUR"
-                users={labourUsers}
-                isExpanded={labourExpanded}
-                onToggle={() => setLabourExpanded(!labourExpanded)}
-                onEdit={openEdit}
-                onDelete={handleDelete}
-              />
-              <FolderSection
-                title="PROCESSOR"
-                users={processorUsers}
-                isExpanded={processorExpanded}
-                onToggle={() => setProcessorExpanded(!processorExpanded)}
-                onEdit={openEdit}
-                onDelete={handleDelete}
-              />
-            </View>
-          )}
-        </View>
       </ScrollView>
 
       {/* ADD MODAL */}
@@ -1469,6 +688,8 @@ export default function DashboardScreen() {
                       { flex: 1, marginRight: 8 },
                     ]}
                     onPress={() => setAddRole("worker")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Labour role"
                   >
                     <Text style={styles.toggleText}>Labour</Text>
                   </Pressable>
@@ -1479,6 +700,8 @@ export default function DashboardScreen() {
                       { flex: 1 },
                     ]}
                     onPress={() => setAddRole("processor")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Processor role"
                   >
                     <Text style={styles.toggleText}>Processor</Text>
                   </Pressable>
@@ -1550,6 +773,8 @@ export default function DashboardScreen() {
                     editIsActive ? styles.toggleActive : styles.toggleInactive,
                   ]}
                   onPress={() => setEditIsActive(!editIsActive)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Toggle active status"
                 >
                   <Text style={styles.toggleText}>
                     {editIsActive ? "Active" : "Inactive"}
@@ -1585,623 +810,83 @@ export default function DashboardScreen() {
   );
 }
 
-/*
-  ============================
-  STYLES
-  ============================
-*/
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    loadingContainer: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: theme.colors.background,
+    },
+    screen: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    content: {
+      padding: theme.spacing.lg,
+      paddingBottom: theme.spacing.xl,
+    },
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: theme.colors.background,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
+    /* ADD / EDIT MODAL SHELLS */
+    modalScreen: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    modalKeyboard: {
+      flex: 1,
+    },
+    modalContent: {
+      padding: theme.spacing.lg,
+      flexGrow: 1,
+    },
+    modalTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.lg,
+      fontWeight: "700",
+      marginBottom: 4,
+    },
+    modalDesc: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.sm,
+      marginBottom: theme.spacing.lg,
+    },
+    toggleContainer: { marginBottom: theme.spacing.md },
+    label: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+      textTransform: "uppercase",
+      marginBottom: 6,
+    },
+    toggleBtn: {
+      paddingVertical: 12,
+      borderRadius: theme.radius.md,
+      alignItems: "center",
+      borderWidth: 1,
+    },
+    toggleActive: {
+      backgroundColor: theme.colors.success + "20",
+      borderColor: theme.colors.success,
+    },
+    toggleInactive: {
+      backgroundColor: theme.colors.danger + "20",
+      borderColor: theme.colors.danger,
+    },
+    toggleText: { fontSize: theme.textSizes.sm, fontWeight: "700" },
 
-  /* HEADER */
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.xl,
-  },
-  headerInfo: { flex: 1, marginRight: theme.spacing.md },
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xl,
-    fontWeight: "800",
-    marginBottom: 2,
-  },
-  headerSubtitleLine: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    marginBottom: 6,
-  },
-  headerSub: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-  headerSubBold: {
-    fontWeight: "700",
-    color: theme.colors.text,
-  },
-  logoutBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs + 4,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  logoutText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-
-  /* SECTION HEADERS */
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    marginBottom: theme.spacing.md,
-    marginTop: theme.spacing.sm,
-  },
-  sectionHeaderLeft: {
-    flex: 1,
-  },
-  sectionTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-  },
-  sectionSubtitle: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-    marginTop: 2,
-  },
-
-  /* OVERVIEW GRID */
-  overviewGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.lg,
-  },
-
-  /* STATS */
-  statCard: {
-    flexGrow: 1,
-    flexShrink: 0,
-    flexBasis: "47%",
-    minWidth: "46%",
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderLeftWidth: 4,
-    padding: theme.spacing.md,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: theme.spacing.sm,
-  },
-  statIconText: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  statValue: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xl,
-    fontWeight: "800",
-    marginBottom: 2,
-  },
-  statTitle: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "600",
-    textTransform: "uppercase",
-  },
-
-  /* INLINE LOADER */
-  inlineLoader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  inlineLoaderText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-
-  /* ERROR BANNER */
-  errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: theme.colors.danger + "15",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.danger + "40",
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-  },
-  flashBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: theme.colors.success + "15",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.success + "40",
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-  },
-  flashBannerError: {
-    backgroundColor: theme.colors.danger + "15",
-    borderColor: theme.colors.danger + "40",
-  },
-  flashText: {
-    color: theme.colors.success,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    flex: 1,
-  },
-  flashTextError: {
-    color: theme.colors.danger,
-  },
-  errorBannerText: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  retryText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-
-  /* SECTION CARD */
-  sectionCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.xl,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-
-  /* DISPATCH ROW */
-  dispatchRow: {
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  dispatchRowTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  dispatchRowInfo: {
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  dispatchWorkerName: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  dispatchMeta: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-  dispatchStatusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  dispatchStatusText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  dispatchDate: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-    marginTop: 2,
-  },
-
-  /* EMPTY STATES */
-  emptyState: { paddingVertical: theme.spacing.xl, alignItems: "center" },
-  emptyStateCard: {
-    alignItems: "center",
-    paddingVertical: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.lg,
-  },
-  emptyStateIcon: {
-    fontSize: 32,
-    marginBottom: theme.spacing.sm,
-  },
-  emptyStateTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyStateText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-    paddingVertical: theme.spacing.lg,
-  },
-
-  /* VIEW ALL BTN */
-  viewAllBtn: {
-    marginTop: theme.spacing.md,
-    paddingVertical: theme.spacing.sm + 4,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary + "15",
-    alignItems: "center",
-  },
-  viewAllText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-
-  /* QUICK ACTIONS */
-  quickActionsRow: {
-    flexDirection: "row",
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.xl,
-  },
-  quickActionCard: {
-    flex: 1,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  quickActionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: theme.spacing.sm,
-  },
-  quickActionIconText: {
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  quickActionLabel: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-
-  /* DIVIDER */
-  divider: {
-    height: 1,
-    backgroundColor: theme.colors.border,
-    marginBottom: theme.spacing.lg,
-  },
-
-  /* SEARCH & FILTER */
-  searchSection: {
-    marginBottom: theme.spacing.xl,
-  },
-  filterRow: {
-    flexDirection: "row",
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  filterBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-  },
-  filterBtnActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  filterText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  filterTextActive: { color: theme.colors.primaryButtonText },
-
-  /* LIST CARD */
-  listCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  workerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.md,
-  },
-  cardTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  refreshText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-
-  /* FOLDER STYLES */
-  foldersWrapper: {
-    gap: theme.spacing.md,
-  },
-  folderContainer: {
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    overflow: "hidden",
-  },
-  folderHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.surface,
-  },
-  folderHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing.sm,
-  },
-  folderIcon: {
-    fontSize: 20,
-  },
-  folderTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  folderCountBadge: {
-    backgroundColor: theme.colors.primary + "15",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-    marginLeft: theme.spacing.xs,
-  },
-  folderCountText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "700",
-  },
-  folderToggleIcon: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-  },
-  folderContent: {
-    paddingHorizontal: theme.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-  },
-  emptyFolder: {
-    paddingVertical: theme.spacing.lg,
-    alignItems: "center",
-  },
-  emptyFolderText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-  lastWorkerRow: {
-    borderBottomWidth: 0,
-  },
-
-  /* WORKER ROW */
-  workerRow: {
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  workerRowMain: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: theme.spacing.sm,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: theme.spacing.md,
-  },
-  avatarText: { color: theme.colors.primaryButtonText, fontWeight: "700", fontSize: 18 },
-  workerInfo: { flex: 1 },
-  workerNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 4,
-  },
-  workerName: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusActive: { backgroundColor: theme.colors.success + "20" },
-  statusInactive: { backgroundColor: theme.colors.danger + "20" },
-  statusText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  statusTextActive: { color: theme.colors.success },
-  statusTextInactive: { color: theme.colors.danger },
-  muted: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginBottom: 2,
-  },
-  mutedSmall: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-  },
-  workerActions: {
-    flexDirection: "row",
-    gap: theme.spacing.sm,
-    justifyContent: "flex-end",
-  },
-  actionBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary + "15",
-    minWidth: 70,
-    alignItems: "center",
-  },
-  actionText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  actionBtnDanger: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.danger + "15",
-    minWidth: 70,
-    alignItems: "center",
-  },
-  actionTextDanger: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-
-  /* MODALS */
-  modalScreen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  modalKeyboard: {
-    flex: 1,
-  },
-  modalContent: {
-    padding: theme.spacing.lg,
-    flexGrow: 1,
-  },
-  modalTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  modalDesc: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginBottom: theme.spacing.lg,
-  },
-  toggleContainer: { marginBottom: theme.spacing.md },
-  label: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    marginBottom: 6,
-  },
-  toggleBtn: {
-    paddingVertical: 12,
-    borderRadius: theme.radius.md,
-    alignItems: "center",
-    borderWidth: 1,
-  },
-  toggleActive: {
-    backgroundColor: theme.colors.success + "20",
-    borderColor: theme.colors.success,
-  },
-  toggleInactive: {
-    backgroundColor: theme.colors.danger + "20",
-    borderColor: theme.colors.danger,
-  },
-  toggleText: { fontSize: theme.textSizes.sm, fontWeight: "700" },
-
-  /* MESSAGES */
-  success: {
-    marginTop: theme.spacing.sm,
-    color: theme.colors.success,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-    marginBottom: theme.spacing.md,
-  },
-  error: {
-    marginTop: theme.spacing.sm,
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-    marginBottom: theme.spacing.md,
-  },
-});
+    /* MESSAGES */
+    success: {
+      marginTop: theme.spacing.sm,
+      color: theme.colors.success,
+      fontSize: theme.textSizes.sm,
+      textAlign: "center",
+      marginBottom: theme.spacing.md,
+    },
+    error: {
+      marginTop: theme.spacing.sm,
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.sm,
+      textAlign: "center",
+      marginBottom: theme.spacing.md,
+    },
+  });

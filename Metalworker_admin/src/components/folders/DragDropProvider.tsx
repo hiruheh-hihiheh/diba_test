@@ -12,7 +12,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import Animated, {
   type SharedValue,
   useAnimatedStyle,
@@ -299,11 +299,19 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
-    shadowColor: theme.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 14,
+    // react-native-web does not implement the native `shadow*` props; web
+    // wants a single `boxShadow` string (8-digit hex keeps the primary tint),
+    // native the `shadow*` family with elevation.
+    ...Platform.select({
+      web: { boxShadow: `0 4px 10px ${theme.colors.primary}59` },
+      default: {
+        shadowColor: theme.colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.35,
+        shadowRadius: 10,
+        elevation: 14,
+      },
+    }),
   },
   ghostBadge: {
     paddingHorizontal: 6,

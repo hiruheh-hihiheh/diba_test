@@ -1,10 +1,8 @@
 // src/app/group-bills.tsx
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,12 +10,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
-import { supabase } from "../services/supabase";
+import { useAdminGate } from "../hooks/useAdminGate";
+import { useFocusLoader } from "../hooks/useFocusLoader";
 import {
   fetchBillGroups,
   createBillGroup,
@@ -30,17 +29,23 @@ import {
 } from "../services/billGroups";
 import type { BillGroup, BillGroupInput } from "../types/billGroup";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { BillGroupForm } from "../components/documents/BillGroupForm";
 import type { GroupPhoto } from "../components/documents/GroupPhotoUploader";
 import { GroupPhotoPreviewModal } from "../components/documents/GroupPhotoPreviewModal";
+import { notify } from "../utils/notify";
 
 export default function GroupBillsScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  // Centralized admin gate (role + active check, transient-tolerant). This
+  // screen previously ran a bare `getSession()` check that neither verified
+  // the role nor handled transient network failures.
+  const { checking: authChecking } = useAdminGate();
+
   const [groups, setGroups] = useState<BillGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<BillGroup | null>(null);
@@ -48,11 +53,8 @@ export default function GroupBillsScreen() {
 
   const [viewingItem, setViewingItem] = useState<BillGroup | null>(null);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-    });
-  }, []);
+  // Cross-platform delete confirmation (Alert/confirm are no-ops on web)
+  const [deleteTarget, setDeleteTarget] = useState<BillGroup | null>(null);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -60,32 +62,30 @@ export default function GroupBillsScreen() {
       setGroups(list);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load groups.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadGroups();
-    }, [loadGroups])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadGroups();
-    setRefreshing(false);
-  }, [loadGroups]);
+  const { refreshing, onRefresh } = useFocusLoader(loadGroups);
 
   async function handleSave(input: BillGroupInput, photos: GroupPhoto[]) {
     // Collect per-photo failures instead of aborting the whole save silently.
+    // These helpers return `{ok,error}` rather than throwing, so the wrapper
+    // must inspect the result — a bare try/catch can never see a returned
+    // failure and makes this "Partial Success" path dead code.
     const failures: string[] = [];
 
-    const safe = async (fn: () => Promise<unknown>, what: string) => {
+    const safe = async (
+      fn: () => Promise<{ ok: boolean; error?: string }>,
+      what: string
+    ) => {
       try {
-        await fn();
+        const res = await fn();
+        if (!res.ok) {
+          failures.push(`${what}: ${res.error ?? "failed"}`);
+        }
       } catch (err) {
         failures.push(
           `${what}: ${err instanceof Error ? err.message : "unknown error"}`
@@ -151,8 +151,7 @@ export default function GroupBillsScreen() {
     if (failures.length > 0) {
       const msg =
         "Saved, but some photos could not be synced: " + failures.join("; ");
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Partial Success", msg);
+      notify("Partial Success", msg);
     }
   }
 
@@ -171,33 +170,29 @@ export default function GroupBillsScreen() {
       setShowForm(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load photos.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     }
   }
 
-  function handleDelete(item: BillGroup) {
-    const doDelete = async () => {
-      const res = await deleteBillGroup(item.id);
-      if (res.ok) {
-        await loadGroups();
-      } else {
-        const msg = res.error || "Failed to delete.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
-      }
-    };
-
-    if (Platform.OS === "web") {
-      if (window.confirm(`Delete bill group "${item.name}"?`)) {
-        doDelete();
-      }
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const res = await deleteBillGroup(deleteTarget.id);
+    setDeleteTarget(null);
+    if (res.ok) {
+      await loadGroups();
     } else {
-      Alert.alert("Delete Group", `Delete "${item.name}"?`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doDelete },
-      ]);
+      notify("Error", res.error || "Failed to delete.");
     }
+  }, [deleteTarget, loadGroups]);
+
+  if (authChecking) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -210,13 +205,21 @@ export default function GroupBillsScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
+          >
             <Text style={styles.backBtnText}>← Back</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>Group Bill</Text>
-          <Text style={styles.headerSubtitle}>
-            {groups.length} Groups
-          </Text>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle}>Group Bill</Text>
+            <Text style={styles.headerSubtitle}>
+              {groups.length} Groups
+            </Text>
+          </View>
         </View>
 
         <Button
@@ -267,18 +270,24 @@ export default function GroupBillsScreen() {
                 <Pressable
                   onPress={() => setViewingItem(item)}
                   style={styles.actionBtnSecondary}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${item.name}`}
                 >
                   <Text style={styles.actionTextSecondary}>View</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => handleEdit(item)}
                   style={styles.actionBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${item.name}`}
                 >
                   <Text style={styles.actionText}>Edit</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => handleDelete(item)}
+                  onPress={() => setDeleteTarget(item)}
                   style={styles.actionBtnDanger}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete ${item.name}`}
                 >
                   <Text style={styles.actionTextDanger}>Delete</Text>
                 </Pressable>
@@ -287,6 +296,16 @@ export default function GroupBillsScreen() {
           ))
         )}
       </ScrollView>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        title="Delete Group"
+        message={`Delete bill group "${deleteTarget?.name}"?`}
+        confirmLabel="Delete"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <BillGroupForm
         key={editingItem?.id ?? "new"}
@@ -328,12 +347,14 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
   },
   backBtn: {
     marginBottom: theme.spacing.sm,
+    alignSelf: "flex-start",
   },
   backBtnText: {
     color: theme.colors.primary,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
   },
+  headerInfo: {},
   headerTitle: {
     color: theme.colors.text,
     fontSize: theme.textSizes.xl,
@@ -414,6 +435,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.primary + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionText: {
@@ -427,6 +450,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.border,
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionTextSecondary: {
@@ -440,6 +465,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.danger + "15",
     minWidth: 70,
+    minHeight: 44,
+    justifyContent: "center",
     alignItems: "center",
   },
   actionTextDanger: {
