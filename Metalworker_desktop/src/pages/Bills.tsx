@@ -29,6 +29,7 @@ import {
   fetchBills,
   formatBillDate,
   formatMoney,
+  formatJobKind,
   formatQuantity,
 } from "../services/bills";
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillUpload } from "../types/bill";
@@ -435,6 +436,10 @@ export default function BillsPage() {
                     {bills.map((bill) => {
                       const isSelected = selection.isSelected(bill.id);
                       const rowBusy = deleting === bill.bill_upload_id;
+                      /* Normalized once per row: "WITHMETAL" must never reach the
+                         screen, and the value is absent entirely when the invoice
+                         declared no job type. */
+                      const jobKind = formatJobKind(bill.job_kind);
                       return (
                         <tr
                           key={bill.id}
@@ -461,6 +466,11 @@ export default function BillsPage() {
                             >
                               {bill.invoice_no || "No invoice number"}
                             </button>
+                            {jobKind && (
+                              <p className="mt-1">
+                                <JobKindPill label={jobKind} />
+                              </p>
+                            )}
                             {bill.party_name && (
                               <p className="text-xs text-text-muted truncate max-w-[14rem]">
                                 {bill.party_name}
@@ -609,5 +619,24 @@ export default function BillsPage() {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The job classification as a compact pill.
+ *
+ * A pill rather than plain text because it is a short, fixed-vocabulary label
+ * that must not be mistaken for a free-text value like the party name sitting
+ * next to it. Rendered from the already-normalized label, so this component never
+ * has to know the raw spellings.
+ */
+function JobKindPill({ label }: { label: string }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary"
+      title="Job classification"
+    >
+      {label}
+    </span>
   );
 }

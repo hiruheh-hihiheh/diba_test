@@ -740,3 +740,51 @@ export function formatBillDate(value: string | null | undefined): string {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${dd} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
+
+/**
+ * The job classification, as a label a person can read.
+ *
+ * WHY THIS EXISTS
+ * `bills.job_kind` stores what the source workbook actually said, verbatim, so
+ * the database never loses the original. But the workbook is hand-written and the
+ * same classification arrives spelled several ways — "LABOUR JOB", "LABOUR",
+ * "WITHMETAL", "WITH METAL", "with  material", and once "WITH_METAL" — and
+ * "WITHMETAL" is not something to show an operator or print on an invoice. So the
+ * stored value stays raw and only the DISPLAY is normalized, here, once, for both
+ * the list and the detail view. The PDF renderer has its own copy in
+ * `supabase/functions/process-bill-upload/_shared/formatJobKind.ts` because that
+ * module is a separate Deno compilation target; the two implementations are
+ * identical and deliberately so.
+ *
+ * This is NOT a second job-type system. It maps a string to a presentable string
+ * and nothing else. It never infers the classification from the invoice number,
+ * the sheet name, an amount or a description — an invoice that never declared a
+ * job type shows nothing, because guessing "LABOUR JOB" onto it would be a
+ * fabricated financial classification.
+ *
+ * Returns `null` when there is nothing to show, so callers can omit the element
+ * instead of printing an empty pill.
+ */
+export function formatJobKind(jobKind: string | null | undefined): string | null {
+  if (jobKind === null || jobKind === undefined) return null;
+
+  // Collapse whitespace runs (some templates use tabs) and trim.
+  const cleaned = String(jobKind).replace(/\s+/g, " ").trim();
+  if (cleaned === "") return null;
+
+  /* Match on a "squashed" key — uppercase, alphanumerics only — so case, spacing,
+     hyphens and underscores cannot change the answer. Same trick the field parser
+     uses for labels. */
+  const key = cleaned.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  if (key === "LABOURJOB" || key === "LABOUR") return "LABOUR JOB";
+  if (key === "WITHMETAL" || key === "WITHMATERIAL") return "WITH METAL";
+
+  /* Unrecognised but non-empty: clean separators and title-case, so an unknown
+     classification is visible and readable rather than silently discarded. */
+  return cleaned
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ");
+}

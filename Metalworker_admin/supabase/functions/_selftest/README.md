@@ -11,15 +11,17 @@ They run on **Node**, not Deno, so they can be run from a normal checkout:
 cd Metalworker_admin
 node supabase/functions/_selftest/test-parse.ts                      # field dump + cross-copy agreement
 node supabase/functions/_selftest/test-pdf.ts                        # 3 PDFs + structural checks, writes out/
+node supabase/functions/_selftest/test-jobkind.ts                    # job classification on the right page
 node supabase/functions/_selftest/audit.ts                           # layout audit of out/SAMPLE_original.pdf
 node supabase/functions/_selftest/audit.ts SAMPLE_duplicate.pdf      # …or any other copy
+node supabase/functions/_selftest/serve.ts 8123                      # open the PDFs in a browser
 npx tsc -p tsconfig.edge.json                                        # typecheck the edge function
 ```
 
-All three accept a workbook path as their first argument; the default is
-`<repo root>/SAMPLE.xlsx`.
+All the checking scripts accept a workbook path as their first argument; the
+default is `<repo root>/SAMPLE.xlsx`.
 
-`npm run bills:selftest` runs the first three in order.
+`npm run bills:selftest` runs the four checking scripts in order.
 
 ## What each one proves
 
@@ -27,7 +29,9 @@ All three accept a workbook path as their first argument; the default is
 | --- | --- |
 | `test-parse.ts` | Did every sheet become a bill, with no sheet skipped? Are the three copy spans derived correctly, and do the duplicate/triplicate copies agree with the original on invoice number and total? Prints every derived field so the numbers can be read against the source workbook. |
 | `test-pdf.ts` | Is the output **three** documents named `<base>_original/_duplicate/_triplicate.pdf`, one page per bill, with a valid header, trailer, `/Pages /Count`, a `startxref` that lands on the xref, every xref offset resolving to its own object, one content stream per page, and each page carrying its own invoice number, grand total and quantity? |
+| `test-jobkind.ts` | Is each page's job classification the *display* label (`LABOUR JOB`, `WITH METAL`) and not the raw stored token, and is it on the page belonging to its own invoice rather than swapped? |
 | `audit.ts` | Does the page *look* like an invoice? Content streams are uncompressed, so the script reads back every `Tm`/`Tj`/`re`/`l` operator and reconstructs the geometry. It then checks: nothing off the page, no overlapping text on a baseline, no body text in the footer band, right-aligned money columns sharing a right edge, no >90pt hole mid-page — and prints an ASCII map of the page with the y coordinate in points, which is how the layout was actually debugged. |
+| `serve.ts` | Serves `out/` on a port so the PDFs can be opened and looked at. Nothing else. |
 
 `test-pdf.ts` proves the files are well-formed; `audit.ts` proves the layout is
 sane. Neither needs a PDF library, a headless browser, or a round trip through

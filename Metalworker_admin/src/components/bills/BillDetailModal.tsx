@@ -23,6 +23,7 @@ import {
   fetchBillLineItems,
   formatBillDate,
   formatMoney,
+  formatJobKind,
   formatQuantity,
 } from "../../services/bills";
 import type { Bill, BillLineItem } from "../../types/bill";
@@ -179,7 +180,15 @@ export function BillDetailModal({
           </Text>
           <Text style={styles.subtitle} numberOfLines={2}>
             {bill
-              ? `Sheet ${bill.sheet_name} · ${bill.original_filename}`
+              ? /* Appended, not substituted: the header still reads sheet then
+                 workbook, and the classification is visible without scrolling. */
+                [
+                  `Sheet ${bill.sheet_name}`,
+                  bill.original_filename,
+                  formatJobKind(bill.job_kind),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : "Loading the invoice…"}
           </Text>
 
@@ -223,7 +232,7 @@ export function BillDetailModal({
                 <Field label="Invoice no" value={bill.invoice_no} styles={styles} />
                 <Field label="Invoice date" value={formatBillDate(bill.invoice_date)} styles={styles} />
                 <Field label="Quantity" value={formatQuantity(bill.total_quantity)} styles={styles} />
-                <Field label="Job type" value={bill.job_kind} styles={styles} />
+                <Field label="Job type" value={formatJobKind(bill.job_kind)} styles={styles} />
                 <Field label="Seller" value={bill.seller_name} styles={styles} />
                 <Field label="Party" value={bill.party_name} styles={styles} />
                 <Field label="Party GST no" value={bill.party_gst_no} styles={styles} />

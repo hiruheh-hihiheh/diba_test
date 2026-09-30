@@ -12,7 +12,7 @@ import { Loader2 } from "lucide-react";
 import Modal from "../ui/Modal";
 import { ErrorState } from "../ui/LoadingState";
 import { BillCopyActions } from "./BillCopyActions";
-import { fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity } from "../../services/bills";
+import { fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity, formatJobKind } from "../../services/bills";
 import type { Bill, BillLineItem } from "../../types/bill";
 
 /** A labelled value that hides itself entirely when there is nothing to show. */
@@ -117,7 +117,12 @@ export function BillDetailModal({
       title={bill?.invoice_no ? `Bill ${bill.invoice_no}` : "Bill"}
       subtitle={
         bill
-          ? `Sheet “${bill.sheet_name}” · ${bill.original_filename}`
+          ? /* The job classification is appended rather than replacing anything,
+               so the header still reads sheet -> workbook and the operator can
+               still see the classification without scrolling to the grid. */
+            [`Sheet “${bill.sheet_name}”`, bill.original_filename, formatJobKind(bill.job_kind)]
+              .filter(Boolean)
+              .join(" · ")
           : "Loading the invoice…"
       }
     >
@@ -160,7 +165,7 @@ export function BillDetailModal({
             <Field label="Invoice no" value={bill.invoice_no} />
             <Field label="Invoice date" value={formatBillDate(bill.invoice_date)} />
             <Field label="Quantity" value={formatQuantity(bill.total_quantity)} />
-            <Field label="Job type" value={bill.job_kind} />
+            <Field label="Job type" value={formatJobKind(bill.job_kind)} />
             <Field label="Seller" value={bill.seller_name} />
             <Field label="Party" value={bill.party_name} />
             <Field label="Party GST no" value={bill.party_gst_no} />

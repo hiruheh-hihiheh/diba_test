@@ -2,6 +2,7 @@
 
 import { supabase } from "../lib/supabase";
 import { logAudit } from "./auditLog";
+import { formatJobKind } from "./bills";
 import type { AdminFolder, FolderItem, FolderItemDisplay, FolderItemType } from "../types/folder";
 
 const TABLE = "admin_folders";
@@ -300,6 +301,8 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
 
   // Fetch labels in parallel
   const labelMap = new Map<string, string>();
+  /** Optional second lines (currently only a bill's job classification). */
+  const subtitleMap = new Map<string, string>();
 
   const fetches: PromiseLike<void>[] = [];
 
@@ -335,10 +338,16 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
   }
   if (groups.has("bill")) {
     fetches.push(
-      supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax").in("id", groups.get("bill")!)
+      supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax, job_kind").in("id", groups.get("bill")!)
         .then(({ data }) => {
-          data?.forEach((r: { id: string; invoice_no: string | null; sheet_name: string | null; amount_after_tax: number | null }) => {
+          data?.forEach((r: { id: string; invoice_no: string | null; sheet_name: string | null; amount_after_tax: number | null; job_kind: string | null }) => {
             labelMap.set(r.id, buildBillLabel(r, r.id));
+            /* Second line only. The label above is untouched so search, toasts and
+               the accessible names all stay exactly as they were; the
+               classification is displayed alongside, never merged into the name.
+               Normalized, so "WITHMETAL" never reaches a folder list. */
+            const kind = formatJobKind(r.job_kind);
+            if (kind) subtitleMap.set(r.id, kind);
           });
         })
     );
@@ -367,8 +376,8 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
       const built = labelMap.get(item.item_id);
       if (built) label = built;
     }
-
-    return { ...item, label };
+    const subtitle = subtitleMap.get(item.item_id) ?? null;
+    return { ...item, label, subtitle };
   });
 }
 

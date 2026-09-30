@@ -311,6 +311,106 @@ the deployed function is correct and is left alone.
 ("Delete workbook") when you no longer want it — that removes the folder links, the
 bill rows, the line items, all three PDFs and the upload row.
 
+## P3.10 Job classification display — `job_kind` was parsed and stored, never shown
+
+`bills.job_kind` has existed since 0005 and `parseBills` has filled it since the
+first version, but nothing ever rendered it. Worse, the one place that did show it
+— the bill detail grid — printed the **raw stored token**, so an invoice
+classified `WITHMETAL` displayed `WITHMETAL` to the operator.
+
+This is a display-only fix. No new column, no new parser field, no change to the
+data model, no migration, and the classification is never inferred from the
+invoice number, sheet name, amount or description.
+
+### One normalizer, three copies, on purpose
+
+`formatJobKind(jobKind)` maps the stored token to a display label:
+
+| stored | shown |
+| --- | --- |
+| `LABOUR JOB`, `LABOUR`, `labour job` | `LABOUR JOB` |
+| `WITHMETAL`, `WITH METAL`, `with_material` | `WITH METAL` |
+| anything else non-empty | cleaned and title-cased, never discarded |
+| null / empty | `null`, so the caller renders nothing |
+
+Matching is on a "squashed" key — uppercase, alphanumerics only — so case, spaces,
+hyphens and underscores cannot change the answer. That is the same trick the field
+parser uses for labels.
+
+It lives in three places because there are three compilation targets that cannot
+import each other:
+
+- `Metalworker_admin/supabase/functions/process-bill-upload/_shared/formatJobKind.ts` — for the PDF
+- `Metalworker_desktop/src/services/bills.ts` — for the browser app
+- `Metalworker_admin/src/services/bills.ts` — for the Expo app
+
+The two client copies are byte-identical, which is the same trade the money and
+date formatters already make in this repo (the apps are separate npm projects).
+
+`null` matters as much as the mapping: an invoice that declared no job type must
+show nothing, because defaulting to `LABOUR JOB` would be a fabricated financial
+classification.
+
+### PDF
+
+Drawn **inside** the existing boxed `TAX INVOICE` heading, left-aligned, as a thin
+outlined badge. That placement is deliberate:
+
+- it is the first thing an operator's eye lands on when picking a page out of a
+  stack, which is what the classification is for;
+- drawing it inside the existing box means the box, its border, every gap below it
+  and the whole rest of the page keep their exact previous geometry — nothing
+  reflows, no spacing changed, and the page count and totals positions are
+  untouched;
+- the centred `TAX INVOICE` is ~103pt wide in a 535pt box and the badge is measured
+  with `measureText`, so the two cannot collide at any heading size;
+- when `job_kind` is null nothing is drawn at all.
+
+The three print copies are unaffected: this is per-page metadata inside one
+rendered document, not another financial record, and it appears once per invoice,
+in all three copies.
+
+### UIs
+
+| Surface | Change |
+| --- | --- |
+| Desktop list | small pill under the invoice number, beside the party name |
+| Desktop detail | normalized in the existing `Job type` field (was raw), and appended to the header subtitle |
+| Desktop folder | second line under the unchanged label |
+| Admin list card | pill under the invoice number |
+| Admin detail modal | normalized `Job type` field, and appended to the sheet title |
+| Admin folder | second line under the unchanged label |
+
+The folder label was **not** changed. `FolderItemDisplay` gained an optional
+`subtitle`, so search, `aria-label`s, toasts and dialog headings are all byte-for-byte
+what they were — the classification is shown *alongside* the name, never merged
+into it.
+
+### Verified
+
+`npm run bills:selftest` — parse, PDF structure, **new** job-kind check, layout
+audit: all pass. The new `test-jobkind.ts` asserts, per page and per PDF, that the
+display label is present, that it sits on the page belonging to its own invoice, and
+that the literal token `WITHMETAL` appears nowhere in any of the three files.
+
+`audit.ts` — no problems. One extra text run and one extra box per page; right
+edges, rule count, body end (`y=570.0` and `y=588.0`) and internal gaps all
+identical to before the change, which is the evidence that nothing reflowed.
+
+Rendered and inspected page by page: page 1 `SEW/274/2026-27` carries a `LABOUR
+JOB` badge, page 2 `SEW/292/2026-27` carries `WITH METAL`, both inside the heading
+box, no overlap, no clipping, table/totals/words/bank/signatures/footer and the
+`ORIGINAL` marker unchanged, and page 2 still resolves its own `Purchase Order No`
+row.
+
+Browser admin and Expo web admin both confirmed live against the deployed backend:
+the desktop list, the desktop detail header, the desktop folder, the admin card, the
+admin detail header and the admin folder all show `LABOUR JOB` / `WITH METAL`, and
+the string `WITHMETAL` appears on no screen.
+
+Admin `tsc` + `eslint` + `expo export` + `lint:edge` clean; desktop `tsc -b` +
+`lint` (53 = baseline, zero in bill files) + `build` clean. `MetalWorkerApp` untouched.
+
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete

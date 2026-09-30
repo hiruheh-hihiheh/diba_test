@@ -8,7 +8,7 @@ import type {
   FolderItemDisplay,
 } from "../types/folder";
 import { logAudit } from "./auditLog";
-import { formatMoney } from "./bills";
+import { formatMoney, formatJobKind } from "./bills";
 
 /* ──────────────────────────────────────────────
    FOLDER CRUD
@@ -459,7 +459,7 @@ export async function resolveFolderItemLabels(
     billTaxIds.length > 0
       ? supabase
           .from("bills")
-          .select("id, invoice_no, sheet_name, amount_after_tax")
+          .select("id, invoice_no, sheet_name, amount_after_tax, job_kind")
           .in("id", billTaxIds)
           .then((r) => r.data ?? [])
       : Promise.resolve([] as any[]),
@@ -475,6 +475,11 @@ export async function resolveFolderItemLabels(
 
   return items.map((item) => {
     let label = `${item.item_type} (${item.item_id.slice(0, 8)})`;
+    /* Second line only. The label above is untouched so search and the
+       accessibility labels stay exactly as they were; the classification is
+       displayed alongside, never merged into the name. Normalized, so the raw
+       "WITHMETAL" token never reaches a folder list. */
+    let subtitle: string | null = null;
 
     if (item.item_type === "owner_stock") {
       const data = ownerMap.get(item.item_id);
@@ -493,10 +498,13 @@ export async function resolveFolderItemLabels(
       if (data?.job_no) label = `Job ${data.job_no}`;
     } else if (item.item_type === "bill") {
       const data = billTaxMap.get(item.item_id);
-      if (data) label = buildBillLabel(data, item.item_id);
+      if (data) {
+        label = buildBillLabel(data, item.item_id);
+        subtitle = formatJobKind(data.job_kind);
+      }
     }
 
-    return { ...item, label };
+    return { ...item, label, subtitle };
   });
 }
 

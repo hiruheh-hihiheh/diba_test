@@ -29,7 +29,9 @@
 //   stamped last, so there are no orphaned headings and no blank trailing page.
 
 import type { BillCopy, BillLineItem } from "./parseBill.ts";
+import { formatJobKind } from "./formatJobKind.ts";
 import { PdfDocument, type PdfPage, wrapText } from "./pdf.ts";
+import { measureText } from "./fontMetrics.ts";
 
 /* ──────────────────────────────────────────────
    Geometry
@@ -185,6 +187,35 @@ function renderHeader(sheet: Sheet, bill: BillCopy): void {
     size: 15,
     align: "center",
   });
+
+  /* --- job classification badge, inside the heading box, left --------------
+     This is the one piece of the invoice that decides how it must be accounted
+     for, so it belongs where an operator's eye lands first. It is drawn INSIDE
+     the existing heading box rather than on a new line, which means the box, its
+     border, every gap below it and the whole rest of the page keep their exact
+     current geometry - nothing reflows.
+
+     Position is measured, not guessed: the badge hugs the left inset and the
+     centred "TAX INVOICE" is only ~103pt wide, so the two cannot collide at any
+     heading size. The label is the normalized display form, so a stored
+     "WITHMETAL" prints as "WITH METAL". */
+  const jobLabel = formatJobKind(bill.jobKind);
+  if (jobLabel) {
+    const badgeSize = 8.5;
+    const padX = 7;
+    const badgeTextW = measureText(jobLabel, "bold", badgeSize);
+    const badgeW = badgeTextW + padX * 2;
+    const badgeH = 13;
+    const badgeX = L + 6;
+    const badgeY = y + (headingH - badgeH) / 2;
+
+    page.rect(badgeX, badgeY, badgeW, badgeH, {
+      lineWidth: 0.7,
+      stroke: true,
+      color: [0, 0, 0],
+    });
+    page.text(jobLabel, badgeX + padX, badgeY + 9.3, { font: "bold", size: badgeSize });
+  }
 
   sheet.y = y + headingH + 12;
 }

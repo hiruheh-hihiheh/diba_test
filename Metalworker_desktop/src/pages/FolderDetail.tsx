@@ -652,6 +652,12 @@ export default function FolderDetail() {
                         <p className="text-sm font-bold text-text truncate" title={item.label}>
                           {item.label}
                         </p>
+                        {/* Job classification for a bill, under the untouched label. */}
+                        {item.subtitle && (
+                          <p className="text-xs font-bold text-primary truncate" title={item.subtitle}>
+                            {item.subtitle}
+                          </p>
+                        )}
                         <p className="text-xs text-text-muted font-medium mt-0.5">
                           {getItemTypeLabel(item.item_type)}
                         </p>

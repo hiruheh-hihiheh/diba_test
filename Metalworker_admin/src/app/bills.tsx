@@ -32,6 +32,7 @@ import {
   fetchBills,
   formatBillDate,
   formatMoney,
+  formatJobKind,
   formatQuantity,
 } from "../services/bills";
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill } from "../types/bill";
@@ -469,6 +470,9 @@ export default function BillsScreen() {
             {bills.map((bill) => {
               const isSelected = selected.includes(bill.id);
               const rowBusy = deleting === bill.bill_upload_id;
+              /* Normalized once per card: "WITHMETAL" must never reach the
+                 screen, and an invoice that declared no job type shows nothing. */
+              const jobKind = formatJobKind(bill.job_kind);
               return (
                 <View
                   key={bill.id}
@@ -515,6 +519,16 @@ export default function BillsScreen() {
                           {bill.invoice_no || "No invoice number"}
                         </Text>
                       </Pressable>
+                      {/* Job classification, under the invoice number. Normalized
+                          once per card, so the raw "WITHMETAL" token is never
+                          shown; omitted entirely when the invoice declared none. */}
+                      {jobKind && (
+                        <View style={styles.jobKindPill}>
+                          <Text style={styles.jobKindPillText} numberOfLines={1}>
+                            {jobKind}
+                          </Text>
+                        </View>
+                      )}
                       <Text style={styles.billSub} numberOfLines={1}>
                         {bill.party_name
                           ? `${bill.party_name} · `
@@ -907,6 +921,22 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.text,
       fontSize: theme.textSizes.md,
       fontWeight: "700",
+    },
+    /* Self-align so the pill hugs the text rather than stretching the card, and
+       sits inline with the invoice number's own line height. */
+    jobKindPill: {
+      alignSelf: "flex-start",
+      marginTop: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 5,
+      backgroundColor: theme.colors.primaryMuted,
+    },
+    jobKindPillText: {
+      color: theme.colors.primary,
+      fontSize: 10,
+      fontWeight: "800",
+      letterSpacing: 0.6,
     },
     billSub: {
       color: theme.colors.textMuted,

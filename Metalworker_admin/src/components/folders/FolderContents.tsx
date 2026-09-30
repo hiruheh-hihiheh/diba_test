@@ -615,6 +615,12 @@ export function FolderContents({ folderId }: FolderContentsProps) {
                         <Text style={styles.itemLabel} numberOfLines={1}>
                           {item.label}
                         </Text>
+                        {/* Job classification for a bill, under the untouched label. */}
+                        {item.subtitle ? (
+                          <Text style={styles.itemSubtitle} numberOfLines={1}>
+                            {item.subtitle}
+                          </Text>
+                        ) : null}
                       </Pressable>
                       
                       {organizationMode === "drag" && (
@@ -972,6 +978,12 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.text,
     fontSize: theme.textSizes.sm,
     fontWeight: "600",
+  },
+  itemSubtitle: {
+    flex: 1,
+    color: theme.colors.primary,
+    fontSize: theme.textSizes.xs,
+    fontWeight: "700",
   },
   itemActions: {
     flexDirection: "row",

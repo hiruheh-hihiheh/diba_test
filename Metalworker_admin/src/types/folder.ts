@@ -34,4 +34,12 @@ export interface FolderItem {
 /** Enriched folder item with display label resolved from the linked record */
 export interface FolderItemDisplay extends FolderItem {
   label: string;
+  /**
+   * Optional second line under the label, e.g. a bill's job classification.
+   *
+   * Kept OUT of `label` on purpose: the label is used for search, for
+   * accessibility labels and for dialog headings, and none of those should
+   * change because a bill gained a classification.
+   */
+  subtitle?: string | null;
 }
