@@ -6,6 +6,14 @@
 -- validates that the target drawing belongs to the job, so it is impossible
 -- to leave an inconsistent state.
 --
+-- SECURITY: the function is SECURITY DEFINER so the anon-key client can
+-- perform the writes on job_drawings the way it does for the direct table
+-- path today. That elevated privilege is NOT granted to callers for free:
+-- the function first verifies that the caller is an authenticated, ACTIVE
+-- admin (role = 'admin' AND is_active = true in profiles). Workers and
+-- processors get `admin_required` and nothing changes. Frontend guards are
+-- belt-and-braces only; the real authorization lives here in the database.
+--
 -- The client calls this RPC first and falls back to the old two-step code
 -- only when it is not yet deployed (see src/services/jobDrawings.ts).
 --
@@ -23,7 +31,26 @@ SET search_path = public
 AS $$
 DECLARE
     drawing_exists boolean;
+    is_admin boolean;
 BEGIN
+    -- Authorization: only an authenticated, active admin may change job
+    -- drawings. auth.uid() reads the caller's JWT sub claim, which is still
+    -- populated inside SECURITY DEFINER functions.
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'not_authenticated';
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = auth.uid()
+          AND role = 'admin'
+          AND is_active = true
+    ) INTO is_admin;
+
+    IF NOT is_admin THEN
+        RAISE EXCEPTION 'admin_required';
+    END IF;
+
     -- The target drawing must belong to the job. (A drawing id from another
     -- job must never be marked primary here.)
     SELECT EXISTS (
@@ -50,5 +77,7 @@ $$;
 
 -- Only authenticated users may call it; the function itself uses SECURITY
 -- DEFINER so it can write rows the anon-key client would not be able to touch.
+-- The admin check above runs *before* any write, so non-admins can call this
+-- function but nothing is changed for them.
 REVOKE ALL ON FUNCTION public.set_primary_drawing(uuid, uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.set_primary_drawing(uuid, uuid) TO authenticated;

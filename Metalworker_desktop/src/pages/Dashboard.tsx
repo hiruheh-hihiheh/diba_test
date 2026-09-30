@@ -463,7 +463,9 @@ export default function DashboardPage() {
               icon: <FileSpreadsheet size={22} />,
               color: "#10B981",
               bg: "#10B98115",
-              path: "/import",
+              // The route is registered as "/jobs/import" (App.tsx). "/import"
+              // matched no route, so this card rendered the Placeholder page.
+              path: "/jobs/import",
             },
             {
               label: "Folders",

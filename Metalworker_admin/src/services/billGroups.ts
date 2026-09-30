@@ -7,6 +7,7 @@ import type {
   BillGroupInput,
 } from "../types/billGroup";
 import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinary";
 
 const TABLE = "bill_groups";
 const PHOTOS_TABLE = "bill_group_photos";
@@ -74,6 +75,17 @@ export async function updateBillGroup(
 export async function deleteBillGroup(
   id: string
 ): Promise<{ ok: boolean; error?: string }> {
+  // Collect the Cloudinary asset ids BEFORE the rows go away, otherwise the
+  // uploads are orphaned in Cloudinary with no way to find them again.
+  const { data: photos, error: readError } = await supabase
+    .from(PHOTOS_TABLE)
+    .select("photo_public_id")
+    .eq("bill_group_id", id);
+
+  if (readError) {
+    return { ok: false, error: `Failed to read group photos: ${readError.message}` };
+  }
+
   // Delete photos first. If that step fails we must NOT delete the group or
   // report success — otherwise orphaned photo rows are left behind while the
   // UI claims the group is gone.
@@ -92,6 +104,13 @@ export async function deleteBillGroup(
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+
+  // Assets are destroyed only after nothing references them, and only in a
+  // best-effort server-side call that can never fail the delete.
+  for (const p of photos ?? []) {
+    void destroyCloudinaryAsset(p.photo_public_id, "bill group photo");
+  }
+
   void logAudit({ action: "group.bill.deleted", targetType: "group", targetId: id });
   return { ok: true };
 }
@@ -150,12 +169,24 @@ export async function addBillGroupPhoto(
 export async function removeBillGroupPhoto(
   photoId: string
 ): Promise<{ ok: boolean; error?: string }> {
+  // Read the asset id before the row is removed so the Cloudinary upload can
+  // be destroyed instead of being orphaned.
+  const { data: existing, error: readError } = await supabase
+    .from(PHOTOS_TABLE)
+    .select("photo_public_id")
+    .eq("id", photoId)
+    .maybeSingle();
+
+  if (readError) return { ok: false, error: readError.message };
+
   const { error } = await supabase
     .from(PHOTOS_TABLE)
     .delete()
     .eq("id", photoId);
 
   if (error) return { ok: false, error: error.message };
+
+  void destroyCloudinaryAsset(existing?.photo_public_id, "bill group photo");
   return { ok: true };
 }
 

@@ -2,8 +2,9 @@
 // Shows folder contents with drag-and-drop.
 // Header is fixed; FolderContents manages its own scroll + DnD provider.
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -14,25 +15,34 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
-import { supabase } from "../services/supabase";
+import { useAdminGate } from "../hooks/useAdminGate";
 import { FolderContents } from "../components/folders/FolderContents";
 
 export default function FolderDetailScreen() {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  // Same admin gate as every other protected screen. This screen previously
+  // did its own `getSession()` check, which only verified that *a* session
+  // exists: a worker/processor session (or an inactive admin) could render
+  // this screen and fire its folder queries before RLS rejected them.
+  const { checking: authChecking } = useAdminGate();
+
   const params = useLocalSearchParams<{ id?: string | string[]; name?: string | string[] }>();
   const folderId = Array.isArray(params.id) ? params.id[0] : params.id;
   const folderName = Array.isArray(params.name) ? params.name[0] : params.name;
 
-  const [, setSessionChecked] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/login");
-      setSessionChecked(true);
-    });
-  }, []);
+  // Don't mount FolderContents (and its data queries) until the gate confirms
+  // an active admin session.
+  if (authChecking) {
+    return (
+      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+        <View style={styles.errorContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!folderId) {
     return (

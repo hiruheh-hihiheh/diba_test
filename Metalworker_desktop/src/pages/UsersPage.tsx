@@ -374,6 +374,14 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
           title: "Account deleted",
           description: `“${worker.username}” was permanently removed.`,
         });
+        // The edge function can remove the account while a related cleanup step
+        // fails. That partial outcome must not be reported as a clean success.
+        if (res.warning) {
+          toast.error({
+            title: "Deleted with warnings",
+            description: res.warning,
+          });
+        }
       } else {
         toast.error({
           title: "Could not delete account",

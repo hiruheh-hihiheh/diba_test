@@ -387,10 +387,23 @@ export default function JobImportPage() {
               res.failedRows > 0 ? `, ${res.failedRows} failed` : ""
             }`;
 
-      toast[res.status === "failed" ? "error" : "success"]({
-        title: headline,
-        description: `Saved to ${createdFolderName ? `the new folder “${createdFolderName}”` : `“${targetFolder?.name}”`}.`,
-      });
+      const savedTo = `Saved to ${
+        createdFolderName ? `the new folder “${createdFolderName}”` : `“${targetFolder?.name}”`
+      }.`;
+
+      // A partial folder link means the rows exist but the folder does not
+      // contain them. That must be an error toast, not a green success one.
+      if (res.error) {
+        toast.error({
+          title: `${headline} — with problems`,
+          description: `${savedTo} ${res.error}`,
+        });
+      } else {
+        toast[res.status === "failed" ? "error" : "success"]({
+          title: headline,
+          description: savedTo,
+        });
+      }
     } catch (err) {
       const message = readableError(err, {
         subject: "the import",

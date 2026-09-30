@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import type { JobDrawing, JobDrawingInput } from "../types/jobDrawing";
 import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinary";
 
 const TABLE = "job_drawings";
 
@@ -34,6 +35,12 @@ export async function createJobDrawing(input: JobDrawingInput): Promise<{ ok: bo
     .single();
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "drawing.created",
+    targetType: "job_drawing",
+    targetId: data.id,
+    detail: { job_id: data.job_id, has_photo: !!data.public_id },
+  });
   return { ok: true, data: data as JobDrawing };
 }
 
@@ -44,16 +51,45 @@ export async function updateJobDrawing(id: string, input: JobDrawingInput): Prom
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "drawing.updated",
+    targetType: "job_drawing",
+    targetId: id,
+    detail: { fields: Object.keys(input) },
+  });
   return { ok: true };
 }
 
 export async function deleteJobDrawing(id: string): Promise<{ ok: boolean; error?: string }> {
+  // Read the asset's Cloudinary public id BEFORE deleting the row. Without
+  // this the row delete succeeds and the uploaded file is orphaned in
+  // Cloudinary forever (and we can no longer tell which asset it was).
+  const { data: existing, error: readError } = await supabase
+    .from(TABLE)
+    .select("public_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (readError) return { ok: false, error: readError.message };
+
   const { error } = await supabase
     .from(TABLE)
     .delete()
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+
+  // Destroy the asset only now that no row references it. Best-effort and
+  // server-side (edge function holds the Cloudinary credentials): never
+  // blocks or fails the delete.
+  void destroyCloudinaryAsset(existing?.public_id, "job drawing");
+
+  void logAudit({
+    action: "drawing.deleted",
+    targetType: "job_drawing",
+    targetId: id,
+    detail: { had_photo: !!existing?.public_id },
+  });
   return { ok: true };
 }
 

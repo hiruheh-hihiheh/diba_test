@@ -1,6 +1,7 @@
 // src/services/admin.ts
 
 import { supabase } from "../lib/supabase";
+import { logAudit } from "./auditLog";
 import type { Profile } from "../types/profile";
 
 export async function createWorkerUser(
@@ -18,6 +19,11 @@ export async function createWorkerUser(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({
+    action: "user.created",
+    targetType: "user",
+    detail: { username, role },
+  });
   return { ok: true };
 }
 
@@ -42,6 +48,12 @@ export async function updateWorkerProfile(
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "user.profile.updated",
+    targetType: "user",
+    targetId: id,
+    detail: { fields: Object.keys(updates) },
+  });
   return { ok: true };
 }
 
@@ -58,20 +70,37 @@ export async function updateWorkerUsername(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({
+    action: "user.username_changed",
+    targetType: "user",
+    targetId: id,
+    detail: { to: newUsername },
+  });
   return { ok: true };
 }
 
+/**
+ * Delete a worker/processor.
+ *
+ * The edge function can succeed at removing the auth account while a related
+ * cleanup step fails; it reports that as `warning` (see delete-worker). The
+ * warning is passed through instead of being dropped so the caller can tell
+ * the admin that the account is gone but a row may need manual cleanup.
+ */
 export async function deleteWorker(
   id: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const { data, error } = await supabase.functions.invoke<{
     ok?: boolean;
     error?: string;
+    warning?: string;
   }>("delete-worker", {
     body: { id },
   });
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  void logAudit({ action: "user.deleted", targetType: "user", targetId: id });
+  if (data?.warning) return { ok: true, warning: data.warning };
   return { ok: true };
 }

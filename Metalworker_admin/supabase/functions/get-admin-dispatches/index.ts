@@ -103,6 +103,38 @@ function validateUpdateInput(input: unknown): { ok: true; value: Record<string, 
   return { ok: true, value };
 }
 
+/**
+ * Best-effort Cloudinary asset destroy for a dispatch photo. Runs server-side
+ * with the Cloudinary Admin API credentials from Deno env; if the credentials
+ * are not configured (or the destroy fails), it only logs and never fails the
+ * caller. Deletion of the DB row never depends on this succeeding.
+ */
+async function destroyDispatchPhoto(publicId: string | null | undefined): Promise<void> {
+  if (!publicId) return;
+  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME");
+  const apiKey = Deno.env.get("CLOUDINARY_API_KEY");
+  const apiSecret = Deno.env.get("CLOUDINARY_API_SECRET");
+  if (!cloudName || !apiKey || !apiSecret) {
+    console.warn("Cloudinary credentials not configured; skipping asset destroy for:", publicId);
+    return;
+  }
+
+  try {
+    const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`;
+    const basic = btoa(`${apiKey}:${apiSecret}`);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ public_id: publicId }),
+    });
+    if (!res.ok) {
+      console.warn(`Cloudinary destroy failed (HTTP ${res.status}) for:`, publicId);
+    }
+  } catch (err) {
+    console.warn("Cloudinary destroy error for:", publicId, err);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -122,6 +154,46 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "Server configuration error." }, 500);
     }
 
+    // ---- Authorization FIRST (identical to create-user / delete-worker /
+    // ---- update-worker-username). Unauthenticated and non-admin callers are
+    // ---- rejected before the request body is even parsed, so they cannot
+    // ---- probe the endpoint's field and action surface.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return json({ ok: false, error: "Not authenticated." }, 401);
+    }
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: userData, error: userError } = await authClient.auth.getUser();
+    if (userError || !userData.user) {
+      return json({ ok: false, error: "Not authenticated." }, 401);
+    }
+
+    const adminClient = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: adminProfile, error: profileError } = await adminClient
+      .from("profiles")
+      .select("role, is_active")
+      .eq("id", userData.user.id)
+      .single();
+
+    if (profileError || !adminProfile) {
+      console.error("Admin profile error:", profileError);
+      return json({ ok: false, error: "Admin profile not found." }, 403);
+    }
+
+    if (adminProfile.role !== "admin") {
+      return json({ ok: false, error: "Admin access only." }, 403);
+    }
+
+    if (!adminProfile.is_active) {
+      return json({ ok: false, error: "Your admin account is inactive." }, 403);
+    }
+
+    // ---- Body only after authorization.
     let body: Record<string, unknown>;
     try {
       body = await req.json();
@@ -138,40 +210,6 @@ Deno.serve(async (req) => {
         { ok: false, error: "Invalid action. Must be list, get, update, or delete." },
         400
       );
-    }
-
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return json({ ok: false, error: "Not authenticated." }, 401);
-    }
-
-    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const {
-      data: { user },
-      error: userError,
-    } = await authClient.auth.getUser();
-
-    if (userError || !user) {
-      return json({ ok: false, error: "Not authenticated." }, 401);
-    }
-
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
-
-    const { data: profile, error: profileError } = await adminClient
-      .from("profiles")
-      .select("role, is_active")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError || !profile) {
-      return json({ ok: false, error: "Unable to verify admin access." }, 403);
-    }
-
-    if (profile.role !== "admin" || !profile.is_active) {
-      return json({ ok: false, error: "Admin access required." }, 403);
     }
 
     if (action === "list") {
@@ -266,6 +304,24 @@ Deno.serve(async (req) => {
     }
 
     if (action === "delete") {
+      // Read the photo's Cloudinary public id BEFORE deleting the row so the
+      // asset can be destroyed afterwards (never before — the asset must only
+      // go away once nothing references it).
+      const { data: existing, error: readError } = await adminClient
+        .from("dispatches")
+        .select("id, photo_public_id")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (readError) {
+        console.error("Dispatch read error:", readError);
+        return json({ ok: false, error: "Failed to load dispatch." }, 500);
+      }
+
+      if (!existing) {
+        return json({ ok: false, error: "Dispatch not found." }, 404);
+      }
+
       const { data, error } = await adminClient
         .from("dispatches")
         .delete()
@@ -280,6 +336,26 @@ Deno.serve(async (req) => {
 
       if (!data) {
         return json({ ok: false, error: "Dispatch not found." }, 404);
+      }
+
+      // Server-side, best-effort cleanup — never blocks or fails the delete.
+      await destroyDispatchPhoto(existing.photo_public_id);
+
+      // Server-side audit trail (same table/policy as the admin app's helper):
+      // deleting a dispatch from either admin app is recorded here where the
+      // forged-row policy (0003) still applies to public clients.
+      const auditRow = {
+        actor_id: userData.user.id,
+        actor_username: userData.user.user_metadata?.username ?? null,
+        action: "dispatch.deleted",
+        target_type: "dispatch",
+        target_id: id,
+      };
+      const { error: auditError } = await adminClient
+        .from("admin_audit_log")
+        .insert(auditRow);
+      if (auditError) {
+        console.warn("Audit log write skipped:", auditError.message);
       }
 
       return json({ ok: true, data });

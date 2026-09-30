@@ -58,6 +58,12 @@ export async function processJobImport(
   let createdCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
+  /**
+   * Set when the rows imported fine but linking them into the target folder
+   * failed. Tracked separately so the import is reported as "partial" instead
+   * of silently succeeding (row-level counters are per spreadsheet row).
+   */
+  let folderLinkError: string | null = null;
 
   // Track duplicates within the current import
   const seenJobKeys = new Set<string>();
@@ -266,16 +272,48 @@ export async function processJobImport(
           
           const { error: folderError } = await supabase.from("folder_items").insert(insertData);
           if (folderError) {
-            console.warn("Failed to add some jobs to folder:", folderError.message);
+            // The jobs WERE imported, but linking them into the folder failed.
+            // Reporting this only to the console let the import finish as
+            // "completed" with jobs silently missing from the chosen folder —
+            // exactly the partial failure the user cannot see. Record it as a
+            // real error row, log it, and force a partial status.
+            folderLinkError = `Jobs were imported but ${newJobIdsToAdd.length} of them could not be added to the folder: ${folderError.message}`;
+            await supabase.from("job_import_errors").insert({
+              import_id: importId,
+              row_number: 0,
+              field_name: "folder_id",
+              raw_value: folderId,
+              error_message: folderError.message,
+            });
+            rowResults.push({
+              rowNumber: 0,
+              status: "failed",
+              message: folderLinkError,
+            });
           }
         }
       }
     }
-    
+
     // Attempt to link import record to folder_id
     if (folderId) {
-      // Ignore errors if the table hasn't been updated with folder_id column yet
-      await supabase.from("job_imports").update({ folder_id: folderId }).eq("id", importRecord.id);
+      // Best-effort metadata link: the table may not have the folder_id column
+      // yet. A failure here does not invalidate the imported rows, so it is
+      // logged rather than thrown.
+      const { error: linkError } = await supabase
+        .from("job_imports")
+        .update({ folder_id: folderId })
+        .eq("id", importRecord.id);
+
+      if (linkError) {
+        await supabase.from("job_import_errors").insert({
+          import_id: importId,
+          row_number: 0,
+          field_name: "folder_id",
+          raw_value: folderId,
+          error_message: `Import-to-folder link not saved: ${linkError.message}`,
+        });
+      }
     }
     
   } catch (err: any) {
@@ -298,7 +336,9 @@ export async function processJobImport(
   let finalStatus: "completed" | "partial" | "failed" = "completed";
   if (createdCount === 0 && (skippedCount > 0 || failedCount > 0)) {
     finalStatus = "failed";
-  } else if (skippedCount > 0 || failedCount > 0) {
+  } else if (skippedCount > 0 || failedCount > 0 || folderLinkError) {
+    // A folder-link failure makes this a partial import even when every
+    // spreadsheet row was created.
     finalStatus = "partial";
   }
 
@@ -324,6 +364,8 @@ export async function processJobImport(
     updatedRows: 0,
     skippedRows: skippedCount,
     failedRows: failedCount,
-    rowResults
+    rowResults,
+    // Set when every row imported but the folder linking did not fully save.
+    error: folderLinkError,
   };
 }

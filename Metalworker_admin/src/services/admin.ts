@@ -77,12 +77,21 @@ export async function updateWorkerUsername(
   return { ok: true };
 }
 
+/**
+ * Delete a worker/processor.
+ *
+ * The edge function can succeed at removing the auth account while a related
+ * cleanup step fails; it reports that as `warning` (see delete-worker). The
+ * warning is passed through instead of being dropped so the caller can tell
+ * the admin that the account is gone but a row may need manual cleanup.
+ */
 export async function deleteWorker(
   id: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warning?: string }> {
   const { data, error } = await supabase.functions.invoke<{
     ok?: boolean;
     error?: string;
+    warning?: string;
   }>("delete-worker", {
     body: { id },
   });
@@ -90,5 +99,6 @@ export async function deleteWorker(
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
   void logAudit({ action: "user.deleted", targetType: "user", targetId: id });
+  if (data?.warning) return { ok: true, warning: data.warning };
   return { ok: true };
 }

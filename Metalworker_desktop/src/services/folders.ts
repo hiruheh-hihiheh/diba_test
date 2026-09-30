@@ -1,6 +1,7 @@
 // src/services/folders.ts
 
 import { supabase } from "../lib/supabase";
+import { logAudit } from "./auditLog";
 import type { AdminFolder, FolderItem, FolderItemDisplay, FolderItemType } from "../types/folder";
 
 const TABLE = "admin_folders";
@@ -75,9 +76,23 @@ export async function updateFolder(id: string, name: string): Promise<{ ok: bool
 }
 
 export async function deleteFolder(id: string): Promise<{ ok: boolean; error?: string }> {
-  await supabase.from(ITEMS_TABLE).delete().eq("folder_id", id);
+  // Delete folder items first and CHECK the result. Silently ignoring this
+  // error (the previous behaviour) could delete the folder while leaving its
+  // folder_items rows behind, which then show up as dangling entries in every
+  // folder list and cannot be resolved.
+  const { error: itemsError } = await supabase
+    .from(ITEMS_TABLE)
+    .delete()
+    .eq("folder_id", id);
+
+  if (itemsError) {
+    return { ok: false, error: `Failed to remove folder items: ${itemsError.message}` };
+  }
+
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+
+  void logAudit({ action: "folder.deleted", targetType: "folder", targetId: id });
   return { ok: true };
 }
 
@@ -153,8 +168,33 @@ export async function removeMultipleItemsFromFolder(
 }
 
 export async function reorderFolderItems(
-  items: { id: string; position: number }[]
+  items: { id: string; position: number }[],
+  folderId?: string
 ): Promise<{ ok: boolean; error?: string }> {
+  // Preferred path: the transactional `reorder_folder_items` RPC (migration
+  // 0004, shared with the admin app). It rewrites every position in ONE
+  // transaction, so a partial reorder is impossible. The RPC is
+  // SECURITY DEFINER and enforces the active-admin check server-side.
+  if (folderId) {
+    const { error: rpcError } = await supabase.rpc("reorder_folder_items", {
+      p_folder_id: folderId,
+      p_item_ids: items.map((item) => item.id),
+    });
+
+    if (!rpcError) {
+      void logAudit({
+        action: "folder.reordered",
+        targetType: "folder_item",
+        detail: { folder_id: folderId, count: items.length, via: "rpc" },
+      });
+      return { ok: true };
+    }
+  }
+
+  // Fallback (RPC not deployed yet): the previous multi-update path. A
+  // mixture of updates can partially persist — report that state explicitly
+  // (k of n) rather than a bare failure, so the caller can refresh and tell
+  // the user which positions did not save.
   const results = await Promise.all(
     items.map((item) =>
       supabase
@@ -164,8 +204,29 @@ export async function reorderFolderItems(
     )
   );
 
-  const failed = results.find((r) => r.error);
-  if (failed?.error) return { ok: false, error: failed.error.message };
+  let failed = 0;
+  let firstError: string | null = null;
+  for (const r of results) {
+    if (r.error) {
+      failed++;
+      if (!firstError) firstError = r.error.message;
+    }
+  }
+
+  if (failed > 0) {
+    return {
+      ok: false,
+      error:
+        `${failed} of ${items.length} positions failed to save` +
+        (firstError ? ` (${firstError})` : ""),
+    };
+  }
+
+  void logAudit({
+    action: "folder.reordered",
+    targetType: "folder_item",
+    detail: { count: items.length, via: "fallback" },
+  });
   return { ok: true };
 }
 

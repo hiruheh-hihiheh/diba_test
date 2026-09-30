@@ -95,6 +95,10 @@ const ITEM_FILTERS: ("all" | FolderItemType)[] = [
   "company_stock",
   "bill_group",
   "drawing_group",
+  // Jobs are valid folder items (itemRoute and getItemTypeLabel both handle
+  // them). Omitting "job" here hid every job from the filter chips even
+  // though the page renders them.
+  "job",
 ];
 
 /** How many "available items" rows are mounted at once. See visibleCount. */
@@ -260,7 +264,13 @@ export default function FolderDetail() {
   async function handleDragEnd() {
     if (draggedIndex === null) return;
     setDraggedIndex(null);
-    const res = await reorderFolderItems(folderItems.map((item, index) => ({ id: item.id, position: index })));
+    // Pass the folder id so the service can prefer the transactional
+    // `reorder_folder_items` RPC (all-or-nothing) over the multi-update
+    // fallback that can partially persist.
+    const res = await reorderFolderItems(
+      folderItems.map((item, index) => ({ id: item.id, position: index })),
+      id
+    );
     if (!res.ok) {
       toast.error({
         title: "Could not save the new order",

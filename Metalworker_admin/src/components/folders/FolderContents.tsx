@@ -5,7 +5,6 @@
 import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   Pressable,
   RefreshControl,
@@ -18,6 +17,8 @@ import {
 import { useFocusEffect } from "expo-router";
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { notify } from "../../utils/notify";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { FolderItemDisplay, FolderItemType } from "../../types/folder";
 import {
   addItemToFolder,
@@ -69,6 +70,18 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     id: string;
     label: string;
   } | null>(null);
+
+  /**
+   * Destructive confirmations go through the shared ConfirmDialog modal
+   * instead of `window.confirm` / `Alert.alert`. react-native-web does not
+   * implement Alert.alert, so a native-only confirm silently does nothing on
+   * web, and window.confirm blocks the thread with an unthemed dialog.
+   * The dialog simply records the pending intent; the handlers do the work.
+   */
+  const [pendingRemoval, setPendingRemoval] = useState<
+    { kind: "single"; id: string } | { kind: "bulk"; count: number } | null
+  >(null);
+  const [removalBusy, setRemovalBusy] = useState(false);
 
   // Organization modes
   const [organizationMode, setOrganizationMode] = useState<"drag" | "select">("drag");
@@ -160,8 +173,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         ? "This item is already in this folder."
         : msg;
 
-      if (Platform.OS === "web") window.alert(displayMsg);
-      else Alert.alert("Error", displayMsg);
+      notify("Error", displayMsg);
       return;
     }
 
@@ -169,8 +181,10 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     await loadData();
   }
 
-  async function handleRemoveItem(folderItemId: string) {
-    const doRemove = async () => {
+  /** Perform the single-item removal; shared by the ConfirmDialog. */
+  async function doRemoveItem(folderItemId: string) {
+    setRemovalBusy(true);
+    try {
       // Optimistic UI
       const prevItems = items;
       const prevAvailable = available;
@@ -181,26 +195,20 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         // Rollback
         setItems(prevItems);
         setAvailable(prevAvailable);
-        const msg = res.error || "Failed to remove item.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
+        notify("Error", res.error || "Failed to remove item.");
         return;
       }
 
       // Reload available items
       await loadData();
-    };
-
-    if (Platform.OS === "web") {
-      if (window.confirm("Remove this item from the folder?")) {
-        await doRemove();
-      }
-    } else {
-      Alert.alert("Remove Item", "Remove this item from the folder?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: doRemove },
-      ]);
+    } finally {
+      setRemovalBusy(false);
+      setPendingRemoval(null);
     }
+  }
+
+  function handleRemoveItem(folderItemId: string) {
+    setPendingRemoval({ kind: "single", id: folderItemId });
   }
 
   // --- Bulk Handlers ---
@@ -279,9 +287,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     if (!res.ok) {
       setItems(prevItems);
       setAvailable(prevAvailable);
-      const msg = res.error || "Failed to add items.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", res.error || "Failed to add items.");
       return;
     }
     await loadData();
@@ -289,8 +295,13 @@ export function FolderContents({ folderId }: FolderContentsProps) {
 
   async function handleBulkRemove() {
     if (selectedFolderItemIds.size === 0) return;
-    
-    const doRemove = async () => {
+    setPendingRemoval({ kind: "bulk", count: selectedFolderItemIds.size });
+  }
+
+  /** Perform the bulk removal; shared by the ConfirmDialog. */
+  async function doRemoveBulk() {
+    setRemovalBusy(true);
+    try {
       // optimistic UI
       const prevItems = items;
       setItems((prev) => prev.filter((i) => !selectedFolderItemIds.has(i.id)));
@@ -304,24 +315,13 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         // can be retried instead of leaving the selection silently lost.
         setItems(prevItems);
         setSelectedFolderItemIds(new Set(idsToRemove));
-        const msg = res.error || "Failed to remove items.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
+        notify("Error", res.error || "Failed to remove items.");
         return;
       }
       await loadData();
-    };
-
-    const count = selectedFolderItemIds.size;
-    if (Platform.OS === "web") {
-      if (window.confirm(`Remove ${count} selected items from this folder?`)) {
-        await doRemove();
-      }
-    } else {
-      Alert.alert("Remove Items", `Remove ${count} selected items from this folder?`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: doRemove },
-      ]);
+    } finally {
+      setRemovalBusy(false);
+      setPendingRemoval(null);
     }
   }
 
@@ -345,6 +345,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     setItems(reordered);
 
     const res = await reorderFolderItems(
+      folderId,
       reordered.map((item) => ({ id: item.id, position: item.position }))
     );
 
@@ -355,8 +356,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       setItems(prevItems);
       await loadData();
       const msg = res.error || "Failed to reorder.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     }
   }
 
@@ -398,6 +398,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     setItems(reordered);
 
     const res = await reorderFolderItems(
+      folderId,
       reordered.map((item) => ({ id: item.id, position: item.position }))
     );
 
@@ -407,8 +408,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
       setItems(prevItems);
       await loadData();
       const msg = res.error || "Failed to reorder.";
-      if (Platform.OS === "web") window.alert(msg);
-      else Alert.alert("Error", msg);
+      notify("Error", msg);
     }
   }
 
@@ -789,6 +789,32 @@ export function FolderContents({ folderId }: FolderContentsProps) {
           )}
         </View>
       )}
+
+      {/* Shared destructive-confirmation modal (web + native). */}
+      <ConfirmDialog
+        visible={pendingRemoval !== null}
+        title={pendingRemoval?.kind === "bulk" ? "Remove Items" : "Remove Item"}
+        message={
+          pendingRemoval?.kind === "bulk"
+            ? `Remove ${pendingRemoval.count} selected items from this folder?`
+            : "Remove this item from the folder?"
+        }
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        destructive
+        busy={removalBusy}
+        onConfirm={() => {
+          if (!pendingRemoval) return;
+          if (pendingRemoval.kind === "single") {
+            void doRemoveItem(pendingRemoval.id);
+          } else {
+            void doRemoveBulk();
+          }
+        }}
+        onCancel={() => {
+          if (!removalBusy) setPendingRemoval(null);
+        }}
+      />
     </DragDropProvider>
   );
 }

@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import type { Job, JobInput, JobType } from "../types/job";
 import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinary";
 
 const TABLE = "jobs";
 
@@ -127,12 +128,64 @@ export async function updateJob(id: string, input: JobInput): Promise<{ ok: bool
 }
 
 export async function deleteJob(id: string): Promise<{ ok: boolean; error?: string }> {
+  // Collect the drawing asset ids first — once the job row is gone they are
+  // unrecoverable and the Cloudinary uploads are orphaned.
+  const { data: drawings, error: drawingsReadError } = await supabase
+    .from("job_drawings")
+    .select("public_id")
+    .eq("job_id", id);
+
+  if (drawingsReadError) {
+    return {
+      ok: false,
+      error: `Failed to read job drawings: ${drawingsReadError.message}`,
+    };
+  }
+
+  // Folder associations first: leaving them behind would show a dangling entry
+  // in every folder that referenced this job.
+  const { error: linksError } = await supabase
+    .from("folder_items")
+    .delete()
+    .eq("item_type", "job")
+    .eq("item_id", id);
+
+  if (linksError) {
+    return { ok: false, error: `Failed to remove folder links: ${linksError.message}` };
+  }
+
+  // Then the drawings themselves. If this fails the job is NOT deleted, so the
+  // drawings never become orphans and the reported failure is honest.
+  const { error: drawingsError } = await supabase
+    .from("job_drawings")
+    .delete()
+    .eq("job_id", id);
+
+  if (drawingsError) {
+    return {
+      ok: false,
+      error: `Failed to remove job drawings: ${drawingsError.message}`,
+    };
+  }
+
   const { error } = await supabase
     .from(TABLE)
     .delete()
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
-  void logAudit({ action: "job.deleted", targetType: "job", targetId: id });
+
+  // Assets are destroyed only now that no row references them; best-effort and
+  // server-side so it cannot fail the delete.
+  for (const d of drawings ?? []) {
+    void destroyCloudinaryAsset(d.public_id, "job drawing");
+  }
+
+  void logAudit({
+    action: "job.deleted",
+    targetType: "job",
+    targetId: id,
+    detail: { drawings_removed: (drawings ?? []).length },
+  });
   return { ok: true };
 }

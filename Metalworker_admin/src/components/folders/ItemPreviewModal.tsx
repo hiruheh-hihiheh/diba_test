@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -10,7 +10,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -19,6 +18,7 @@ import { fetchOwnerStock } from "../../services/ownerStock";
 import { fetchCompanyStock } from "../../services/companyStock";
 import { fetchBillGroup, fetchBillGroupPhotos } from "../../services/billGroups";
 import { fetchDrawingGroup, fetchDrawingGroupPhotos } from "../../services/drawingGroups";
+import { fetchJob } from "../../services/jobs";
 import type { GroupPhoto } from "../documents/GroupPhotoUploader";
 
 interface ItemPreviewModalProps {
@@ -85,6 +85,16 @@ export function ItemPreviewModal({
           setPhotos(p.sort((a, b) => a.position - b.position));
           break;
         }
+        // Jobs are valid folder items (see FolderItemType) and the desktop app
+        // already lists them, so the admin app must preview them too rather
+        // than showing an empty modal.
+        case "job": {
+          const data = await fetchJob(itemId);
+          setError(null);
+          setDetails(data);
+          setPhotos([]);
+          break;
+        }
       }
     } catch (err) {
       setError(
@@ -95,13 +105,21 @@ export function ItemPreviewModal({
     }
   }, [itemType, itemId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (visible) {
-        void loadDetails();
-      }
-    }, [visible, loadDetails])
-  );
+  // Both call sites mount this conditionally (`{previewItem && <ItemPreviewModal .../>}`),
+  // so mounting already means "open" and each open starts from fresh state
+  // (`loading` begins as `true`). That makes `useFocusEffect` the wrong primitive
+  // here: on react-native-web it never fired for this child, leaving the modal
+  // stuck on "Loading details..." with no request ever made. A mount effect is
+  // equivalent (a route-focus refetch would be redundant) and always runs.
+  useEffect(() => {
+    if (!visible) return;
+    // False positive: this is an async fetch, so every setState inside runs after an
+    // await, never synchronously in the effect body. The rule cannot tell the two
+    // apart, and `useFocusEffect` (which the rule does not flag) does not work for
+    // this child on react-native-web.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadDetails();
+  }, [visible, loadDetails]);
 
   function renderField(label: string, value: any) {
     if (value === null || value === undefined || value === "") return null;
@@ -192,6 +210,28 @@ export function ItemPreviewModal({
     );
   }
 
+  function renderJob() {
+    if (!details) return null;
+    return (
+      <>
+        {renderField("Job No.", details.job_no)}
+        {renderField("Type", details.job_type === "with_material" ? "With Material" : "Labour")}
+        {renderField("Tool Description", details.tool_description)}
+        {renderField("Tool Part", details.tool_part)}
+        {renderField("Quantity", details.quantity)}
+        {renderField("Status", details.status)}
+        {renderField("PO Status", details.po_status)}
+        {renderField("Drawing Status", details.drawing_status)}
+        {renderField("Model Status", details.model_status)}
+        {renderField("Current Machining Status", details.current_machining_status)}
+        {renderField(
+          "Created",
+          details.created_at ? new Date(details.created_at).toLocaleDateString() : null
+        )}
+      </>
+    );
+  }
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
@@ -238,6 +278,7 @@ export function ItemPreviewModal({
                 {itemType === "company_stock" && renderCompanyStock()}
                 {(itemType === "bill_group" || itemType === "drawing_group") &&
                   renderGroupPhotos()}
+                {itemType === "job" && renderJob()}
               </View>
 
               <Pressable style={styles.bottomCloseBtn} onPress={onClose}>

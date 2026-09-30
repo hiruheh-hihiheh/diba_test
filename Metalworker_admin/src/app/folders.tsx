@@ -4,8 +4,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -39,6 +37,8 @@ import { DraggableItem } from "../components/folders/DraggableItem";
 import { FolderDropTarget } from "../components/folders/FolderDropTarget";
 import { ItemPreviewModal } from "../components/folders/ItemPreviewModal";
 import { Input } from "../components/ui/Input";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { notify } from "../utils/notify";
 
 /* ─── Type badge config ─── */
 
@@ -74,6 +74,12 @@ export default function FoldersScreen() {
   const [renamingFolder, setRenamingFolder] = useState<AdminFolder | null>(
     null
   );
+
+  // Folder delete needs a confirmation on both web and native. `Alert.alert`
+  // is a no-op on react-native-web, so a native-only confirm would silently
+  // do nothing there; the shared ConfirmDialog modal works on both.
+  const [pendingDelete, setPendingDelete] = useState<AdminFolder | null>(null);
+  const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
 
   // Transient banner for drop/create/rename/delete feedback.
@@ -171,36 +177,24 @@ export default function FoldersScreen() {
     await loadData();
   }
 
-  function handleDeleteFolder(folder: AdminFolder) {
-    const doDelete = async () => {
+  /** Perform the folder delete; shared by the ConfirmDialog. */
+  async function doDeleteFolder(folder: AdminFolder) {
+    setDeletingFolderId(folder.id);
+    try {
       const res = await deleteFolder(folder.id);
       if (res.ok) {
         await loadData();
       } else {
-        const msg = res.error || "Failed to delete folder.";
-        if (Platform.OS === "web") window.alert(msg);
-        else Alert.alert("Error", msg);
+        notify("Error", res.error || "Failed to delete folder.");
       }
-    };
-
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          `Delete folder "${folder.name}"?\n\nThis will remove all item associations but will NOT delete the actual stock/group records.`
-        )
-      ) {
-        doDelete();
-      }
-    } else {
-      Alert.alert(
-        "Delete Folder",
-        `Delete "${folder.name}"? This will remove all item associations but will NOT delete the actual records.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Delete", style: "destructive", onPress: doDelete },
-        ]
-      );
+    } finally {
+      setDeletingFolderId(null);
+      setPendingDelete(null);
     }
+  }
+
+  function handleDeleteFolder(folder: AdminFolder) {
+    setPendingDelete(folder);
   }
 
   function openFolder(folder: AdminFolder) {
@@ -524,6 +518,27 @@ export default function FoldersScreen() {
           onSave={handleRenameFolder}
         />
       )}
+
+      {/* Delete-folder confirmation (web + native). */}
+      <ConfirmDialog
+        visible={pendingDelete !== null}
+        title="Delete Folder"
+        message={
+          pendingDelete
+            ? `Delete "${pendingDelete.name}"? This will remove all item associations but will NOT delete the actual stock/group records.`
+            : ""
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        busy={deletingFolderId !== null}
+        onConfirm={() => {
+          if (pendingDelete) void doDeleteFolder(pendingDelete);
+        }}
+        onCancel={() => {
+          if (deletingFolderId === null) setPendingDelete(null);
+        }}
+      />
     </SafeAreaView>
   );
 }

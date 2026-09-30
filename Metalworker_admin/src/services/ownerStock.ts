@@ -3,6 +3,7 @@
 import { supabase } from "./supabase";
 import type { OwnerStock, OwnerStockInput } from "../types/ownerStock";
 import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinary";
 
 const TABLE = "owner_stock";
 
@@ -65,9 +66,46 @@ export async function updateOwnerStock(
 export async function deleteOwnerStock(
   id: string
 ): Promise<{ ok: boolean; error?: string }> {
+  // Read the asset ids before the row disappears.
+  const { data: existing, error: readError } = await supabase
+    .from(TABLE)
+    .select("drawing_photo_public_id, metal_photo_public_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (readError) return { ok: false, error: readError.message };
+
+  // Remove folder associations first. Without this, folders keep a
+  // folder_items row pointing at a record that no longer exists, and the folder
+  // screens show a dangling entry that cannot be resolved or previewed.
+  const { error: linksError } = await supabase
+    .from("folder_items")
+    .delete()
+    .eq("item_type", "owner_stock")
+    .eq("item_id", id);
+
+  if (linksError) {
+    return {
+      ok: false,
+      error: `Failed to remove folder links: ${linksError.message}`,
+    };
+  }
+
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+
+  // Destroy the uploads only once no row references them; best-effort and
+  // server-side, so it can never fail the delete.
+  void destroyCloudinaryAsset(
+    existing?.drawing_photo_public_id,
+    "owner stock drawing"
+  );
+  void destroyCloudinaryAsset(
+    existing?.metal_photo_public_id,
+    "owner stock metal"
+  );
+
   void logAudit({ action: "stock.owner.deleted", targetType: "stock", targetId: id });
   return { ok: true };
 }

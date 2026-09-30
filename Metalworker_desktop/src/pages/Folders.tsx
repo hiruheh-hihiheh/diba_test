@@ -95,6 +95,10 @@ const ITEM_FILTERS: ("all" | FolderItemType)[] = [
   "company_stock",
   "bill_group",
   "drawing_group",
+  // Jobs are valid folder items (itemRoute and getItemTypeLabel both handle
+  // them). Omitting "job" here hid every job from the filter chips even
+  // though the page renders them.
+  "job",
 ];
 
 export default function FoldersPage() {

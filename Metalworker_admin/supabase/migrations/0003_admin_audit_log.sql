@@ -11,6 +11,11 @@
 --   WHEN    -> created_at (defaults to now())
 --   TARGET  -> target_type + target_id (+ an optional detail jsonb payload)
 --
+-- SECURITY: only an authenticated ACTIVE ADMIN may insert a row, and the row
+-- must claim the caller's own actor_id (auth.uid()). Workers/processors
+-- cannot forge audit events through the public API, and nobody can read the
+-- trail over the public API (a read surface is service-role only).
+--
 -- The writes are best-effort from the client: if this table does not exist yet
 -- (migration not applied), operations continue silently.
 
@@ -33,10 +38,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx
 CREATE INDEX IF NOT EXISTS admin_audit_log_actor_idx
   ON admin_audit_log (actor_id);
 
--- Anon/public keys are not allowed to read or write the trail; only the
--- authenticated user writing rows and RLS keeping it to their own... nothing:
--- rows are visible only via a service-role admin surface today, so default to
--- deny-all for direct table access until an admin read path exists.
+-- RLS: anon can neither read nor write the trail.
 ALTER TABLE admin_audit_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "audit_log_no_public_access" ON admin_audit_log;
@@ -47,17 +49,30 @@ CREATE POLICY "audit_log_no_public_access"
   USING (false)
   WITH CHECK (false);
 
--- The app inserts via the anon-key client with the user's JWT; allow
--- authenticated users to insert (that is the documented best-effort path) but
--- still deny reads/writes/updates so a compromised session cannot tamper or
--- read the trail over the public API.
+-- Writing is restricted to the caller being an active admin, so a worker or
+-- processor session can never write a forged "who" or "what" into the trail.
+-- The subquery reads profiles subject to its own RLS: a non-admin is either
+-- not allowed to see admin profiles (=> no row => insert rejected) or is an
+-- admin themselves (=> row found => allowed). actor_id must equal auth.uid(),
+-- so no one can attribute an event to a different user.
 DROP POLICY IF EXISTS "audit_log_authenticated_insert" ON admin_audit_log;
-CREATE POLICY "audit_log_authenticated_insert"
+DROP POLICY IF EXISTS "audit_log_admin_insert" ON admin_audit_log;
+CREATE POLICY "audit_log_admin_insert"
   ON admin_audit_log
   FOR INSERT
   TO authenticated
-  WITH CHECK (actor_id = auth.uid());
+  WITH CHECK (
+    actor_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid()
+        AND p.role = 'admin'
+        AND p.is_active = true
+    )
+  );
 
+-- No public read path: the trail is only readable with the service role (or a
+-- future admin-only view/edge function that verifies the caller).
 DROP POLICY IF EXISTS "audit_log_deny_authenticated_read" ON admin_audit_log;
 CREATE POLICY "audit_log_deny_authenticated_read"
   ON admin_audit_log

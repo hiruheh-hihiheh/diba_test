@@ -32,7 +32,7 @@ const WORKING_ROUTES: { to: string; label: string }[] = [
   { to: "/", label: "Dashboard" },
   { to: "/jobs/labour", label: "Labour Jobs" },
   { to: "/jobs/with-material", label: "With Material Jobs" },
-  { to: "/import", label: "Import from Excel" },
+  { to: "/jobs/import", label: "Import from Excel" },
   { to: "/folders", label: "Folders" },
   { to: "/dispatches", label: "Dispatches" },
   { to: "/stock-owner", label: "Stock by Owner" },

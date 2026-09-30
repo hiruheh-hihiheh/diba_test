@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinaryCleanup";
 import type { JobDrawing, JobDrawingInput } from "../types/jobDrawing";
 
 const TABLE = "job_drawings";
@@ -47,31 +49,84 @@ export async function updateJobDrawing(id: string, input: JobDrawingInput): Prom
 }
 
 export async function deleteJobDrawing(id: string): Promise<{ ok: boolean; error?: string }> {
+  // Read the asset's Cloudinary public id BEFORE deleting the row. Without
+  // this the row delete succeeds and the uploaded file is orphaned in
+  // Cloudinary forever (and we can no longer tell which asset it was).
+  const { data: existing, error: readError } = await supabase
+    .from(TABLE)
+    .select("public_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (readError) return { ok: false, error: readError.message };
+
   const { error } = await supabase
     .from(TABLE)
     .delete()
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+
+  // Destroy the asset only now that no row references it. Best-effort and
+  // server-side (edge function holds the Cloudinary credentials): never
+  // blocks or fails the delete.
+  void destroyCloudinaryAsset(existing?.public_id, "job drawing");
+
+  void logAudit({
+    action: "drawing.deleted",
+    targetType: "job_drawing",
+    targetId: id,
+    detail: { had_photo: !!existing?.public_id },
+  });
   return { ok: true };
 }
 
 export async function setPrimaryDrawing(jobId: string, drawingId: string): Promise<{ ok: boolean; error?: string }> {
-  // First, set all drawings for this job to not primary
-  const { error: resetError } = await supabase
-    .from(TABLE)
-    .update({ is_primary: false })
-    .eq("job_id", jobId);
+  // Preferred path: the transactional `set_primary_drawing` RPC (migration
+  // 0002, shared with the admin app). Both writes happen in one transaction and
+  // the drawing is checked to belong to the job, so a crash can never leave a
+  // job with zero or two primaries, and a foreign drawing id can never be
+  // marked primary here.
+  const { error: rpcError } = await supabase.rpc("set_primary_drawing", {
+    p_job_id: jobId,
+    p_drawing_id: drawingId,
+  });
 
-  if (resetError) return { ok: false, error: resetError.message };
+  if (!rpcError) {
+    void logAudit({
+      action: "drawing.set_primary",
+      targetType: "job_drawing",
+      targetId: drawingId,
+      detail: { job_id: jobId, via: "rpc" },
+    });
+    return { ok: true };
+  }
 
-  // Then, set the selected drawing to primary
+  // Fallback: the RPC is not deployed yet (migration pending). Set the target
+  // FIRST so a second-write failure never leaves the job with *no* primary,
+  // then clear the others. Both writes are scoped to the job so a foreign
+  // drawing id cannot be marked primary.
   const { error: setError } = await supabase
     .from(TABLE)
     .update({ is_primary: true })
-    .eq("id", drawingId);
+    .eq("id", drawingId)
+    .eq("job_id", jobId);
 
   if (setError) return { ok: false, error: setError.message };
 
+  const { error: resetError } = await supabase
+    .from(TABLE)
+    .update({ is_primary: false })
+    .eq("job_id", jobId)
+    .neq("id", drawingId);
+
+  if (resetError) return { ok: false, error: resetError.message };
+
+  void logAudit({
+    action: "drawing.set_primary",
+    targetType: "job_drawing",
+    targetId: drawingId,
+    detail: { job_id: jobId, via: "fallback" },
+  });
   return { ok: true };
 }

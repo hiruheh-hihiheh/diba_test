@@ -1,4 +1,6 @@
 import { supabase } from "../lib/supabase";
+import { logAudit } from "./auditLog";
+import { destroyCloudinaryAsset } from "./cloudinaryCleanup";
 import type { Job, JobInput, JobType } from "../types/job";
 
 const TABLE = "jobs";
@@ -90,6 +92,12 @@ export async function createJob(input: JobInput): Promise<{ ok: boolean; data?: 
     .single();
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "job.created",
+    targetType: "job",
+    targetId: data.id,
+    detail: { job_no: input.job_no ?? null, job_type: input.job_type ?? null },
+  });
   return { ok: true, data: data as Job };
 }
 
@@ -100,18 +108,75 @@ export async function updateJob(id: string, input: JobInput): Promise<{ ok: bool
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+  void logAudit({
+    action: "job.updated",
+    targetType: "job",
+    targetId: id,
+    detail: { fields: Object.keys(input) },
+  });
   return { ok: true };
 }
 
 export async function deleteJob(id: string): Promise<{ ok: boolean; error?: string }> {
-  // Remove from any folders first
-  await supabase.from("folder_items").delete().match({ item_id: id, item_type: "job" });
+  // Collect the drawing asset ids first — once the job row is gone they are
+  // unrecoverable and the Cloudinary uploads are orphaned.
+  const { data: drawings, error: drawingsReadError } = await supabase
+    .from("job_drawings")
+    .select("public_id")
+    .eq("job_id", id);
+
+  if (drawingsReadError) {
+    return {
+      ok: false,
+      error: `Failed to read job drawings: ${drawingsReadError.message}`,
+    };
+  }
+
+  // Remove from any folders first, and CHECK the result. The previous code
+  // awaited this delete but discarded its error, so a job could be removed
+  // while its folder_items rows survived as dangling entries.
+  const { error: linksError } = await supabase
+    .from("folder_items")
+    .delete()
+    .match({ item_id: id, item_type: "job" });
+
+  if (linksError) {
+    return { ok: false, error: `Failed to remove folder links: ${linksError.message}` };
+  }
+
+  // Then the drawings themselves. If this fails the job is NOT deleted, so the
+  // drawings never become orphans and the reported failure is honest.
+  const { error: drawingsError } = await supabase
+    .from("job_drawings")
+    .delete()
+    .eq("job_id", id);
+
+  if (drawingsError) {
+    return {
+      ok: false,
+      error: `Failed to remove job drawings: ${drawingsError.message}`,
+    };
+  }
+
   const { error } = await supabase
     .from(TABLE)
     .delete()
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };
+
+  // Assets are destroyed only now that no row references them; best-effort and
+  // server-side so it cannot fail the delete.
+  for (const d of drawings ?? []) {
+    void destroyCloudinaryAsset(d.public_id, "job drawing");
+  }
+
+  void logAudit({
+    action: "job.deleted",
+    targetType: "job",
+    targetId: id,
+    detail: { drawings_removed: (drawings ?? []).length },
+  });
   return { ok: true };
 }
 

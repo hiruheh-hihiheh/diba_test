@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -35,6 +34,8 @@ import type { Dispatch } from "../types/dispatch";
 
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { notify } from "../utils/notify";
 import {
   DashboardHeader,
   StatGrid,
@@ -115,6 +116,14 @@ export default function DashboardScreen() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+
+  // Worker delete confirmation. `Alert.alert` is a no-op on react-native-web
+  // and `window.confirm` is unthemed/blocking, so both platforms use the
+  // shared ConfirmDialog modal.
+  const [pendingDeleteWorker, setPendingDeleteWorker] = useState<Profile | null>(
+    null
+  );
+  const [deletingWorkerId, setDeletingWorkerId] = useState<string | null>(null);
 
   const adminUsername = session?.user.email?.split("@")[0] ?? "admin";
 
@@ -485,59 +494,41 @@ export default function DashboardScreen() {
   */
 
   function handleDelete(worker: Profile) {
-    const performDelete = async () => {
-      try {
-        const res = await deleteWorker(worker.id);
+    setPendingDeleteWorker(worker);
+  }
 
-        if (res.ok) {
-          await loadWorkers();
-          showFlash("success", `User "${worker.username}" deleted.`);
-        } else {
-          if (Platform.OS === "web") {
-            window.alert(res.error || "Failed to delete worker.");
-          } else {
-            Alert.alert("Error", res.error || "Failed to delete worker.");
-          }
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to delete worker.";
+  /** Perform the worker delete; shared by the ConfirmDialog. */
+  async function performDelete() {
+    const worker = pendingDeleteWorker;
+    if (!worker) return;
 
-        if (Platform.OS === "web") {
-          window.alert(message);
-        } else {
-          Alert.alert("Error", message);
+    setDeletingWorkerId(worker.id);
+    try {
+      const res = await deleteWorker(worker.id);
+
+      if (res.ok) {
+        await loadWorkers();
+        showFlash("success", `User "${worker.username}" deleted.`);
+
+        // The edge function can complete the auth-account deletion while some
+        // related rows fail. That is a real partial failure and must not be
+        // swallowed — the profile is already gone, so the user would have no
+        // way of knowing their access is not fully removed.
+        if (res.warning) {
+          showFlash("error", `User "${worker.username}" was deleted, but: ${res.warning}`);
         }
+      } else {
+        notify("Error", res.error || "Failed to delete worker.");
       }
-    };
-
-    if (Platform.OS === "web") {
-      const confirmed = window.confirm(
-        `Delete "${worker.username}"?\n\nThis will permanently remove the user's account and authentication credentials.`
+    } catch (error) {
+      notify(
+        "Error",
+        error instanceof Error ? error.message : "Failed to delete worker."
       );
-
-      if (confirmed) {
-        performDelete();
-      }
-
-      return;
+    } finally {
+      setDeletingWorkerId(null);
+      setPendingDeleteWorker(null);
     }
-
-    Alert.alert(
-      `Delete "${worker.username}"?`,
-      `This will permanently remove the user's account and authentication credentials.`,
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: performDelete,
-        },
-      ]
-    );
   }
 
   /*
@@ -550,7 +541,7 @@ export default function DashboardScreen() {
       const { error } = await supabase.auth.signOut();
 
       if (error) {
-        Alert.alert("Logout Failed", error.message);
+        notify("Logout Failed", error.message);
         return;
       }
 
@@ -560,7 +551,7 @@ export default function DashboardScreen() {
       router.dismissAll();
       router.replace("/login");
     } catch (error) {
-      Alert.alert(
+      notify(
         "Logout Failed",
         error instanceof Error
           ? error.message
@@ -643,6 +634,23 @@ export default function DashboardScreen() {
           onDelete={handleDelete}
         />
       </ScrollView>
+
+      {/* DELETE CONFIRM (web + native) */}
+      <ConfirmDialog
+        visible={pendingDeleteWorker !== null}
+        title={pendingDeleteWorker ? `Delete "${pendingDeleteWorker.username}"?` : "Delete user"}
+        message="This will permanently remove the user's account and authentication credentials."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        busy={deletingWorkerId !== null}
+        onConfirm={() => {
+          void performDelete();
+        }}
+        onCancel={() => {
+          if (deletingWorkerId === null) setPendingDeleteWorker(null);
+        }}
+      />
 
       {/* ADD MODAL */}
       <Modal

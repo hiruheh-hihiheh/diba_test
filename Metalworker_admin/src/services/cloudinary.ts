@@ -7,6 +7,8 @@
 
 import { Platform } from "react-native";
 
+import { supabase } from "./supabase";
+
 export interface CloudinaryUploadResult {
   secureUrl: string;
   publicId: string;
@@ -124,4 +126,48 @@ export async function uploadPhoto(
     secureUrl: data.secure_url,
     publicId: data.public_id,
   };
+}
+
+/**
+ * Best-effort Cloudinary asset cleanup.
+ *
+ * Deleting a Cloudinary asset requires the Admin API credentials
+ * (CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET), which MUST stay server-side.
+ * All deletion of assets therefore goes through the `delete-cloudinary-asset`
+ * edge function, which verifies the caller is an active admin and performs the
+ * destroy with server-held credentials.
+ *
+ * Design rules (mirror the audit-log helper):
+ *  - Never throws, never blocks, never fails the calling mutation.
+ *  - Called with `void destroyCloudinaryAsset(...)` AFTER the referencing DB
+ *    row is gone, so an asset is only destroyed once nothing references it.
+ *  - If the edge function is not deployed yet (or the destroy fails) the asset
+ *    remains in Cloudinary and the console.warn is the only trace.
+ */
+export async function destroyCloudinaryAsset(
+  publicId: string | null | undefined,
+  context?: string
+): Promise<void> {
+  if (!publicId) return;
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      ok?: boolean;
+      error?: string;
+    }>("delete-cloudinary-asset", {
+      body: { public_id: publicId },
+    });
+    if (error || !data?.ok) {
+      console.warn(
+        `[Cloudinary] Asset destroy skipped${context ? ` (${context})` : ""}:`,
+        error?.message ?? data?.error ?? "unknown error",
+        `(${publicId})`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[Cloudinary] Asset destroy skipped${context ? ` (${context})` : ""}:`,
+      err instanceof Error ? err.message : String(err),
+      `(${publicId})`
+    );
+  }
 }

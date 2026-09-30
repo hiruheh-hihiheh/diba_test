@@ -273,14 +273,36 @@ export async function removeMultipleItemsFromFolder(
 }
 
 /**
- * Batch-update positions for folder items.
- * Uses Promise.all instead of sequential updates (performance fix).
- * If a subset of writes fails, the rest are already persisted — that partial
- * state is reported explicitly so callers can refresh from the backend.
+ * Reorder folder items for a folder.
+ *
+ * Preferred path: the transactional `reorder_folder_items` RPC (migration
+ * 0004). It rewrites every position in ONE transaction and validates the list
+ * covers the whole folder, so a partial reorder is impossible. The RPC is
+ * SECURITY DEFINER and enforces the active-admin check on the server.
+ *
+ * Fallback (RPC not deployed yet): the previous multi-update path via
+ * Promise.all. A mixture of updates can partially persist — that state is
+ * reported explicitly (k of n failed) so callers refresh from the backend.
  */
 export async function reorderFolderItems(
+  folderId: string,
   items: { id: string; position: number }[]
 ): Promise<{ ok: boolean; error?: string }> {
+  // RPC-first: all-or-nothing reorder.
+  const { error: rpcError } = await supabase.rpc("reorder_folder_items", {
+    p_folder_id: folderId,
+    p_item_ids: items.map((item) => item.id),
+  });
+
+  if (!rpcError) {
+    void logAudit({
+      action: "folder.reordered",
+      targetType: "folder_item",
+      detail: { folder_id: folderId, count: items.length, via: "rpc" },
+    });
+    return { ok: true };
+  }
+
   const results = await Promise.all(
     items.map((item) =>
       supabase
@@ -310,7 +332,7 @@ export async function reorderFolderItems(
   void logAudit({
     action: "folder.reordered",
     targetType: "folder_item",
-    detail: { count: items.length },
+    detail: { folder_id: folderId, count: items.length, via: "fallback" },
   });
   return { ok: true };
 }
@@ -367,9 +389,10 @@ export async function resolveFolderItemLabels(
   const companyIds = items.filter((i) => i.item_type === "company_stock").map((i) => i.item_id);
   const billIds = items.filter((i) => i.item_type === "bill_group").map((i) => i.item_id);
   const drawingIds = items.filter((i) => i.item_type === "drawing_group").map((i) => i.item_id);
+  const jobIds = items.filter((i) => i.item_type === "job").map((i) => i.item_id);
 
-  // Batch fetch all types in parallel (max 4 queries)
-  const [ownerData, companyData, billData, drawingData] = await Promise.all([
+  // Batch fetch all types in parallel (max 5 queries)
+  const [ownerData, companyData, billData, drawingData, jobData] = await Promise.all([
     ownerIds.length > 0
       ? supabase
           .from("owner_stock")
@@ -398,6 +421,13 @@ export async function resolveFolderItemLabels(
           .in("id", drawingIds)
           .then((r) => r.data ?? [])
       : Promise.resolve([] as any[]),
+    jobIds.length > 0
+      ? supabase
+          .from("jobs")
+          .select("id, job_no")
+          .in("id", jobIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
   ]);
 
   // Build lookup maps
@@ -405,6 +435,7 @@ export async function resolveFolderItemLabels(
   const companyMap = new Map(companyData.map((d: any) => [d.id, d]));
   const billMap = new Map(billData.map((d: any) => [d.id, d]));
   const drawingMap = new Map(drawingData.map((d: any) => [d.id, d]));
+  const jobMap = new Map(jobData.map((d: any) => [d.id, d]));
 
   return items.map((item) => {
     let label = `${item.item_type} (${item.item_id.slice(0, 8)})`;
@@ -421,6 +452,9 @@ export async function resolveFolderItemLabels(
     } else if (item.item_type === "drawing_group") {
       const data = drawingMap.get(item.item_id);
       if (data) label = `Drawing Group - ${data.name}`;
+    } else if (item.item_type === "job") {
+      const data = jobMap.get(item.item_id);
+      if (data?.job_no) label = `Job ${data.job_no}`;
     }
 
     return { ...item, label };
@@ -433,7 +467,7 @@ export async function resolveFolderItemLabels(
 
 /**
  * Fetch all items available for adding to a folder (items not already in this folder).
- * Queries all 4 item types in parallel for performance.
+ * Queries all 5 item types in parallel for performance.
  */
 export async function fetchAvailableItems(
   folderId: string
@@ -447,7 +481,7 @@ export async function fetchAvailableItems(
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
   // Fetch all item types in parallel
-  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
     supabase
       .from("owner_stock")
       .select("id, folder_no, folio_number, source_of_metal")
@@ -463,6 +497,10 @@ export async function fetchAvailableItems(
     supabase
       .from("drawing_groups")
       .select("id, name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("jobs")
+      .select("id, job_no")
       .order("created_at", { ascending: false }),
   ]);
 
@@ -500,6 +538,16 @@ export async function fetchAvailableItems(
     }
   }
 
+  for (const j of jobRes.data ?? []) {
+    if (!existingIds.has(j.id)) {
+      available.push({
+        type: "job",
+        id: j.id,
+        label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})`,
+      });
+    }
+  }
+
   return available;
 }
 
@@ -514,7 +562,7 @@ export async function fetchAvailableItems(
 export async function fetchAllItems(): Promise<
   { type: FolderItemType; id: string; label: string }[]
 > {
-  const [ownerRes, companyRes, billRes, drawingRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
     supabase
       .from("owner_stock")
       .select("id, folder_no, folio_number, source_of_metal")
@@ -530,6 +578,10 @@ export async function fetchAllItems(): Promise<
     supabase
       .from("drawing_groups")
       .select("id, name")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("jobs")
+      .select("id, job_no")
       .order("created_at", { ascending: false }),
   ]);
 
@@ -557,6 +609,16 @@ export async function fetchAllItems(): Promise<
 
   for (const g of drawingRes.data ?? []) {
     items.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
+  }
+
+  for (const j of jobRes.data ?? []) {
+    if (j?.id) {
+      items.push({
+        type: "job",
+        id: j.id,
+        label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})`,
+      });
+    }
   }
 
   return items;
