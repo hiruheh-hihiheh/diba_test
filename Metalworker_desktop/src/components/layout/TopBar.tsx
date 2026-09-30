@@ -41,6 +41,10 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
     title: "Stock by Company",
     crumbs: [{ label: "Inventory" }, { label: "Stock by Company" }],
   },
+  "/bills": {
+    title: "Bills",
+    crumbs: [{ label: "Documents" }, { label: "Bills" }],
+  },
   "/group-bills": {
     title: "Group Bills",
     crumbs: [{ label: "Documents" }, { label: "Group Bills" }],

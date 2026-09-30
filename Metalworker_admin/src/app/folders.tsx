@@ -45,9 +45,12 @@ import { notify } from "../utils/notify";
 const getTypeBadges = (theme: AppTheme): Record<FolderItemType, { label: string; color: string }> => ({
   owner_stock: { label: "Owner", color: theme.colors.primary },
   company_stock: { label: "Company", color: "#8B5CF6" },
-  bill_group: { label: "Bill", color: theme.colors.warning },
+  // The two bill-ish types must not share a badge: `bill_group` is the older
+  // Group Bills photo group, `bill` is a parsed tax invoice.
+  bill_group: { label: "Bill Group", color: theme.colors.warning },
   drawing_group: { label: "Drawing", color: theme.colors.success },
   job: { label: "Job", color: theme.colors.danger },
+  bill: { label: "Bill", color: theme.colors.primary },
 });
 
 export default function FoldersScreen() {

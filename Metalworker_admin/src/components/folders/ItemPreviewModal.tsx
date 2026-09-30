@@ -19,6 +19,15 @@ import { fetchCompanyStock } from "../../services/companyStock";
 import { fetchBillGroup, fetchBillGroupPhotos } from "../../services/billGroups";
 import { fetchDrawingGroup, fetchDrawingGroupPhotos } from "../../services/drawingGroups";
 import { fetchJob } from "../../services/jobs";
+import {
+  fetchBill,
+  fetchBillLineItems,
+  formatBillDate,
+  formatMoney,
+  formatQuantity,
+} from "../../services/bills";
+import { BillCopyActions } from "../bills/BillCopyActions";
+import type { BillLineItem } from "../../types/bill";
 import type { GroupPhoto } from "../documents/GroupPhotoUploader";
 
 interface ItemPreviewModalProps {
@@ -35,6 +44,9 @@ const TYPE_TITLES: Record<FolderItemType, string> = {
   bill_group: "Bill Group",
   drawing_group: "Drawing Group",
   job: "Job",
+  // A parsed tax invoice from the Bills section — not the Group Bills photo
+  // group above, which is `bill_group`.
+  bill: "Bill",
 };
 
 export function ItemPreviewModal({
@@ -92,6 +104,19 @@ export function ItemPreviewModal({
           const data = await fetchJob(itemId);
           setError(null);
           setDetails(data);
+          setPhotos([]);
+          break;
+        }
+        // Bills opened from a folder get their own modal (the full invoice with
+        // its three print copies), so this branch only runs if someone reaches
+        // the generic preview — it still loads the figures rather than nothing.
+        case "bill": {
+          const [record, lineItems] = await Promise.all([
+            fetchBill(itemId),
+            fetchBillLineItems(itemId),
+          ]);
+          setError(null);
+          setDetails({ ...record, lineItems });
           setPhotos([]);
           break;
         }
@@ -232,6 +257,42 @@ export function ItemPreviewModal({
     );
   }
 
+  function renderBill() {
+    if (!details) return null;
+    const lineItems: BillLineItem[] = details.lineItems ?? [];
+    return (
+      <>
+        {renderField("Invoice No.", details.invoice_no)}
+        {renderField("Invoice Date", formatBillDate(details.invoice_date))}
+        {renderField("Sheet", details.sheet_name)}
+        {renderField("Workbook", details.original_filename)}
+        {renderField("Party", details.party_name)}
+        {renderField("Party GST No.", details.party_gst_no)}
+        {renderField("Job Type", details.job_kind)}
+        {renderField(
+          details.order_no_label || "Order No.",
+          details.order_no
+        )}
+        {renderField("Order Date", formatBillDate(details.order_date))}
+        {renderField("Total Quantity", formatQuantity(details.total_quantity))}
+        {renderField("Amount Before Tax", formatMoney(details.amount_before_tax))}
+        {renderField("CGST", formatMoney(details.cgst))}
+        {renderField("SGST", formatMoney(details.sgst))}
+        {renderField("IGST", formatMoney(details.igst))}
+        {renderField("Total GST", formatMoney(details.total_gst))}
+        {renderField("Round Off", formatMoney(details.round_off))}
+        {renderField("Amount After Tax", formatMoney(details.amount_after_tax))}
+        {details.amount_in_words
+          ? renderField("Amount In Words", details.amount_in_words)
+          : null}
+        {renderField("Line Items", lineItems.length)}
+
+        <Text style={styles.sectionLabel}>Print copies</Text>
+        <BillCopyActions bill={details} />
+      </>
+    );
+  }
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.overlay} edges={["top", "bottom"]}>
@@ -279,6 +340,7 @@ export function ItemPreviewModal({
                 {(itemType === "bill_group" || itemType === "drawing_group") &&
                   renderGroupPhotos()}
                 {itemType === "job" && renderJob()}
+                {itemType === "bill" && renderBill()}
               </View>
 
               <Pressable style={styles.bottomCloseBtn} onPress={onClose}>

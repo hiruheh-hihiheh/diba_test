@@ -1,9 +1,229 @@
 # Metalworker — Code Audit & Fix Log
 
 Scope: **Pass 1** = `Metalworker_admin` only (Expo SDK 57).
-**Pass 2** (current) = all three apps: `Metalworker_admin`, `Metalworker_desktop`, `MetalWorkerApp`.
+**Pass 2** = all three apps: `Metalworker_admin`, `Metalworker_desktop`, `MetalWorkerApp` —
+security / audit hardening.
+**Pass 3** (current) = `Metalworker_admin` + `Metalworker_desktop` — the additive Bills
+feature (tax-invoice workbooks → parse → 3 PDFs → records → folders).
 
 Status: **All fixes applied, uncommitted** on `main`. Nothing has been committed; the user commits.
+
+---
+
+# PASS 3 — Bills: tax-invoice workbooks (xlsx → parse → 3 PDFs → records → folders)
+
+Scope: an **additive** Bills feature. `Metalworker_admin` and `Metalworker_desktop` only,
+plus two migrations and one edge function. `MetalWorkerApp`, the worker/processor/dispatch/
+labour-job/with-material logic, Group Drawings, and existing Group Bills are **untouched**.
+
+Design: the whole `xlsx → parse → PDF` half runs **server-side** in the
+`process-bill-upload` edge function, so mobile and browser produce byte-identical
+output and no service-role key ever reaches a client.
+
+---
+
+## P3.1 Verification results
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` — Metalworker_admin | ✅ 0 errors |
+| `npx tsc -b` — Metalworker_desktop | ✅ 0 errors |
+| `npx tsc -p tsconfig.edge.json` — edge function (Deno-free typecheck) | ✅ 0 errors |
+| `npm run lint` — Metalworker_admin | ✅ 0 problems across all 79 source files (was 0 at HEAD) |
+| `npm run lint` — Metalworker_desktop | ⚠️ 53 problems (49 errors / 4 warnings) — **byte-identical to the pre-change baseline**, proven again with `git stash`. The new `src/services/bills.ts`, `src/types/bill.ts`, `src/pages/Bills.tsx` and `src/components/bills/*` contribute **zero** problems. |
+| `npm run build` — Metalworker_desktop | ✅ 2306 modules, `index-*.js` 1,194.97 kB (gzip 343.34 kB); only the pre-existing >500 kB advisory |
+| `npx expo export --platform web` — Metalworker_admin | ✅ 16 static routes, including a new `/bills` (21 KB) |
+| `npm run bills:selftest` (parse + PDF structure + layout audit, SAMPLE.xlsx) | ✅ all checks pass, all three PDFs "no problems found" |
+| `MetalWorkerApp` | ✅ untouched — no file in it is modified |
+
+### Acceptance figures, from SAMPLE.xlsx
+
+| | 274 | 292 | Folder (both) |
+| --- | --- | --- | --- |
+| Quantity | 1 | 2 | 3 |
+| Amount before tax | 13,250.00 | 35,837.00 | 49,087.00 |
+| CGST | 1,192.50 | 3,225.33 | 4,417.83 |
+| SGST | 1,192.50 | 3,225.33 | 4,417.83 |
+| Total GST | 2,385.00 | 6,450.66 | 8,835.66 |
+| Amount after tax | 15,635.00 | 42,288.00 | 57,923.00 |
+| Round off | 0.00 | 0.34 | 0.34 |
+| Average bill value | — | — | 28,961.50 |
+| Average quantity | — | — | 1.5 |
+| Average before tax | — | — | 24,543.50 |
+
+Copy spans derived dynamically: sheet `274 L` → original 1-48, duplicate 49-96, triplicate
+97-144. Sheet `292` → 1-50, 51-100, 101-149. Invoice numbers `SEW/274/2026-27` and
+`SEW/292/2026-27`, resolved to `Service Order No.:` and `Purchase Order No.:` respectively
+— the label in the sheet, not a hardcoded column.
+
+---
+
+## P3.2 Data model (migration `0005_bills.sql`)
+
+Relational, three tables, no JSON blob:
+
+- **`bill_uploads`** — one row per uploaded `.xlsx`. Holds the original filename, the
+  sanitized base name, the three bucket-relative PDF paths, the byte size, the detected
+  bill count, and the status/error the pipeline left behind.
+- **`bills`** — **one row per worksheet / invoice.** `unique (bill_upload_id, sheet_name)`
+  so a re-processed sheet cannot silently duplicate. Carries the invoice number and date,
+  both parties, the order reference, the tax identity numbers, and every total as its own
+  numeric column (so they can be summed in SQL, which a JSON blob could not be).
+- **`bill_line_items`** — one row per line item, `unique (bill_id, sr_no)`. Own columns for
+  description, HSN, UOM, quantity, rate and amount.
+
+**The three copies are not rows.** `original` / `duplicate` / `triplicate` are three PDF
+renderings of one invoice. Storing them as three records would triple every folder total,
+so the copy is an attribute of the *document*, not of the bill.
+
+### `folder_items.item_type` — CHECK dropped, deliberately not re-added
+
+Migration 0005 drops any CHECK on `folder_items.item_type` and does **not** put one back.
+The column is shared with `MetalWorkerApp`, which this pass must not modify, so a new
+constraint here would be a contract change enforced for a client that was not consulted.
+The allowed set is the app layer's contract; the DB column stays a `text`. This is
+recorded in-file in the migration.
+
+### RLS and storage
+
+- `bills_admin_all` — SELECT / UPDATE / DELETE for **active administrators only**,
+  following the pattern established in migrations 0002-0004. **No client INSERT policy**:
+  rows are written only by the edge function using the service role, so a compromised
+  client token cannot fabricate a bill.
+- Private bucket **`bills`** (50 MB cap, `application/pdf`), paths
+  `bills/<upload-id>/<base>_original.pdf` etc. Only the bucket-relative name is stored in
+  the DB; the client resolves a signed URL at read time, so no long-lived public URL
+  exists.
+- `bills_storage_admin_read` / `bills_storage_admin_delete` — `storage.objects` policies,
+  same active-admin gate. This is why bill deletion needs no second edge function.
+
+## P3.3 Edge function `process-bill-upload`
+
+One request does the entire pipeline, so there is no partial state to reconcile:
+
+```
+POST { filename, content_base64 }
+  → method + env + auth + ACTIVE-ADMIN check   (all before the body is parsed)
+  → .xlsx extension, ZIP magic bytes, 50 MB / 64 MB size caps
+  → INSERT bill_uploads (status = 'processing')
+  → parseBills(sheets)                        throws BillFormatError → 422 unrecognized_format
+  → render 3 PDFs (one document per copy)
+  → storage upload ×3
+  → INSERT bills + bill_line_items
+  → UPDATE bill_uploads (status = 'completed', pdf paths, bill count)
+  → best-effort admin_audit_log insert
+```
+
+Every failure path calls `rollback()`, which deletes the upload row and anything already
+written to storage, so a rejected workbook leaves no orphan PDF and no half-populated bill.
+
+**Zero runtime dependencies.** The `.xlsx` is a ZIP, so the reader is ~200 lines of
+`DecompressionStream('deflate-raw')` + XML scanning (`_shared/xlsx.ts`) — not `npm:xlsx`.
+The PDF writer is a hand-rolled deterministic writer using the Base14 fonts
+(`_shared/pdf.ts`, `_shared/fontMetrics.ts`) — not a PDF library. This is what keeps the
+function deployable to Deno with nothing to install and keeps output byte-identical
+run to run.
+
+**No row numbers, no column numbers.** Fields are found by their label, matched on a
+"squashed" form (uppercased, non-alphanumerics removed), so `D E S C R I P T I O N`,
+`Total Amount :GST` and `ADD:  CGST` all resolve. Copy labels use **exact** squashed
+equality rather than substring, because row 8 of every sample sheet contains the note
+`Original Copy of Invoice for Receipt ... Duplicate & Triplicate Supplier or Transporter`
+— a substring match would read that note as the copy label and corrupt every span.
+Cached formula results are read from `<v>` and never recomputed, so a workbook whose
+recalculation is stale still produces the figures the accountant saw.
+
+## P3.4 Folder integration
+
+`item_type = "bill"`, added to the union in both apps' `types/folder.ts` and to every
+`Record<FolderItemType, …>` that TypeScript then forced me to complete — which is how
+`DragDropProvider`'s drag-ghost label got caught: it was labelling a parsed tax invoice
+"Bill", colliding with the existing photo-group `bill_group`. `bill_group` is now "Bill
+Group" and `bill` is "Bill", in both the filter chips and the badges.
+
+Folder label is `Bill • SEW/274/2026-27 • ₹15,635`. The money formatter is imported from
+`services/bills` rather than reimplemented, so a bill looks identical in the folder list
+and on the Bills screen.
+
+Removal only deletes the `folder_items` row. Deleting a bill from a folder never touches
+the bill, its line items, or its PDFs.
+
+### Folder bill summary (migration `0006_folder_bill_summary.sql`)
+
+`get_folder_bill_summary(p_folder_id uuid)`, `SECURITY DEFINER`, `SET search_path = public`,
+`REVOKE ALL FROM public` / `GRANT EXECUTE TO authenticated`, and the same active-admin
+check the rest of the repo uses.
+
+```sql
+WITH unique_bills AS (SELECT DISTINCT … FROM bills JOIN folder_items …)
+SELECT count(*), sum(…), …, coalesce(sum(…) / NULLIF(count(*), 0), 0)
+```
+
+The de-duplication lives in the CTE, so `count` and every `sum` are computed over the *same*
+set — computing them over the raw join would count a bill once per folder link and once per
+copy. `NULLIF(count, 0)` plus `coalesce` means a folder with no bills returns zeros, never
+`NaN` or `Infinity`.
+
+The panel is loaded in its **own effect** on both platforms, so if migration 0006 has not
+been applied the RPC 404s and the folder page still works with one line of explanation.
+
+## P3.5 Why some choices look unusual
+
+- **Deleting a bill deletes the whole workbook.** The three PDFs and the invoice rows
+  only exist and die together, so the confirmation names the file and says how many
+  invoices go. A multi-selection spanning two workbooks is refused with a warning rather
+  than guessing. *(Deliberate UX call — flagging it in case per-invoice deletion is wanted.)*
+- **No `Intl` in the money/date formatters.** Hermes on Android ships a reduced ICU and
+  silently falls back to `en-US` grouping, so `15635` would print `15,635` on web and
+  `15635` on a device. `groupIndianInteger` / `formatMoney` / `formatQuantity` /
+  `formatBillDate` are hand-written and deterministic, and duplicated in both clients
+  because the two apps are separate npm projects that cannot share a module.
+- **Upload progress steps 3-7 advance on a timer.** The function returns one JSON document,
+  so the individual step boundaries are not observable. Steps 1-2 are real (`uploaded`,
+  `validating`); the rest advance on a timer while the single request is in flight, every
+  timer is cancelled, and the real response always decides the final state. Timed progress
+  is honest here because the work genuinely is happening; the response is never faked.
+- **Search resolves filenames through a second query.** `original_filename` lives on the
+  joined `bill_uploads` parent, so a filename hit is resolved to `bill_upload_id`s and
+  folded into the PostgREST `or(…)` group as an `in.(…)` clause. `,()%*` are stripped from
+  user input so the group cannot be broken by a stray comma.
+
+## P3.6 Self-test harness
+
+`supabase/functions/_selftest/` (see its README) runs the parser, the PDF structure checks
+and the layout auditor against a real workbook on plain Node, with no deploy and no PDF
+library. `tsconfig.edge.json` typechecks the edge function on a machine with no Deno.
+Neither is referenced by the app build or shipped to Supabase; the `out/` directory is
+gitignored.
+
+## P3.7 Pending deployments (BLOCKED — no `SUPABASE_ACCESS_TOKEN` on this machine)
+
+```bash
+supabase link --project-ref dwmirwmtyaucoosczdno
+supabase db push                       # 0002, 0003, 0004, 0005, 0006
+supabase functions deploy \
+  delete-cloudinary-asset \
+  get-admin-dispatches \
+  update-worker-username \
+  process-bill-upload
+```
+
+Until `0005` is applied there is no `bills` table, no bucket and no storage policy, so an
+upload returns a clean database error rather than half-working. Until the edge function is
+deployed, uploads return a clear "function not found".
+
+## P3.8 Not verified here, and why
+
+- **Visual PDF quality** was proven by the programmatic layout auditor (no clipping, no
+  overlap, no footer collision, no mid-page hole, right-aligned money columns) and by the
+  ASCII page map, not by eye. Open one in a viewer.
+- **End-to-end upload** needs the deployed function and migrations.
+- **Native iOS/Android** file picking, printing and sharing are unexercised; the web path
+  is. The native code follows the existing Cloudinary dynamic-import pattern with explicit
+  `Platform.OS` branches, but that is a code-shape argument, not a test.
+- **Live DB state** was probed earlier: migrations 0002-0004 unapplied, no storage buckets
+  at all, `admin_audit_log` absent, `bills`/`bill_uploads`/`bill_line_items` absent,
+  `folder_items.item_type` in use = `drawing_group`, `job`.
 
 ---
 

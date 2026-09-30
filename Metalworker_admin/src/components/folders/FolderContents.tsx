@@ -34,6 +34,8 @@ import { DragDropProvider, type DragData } from "./DragDropProvider";
 import { DraggableItem } from "./DraggableItem";
 import { FolderDropTarget } from "./FolderDropTarget";
 import { ItemPreviewModal } from "./ItemPreviewModal";
+import { BillDetailModal } from "../bills/BillDetailModal";
+import { FolderBillSummaryPanel } from "./FolderBillSummaryPanel";
 
 /* ─── Constants ─── */
 
@@ -44,9 +46,13 @@ interface FolderContentsProps {
 const getTypeBadges = (theme: AppTheme): Record<FolderItemType, { label: string; color: string }> => ({
   owner_stock: { label: "Owner", color: theme.colors.primary },
   company_stock: { label: "Company", color: "#8B5CF6" },
-  bill_group: { label: "Bill", color: theme.colors.warning },
+  // `bill_group` is the older Group Bills photo group; `bill` is a parsed tax
+  // invoice from the Bills section. They are different things, so they get
+  // different badges and different filter chips.
+  bill_group: { label: "Bill Group", color: theme.colors.warning },
   drawing_group: { label: "Drawing", color: theme.colors.success },
   job: { label: "Job", color: theme.colors.danger },
+  bill: { label: "Bill", color: theme.colors.primary },
 });
 
 const DROP_ZONE_ID = "folder-items";
@@ -473,6 +479,11 @@ export function FolderContents({ folderId }: FolderContentsProps) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        {/* ── Bill totals ──
+            Loaded by its own effect inside the panel: a missing RPC (migration
+            0006 not applied) must not take the whole folder page down. */}
+        <FolderBillSummaryPanel folderId={folderId} />
+
         {/* ── Items in this Folder ── */}
         <FolderDropTarget zoneId={DROP_ZONE_ID}>
           <View style={styles.sectionCard}>
@@ -752,7 +763,7 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         </View>
       </ScrollView>
 
-      {previewItem && (
+      {previewItem && previewItem.type !== "bill" && (
         <ItemPreviewModal
           visible={!!previewItem}
           onClose={() => setPreviewItem(null)}
@@ -761,6 +772,15 @@ export function FolderContents({ folderId }: FolderContentsProps) {
           label={previewItem.label}
         />
       )}
+
+      {/* A bill gets the real invoice detail sheet (figures, line items, the
+          three print copies) instead of the generic field dump, because that is
+          the same sheet the Bills screen shows for the same row. */}
+      <BillDetailModal
+        billId={previewItem?.type === "bill" ? previewItem.id : null}
+        onClose={() => setPreviewItem(null)}
+        onOpenFolderPicker={() => setPreviewItem(null)}
+      />
 
       {(selectedAvailableItemIds.size > 0 || selectedFolderItemIds.size > 0) && (
         <View style={styles.stickyActionBar}>

@@ -155,6 +155,23 @@ export function QuickActions({
       <View style={styles.quickActionsRow}>
         <Pressable
           style={styles.quickActionCard}
+          onPress={() => onNavigate("/bills")}
+          accessibilityRole="button"
+          accessibilityLabel="Bills"
+        >
+          <View
+            style={[
+              styles.quickActionIcon,
+              { backgroundColor: theme.colors.primary + "20" },
+            ]}
+          >
+            <Text style={styles.quickActionIconText}>🧾</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Bills</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.quickActionCard}
           onPress={() => onNavigate("/group-bills")}
           accessibilityRole="button"
           accessibilityLabel="Bill groups"

@@ -76,12 +76,16 @@ const getTypeColors = (theme: AppTheme): Record<FolderItemType, string> => ({
   bill_group: theme.colors.warning,
   drawing_group: theme.colors.success,
   job: theme.colors.danger,
+  bill: theme.colors.primary,
 });
 
 const TYPE_LABELS: Record<FolderItemType, string> = {
   owner_stock: "Owner",
   company_stock: "Company",
-  bill_group: "Bill",
+  // The drag ghost must not label a parsed tax invoice as "Bill Group", nor a
+  // photo group as a tax invoice: `bill` is the new Bills section.
+  bill_group: "Bill Group",
+  bill: "Bill",
   drawing_group: "Drawing",
   job: "Job",
 };

@@ -8,6 +8,7 @@ import type {
   FolderItemDisplay,
 } from "../types/folder";
 import { logAudit } from "./auditLog";
+import { formatMoney } from "./bills";
 
 /* ──────────────────────────────────────────────
    FOLDER CRUD
@@ -369,6 +370,31 @@ function buildCompanyStockLabel(data: {
   return label;
 }
 
+/**
+ * Build a display label for a parsed tax invoice.
+ *
+ * Invoice number first, amount second, because that is the order someone
+ * scanning a folder reads them in. The amount comes from `formatMoney` so a bill
+ * in a folder shows exactly the same figure it shows on the Bills screen.
+ */
+function buildBillLabel(data: {
+  invoice_no?: string | null;
+  sheet_name?: string | null;
+  amount_after_tax?: number | string | null;
+}, fallbackId: string): string {
+  const invoice = data.invoice_no?.trim();
+  const sheet = data.sheet_name?.trim();
+  const hasAmount =
+    data.amount_after_tax !== null && data.amount_after_tax !== undefined;
+  const amount = hasAmount && Number.isFinite(Number(data.amount_after_tax))
+    ? `  ${formatMoney(data.amount_after_tax)}`
+    : "";
+
+  if (invoice) return `${invoice}${amount}`;
+  if (sheet) return `Bill ${sheet}${amount}`;
+  return `Bill (${fallbackId.slice(0, 8)})`;
+}
+
 /* ──────────────────────────────────────────────
    BATCHED LABEL RESOLUTION  (fixes N+1 queries)
    ────────────────────────────────────────────── */
@@ -391,8 +417,10 @@ export async function resolveFolderItemLabels(
   const drawingIds = items.filter((i) => i.item_type === "drawing_group").map((i) => i.item_id);
   const jobIds = items.filter((i) => i.item_type === "job").map((i) => i.item_id);
 
-  // Batch fetch all types in parallel (max 5 queries)
-  const [ownerData, companyData, billData, drawingData, jobData] = await Promise.all([
+  const billTaxIds = items.filter((i) => i.item_type === "bill").map((i) => i.item_id);
+
+  // Batch fetch all types in parallel
+  const [ownerData, companyData, billData, drawingData, jobData, billTaxData] = await Promise.all([
     ownerIds.length > 0
       ? supabase
           .from("owner_stock")
@@ -428,6 +456,13 @@ export async function resolveFolderItemLabels(
           .in("id", jobIds)
           .then((r) => r.data ?? [])
       : Promise.resolve([] as any[]),
+    billTaxIds.length > 0
+      ? supabase
+          .from("bills")
+          .select("id, invoice_no, sheet_name, amount_after_tax")
+          .in("id", billTaxIds)
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as any[]),
   ]);
 
   // Build lookup maps
@@ -436,6 +471,7 @@ export async function resolveFolderItemLabels(
   const billMap = new Map(billData.map((d: any) => [d.id, d]));
   const drawingMap = new Map(drawingData.map((d: any) => [d.id, d]));
   const jobMap = new Map(jobData.map((d: any) => [d.id, d]));
+  const billTaxMap = new Map(billTaxData.map((d: any) => [d.id, d]));
 
   return items.map((item) => {
     let label = `${item.item_type} (${item.item_id.slice(0, 8)})`;
@@ -455,6 +491,9 @@ export async function resolveFolderItemLabels(
     } else if (item.item_type === "job") {
       const data = jobMap.get(item.item_id);
       if (data?.job_no) label = `Job ${data.job_no}`;
+    } else if (item.item_type === "bill") {
+      const data = billTaxMap.get(item.item_id);
+      if (data) label = buildBillLabel(data, item.item_id);
     }
 
     return { ...item, label };
@@ -481,7 +520,7 @@ export async function fetchAvailableItems(
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
   // Fetch all item types in parallel
-  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes, taxBillRes] = await Promise.all([
     supabase
       .from("owner_stock")
       .select("id, folder_no, folio_number, source_of_metal")
@@ -502,6 +541,10 @@ export async function fetchAvailableItems(
       .from("jobs")
       .select("id, job_no")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("bills")
+      .select("id, invoice_no, sheet_name, amount_after_tax")
+      .order("invoice_date", { ascending: false, nullsFirst: false }),
   ]);
 
   const available: { type: FolderItemType; id: string; label: string }[] = [];
@@ -548,6 +591,12 @@ export async function fetchAvailableItems(
     }
   }
 
+  for (const b of taxBillRes.data ?? []) {
+    if (!existingIds.has(b.id)) {
+      available.push({ type: "bill", id: b.id, label: buildBillLabel(b, b.id) });
+    }
+  }
+
   return available;
 }
 
@@ -562,7 +611,7 @@ export async function fetchAvailableItems(
 export async function fetchAllItems(): Promise<
   { type: FolderItemType; id: string; label: string }[]
 > {
-  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes, taxBillRes] = await Promise.all([
     supabase
       .from("owner_stock")
       .select("id, folder_no, folio_number, source_of_metal")
@@ -583,6 +632,10 @@ export async function fetchAllItems(): Promise<
       .from("jobs")
       .select("id, job_no")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("bills")
+      .select("id, invoice_no, sheet_name, amount_after_tax")
+      .order("invoice_date", { ascending: false, nullsFirst: false }),
   ]);
 
   const items: { type: FolderItemType; id: string; label: string }[] = [];
@@ -618,6 +671,12 @@ export async function fetchAllItems(): Promise<
         id: j.id,
         label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})`,
       });
+    }
+  }
+
+  for (const b of taxBillRes.data ?? []) {
+    if (b?.id) {
+      items.push({ type: "bill", id: b.id, label: buildBillLabel(b, b.id) });
     }
   }
 

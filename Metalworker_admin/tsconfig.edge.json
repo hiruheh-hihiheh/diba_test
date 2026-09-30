@@ -1,0 +1,39 @@
+// Typecheck config for the process-bill-upload edge function.
+//
+// WHY THIS EXISTS
+// The function is Deno, not Node: it imports `npm:@supabase/supabase-js@2` and
+// uses the `Deno` global. Deno is not installed on the development machine, so
+// `deno check` cannot be run here. This config runs the project's own `tsc`
+// over the function with the Deno global and the npm: specifier stubbed, which
+// still catches everything that matters in our own code — wrong argument counts,
+// wrong property names, missing returns, unreachable branches.
+//
+// It is NOT a substitute for `deno check` on a machine that has Deno, and it is
+// not wired into the app build. It exists so the edge function can be verified
+// in CI or locally on a Node-only machine.
+//
+//   npx tsc -p tsconfig.edge.json
+//
+// The shim it points at is `supabase/functions/_selftest/shims/`, next to the
+// self-test scripts, because the two exist for the same reason: checking the
+// edge function without a Deno toolchain.
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "paths": {
+      "npm:@supabase/supabase-js@2": [
+        "./supabase/functions/_selftest/shims/supabase-js.d.ts"
+      ]
+    }
+  },
+  "include": ["supabase/functions/process-bill-upload/**/*.ts"]
+}

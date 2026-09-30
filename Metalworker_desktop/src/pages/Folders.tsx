@@ -19,6 +19,7 @@ import {
   ExternalLink,
   AlertTriangle,
   Briefcase,
+  Receipt,
   FolderSearch,
 } from "lucide-react";
 import {
@@ -62,6 +63,8 @@ function getItemIcon(type: FolderItemType) {
       return <PenTool size={16} className="text-success" />;
     case "job":
       return <Briefcase size={16} className="text-danger" />;
+    case "bill":
+      return <Receipt size={16} className="text-success" />;
   }
 }
 
@@ -77,6 +80,8 @@ function getItemTypeLabel(type: FolderItemType) {
       return "Drawing Group";
     case "job":
       return "Job";
+    case "bill":
+      return "Bill";
   }
 }
 
@@ -87,6 +92,7 @@ const itemRoute: Record<FolderItemType, { path: string; label: string }> = {
   bill_group: { path: "/group-bills", label: "Open Group Bills" },
   drawing_group: { path: "/group-drawings", label: "Open Group Drawings" },
   job: { path: "/jobs/labour", label: "Open Jobs" },
+  bill: { path: "/bills", label: "Open Bills" },
 };
 
 const ITEM_FILTERS: ("all" | FolderItemType)[] = [

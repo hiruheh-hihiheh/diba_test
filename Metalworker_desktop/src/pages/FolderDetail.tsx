@@ -17,6 +17,7 @@ import {
   PenTool,
   Briefcase,
   Layers,
+  Receipt,
   ExternalLink,
 } from "lucide-react";
 import {
@@ -42,6 +43,13 @@ import IconButton from "../components/ui/IconButton";
 import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
+import { BillDetailModal } from "../components/bills/BillDetailModal";
+import {
+  fetchFolderBillSummary,
+  formatMoney,
+  formatQuantity,
+} from "../services/bills";
+import type { FolderBillSummary } from "../types/bill";
 import { readableError } from "../utils/readableError";
 
 interface LibItem {
@@ -62,6 +70,8 @@ function getItemIcon(type: FolderItemType) {
       return <PenTool size={16} className="text-success" />;
     case "job":
       return <Briefcase size={16} className="text-danger" />;
+    case "bill":
+      return <Receipt size={16} className="text-success" />;
   }
 }
 
@@ -77,6 +87,8 @@ function getItemTypeLabel(type: FolderItemType) {
       return "Drawing Group";
     case "job":
       return "Job";
+    case "bill":
+      return "Bill";
   }
 }
 
@@ -87,6 +99,7 @@ const itemRoute: Record<FolderItemType, { path: string; label: string }> = {
   bill_group: { path: "/group-bills", label: "Open Group Bills" },
   drawing_group: { path: "/group-drawings", label: "Open Group Drawings" },
   job: { path: "/jobs/labour", label: "Open Jobs" },
+  bill: { path: "/bills", label: "Open Bills" },
 };
 
 const ITEM_FILTERS: ("all" | FolderItemType)[] = [
@@ -99,6 +112,10 @@ const ITEM_FILTERS: ("all" | FolderItemType)[] = [
   // them). Omitting "job" here hid every job from the filter chips even
   // though the page renders them.
   "job",
+  // `bill` is the tax-invoice record from the Bills section. It is a separate
+  // thing from `bill_group`, which is the older photo-group feature, so it gets
+  // its own chip rather than being folded in with it.
+  "bill",
 ];
 
 /** How many "available items" rows are mounted at once. See visibleCount. */
@@ -135,6 +152,17 @@ export default function FolderDetail() {
 
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [previewItem, setPreviewItem] = useState<LibItem | null>(null);
+
+  /* A bill opened from inside a folder gets the full bill dialog; the small
+     "this record lives on its own page" box is not enough for an invoice with
+     line items and three PDFs. */
+  const [billPreviewId, setBillPreviewId] = useState<string | null>(null);
+
+  /* Financial totals for the bills in this folder. Null until loaded, and null
+     again on failure, so the panel can say "could not load" instead of printing
+     a confident row of zeros that look like real figures. */
+  const [billSummary, setBillSummary] = useState<FolderBillSummary | null>(null);
+  const [billSummaryError, setBillSummaryError] = useState<string | null>(null);
 
   const load = useCallback(
     async (silent = false) => {
@@ -183,6 +211,33 @@ export default function FolderDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /* Bill totals are loaded on their own, deliberately separate from `load`.
+     A folder that predates migration 0006, or an RPC that has not been
+     deployed, must still open and still show its items: folding the summary
+     into the main load would turn "no summary available" into "this folder is
+     broken". */
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    fetchFolderBillSummary(id)
+      .then((s) => {
+        if (!cancelled) {
+          setBillSummary(s);
+          setBillSummaryError(null);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setBillSummary(null);
+        setBillSummaryError(
+          err instanceof Error ? err.message : "The bill totals could not be loaded."
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, folderItems.length]);
 
   usePageMeta(
     {
@@ -283,6 +338,23 @@ export default function FolderDetail() {
   }
 
   /* ── Single item actions ───────────────────────────── */
+
+  /**
+   * Open the details dialog for a folder item.
+   *
+   * Bills get the real bill dialog — amounts, line items and the three print
+   * copies — because a one-line "this record is managed on its own page" box
+   * would tell an operator nothing about the money in the folder. Every other
+   * type keeps the small box with a link to its page, which is all it has ever
+   * shown.
+   */
+  function openPreview(item: LibItem) {
+    if (item.type === "bill") {
+      setBillPreviewId(item.id);
+      return;
+    }
+    setPreviewItem(item);
+  }
 
   async function handleAddSingle(item: LibItem) {
     if (!id) return;
@@ -591,7 +663,7 @@ export default function FolderDetail() {
                           size="sm"
                           icon={<Eye size={14} />}
                           onClick={() =>
-                            setPreviewItem({
+                            openPreview({
                               type: item.item_type,
                               id: item.item_id,
                               label: item.label,
@@ -746,7 +818,7 @@ export default function FolderDetail() {
                             label={`Details for ${item.label}`}
                             size="sm"
                             icon={<Eye size={14} />}
-                            onClick={() => setPreviewItem(item)}
+                            onClick={() => openPreview(item)}
                           />
                           <IconButton
                             label={`Add ${item.label} to ${folder.name}`}
@@ -858,6 +930,57 @@ export default function FolderDetail() {
         </button>
       </BulkActionBar>
 
+      {/* ── Folder bill summary ──
+          Every figure below is over UNIQUE bills. The original, duplicate and
+          triplicate PDFs are three print copies of one invoice, and only the
+          invoice is stored once, so adding the three would triple every total.
+          The RPC (migration 0006) does the de-duplication; this block only
+          presents what it returns. */}
+      {billSummary && billSummary.total_bills > 0 && (
+        <section className="bg-surface border border-border rounded-2xl p-5">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+              <Receipt size={17} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-text">Bill summary</h2>
+              <p className="text-xs text-text-muted">
+                {billSummary.total_bills}{" "}
+                {billSummary.total_bills === 1 ? "bill" : "bills"} in this folder · each
+                invoice counted once, not once per print copy
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            <SummaryFigure label="Total quantity" value={formatQuantity(billSummary.total_quantity)} />
+            <SummaryFigure label="Amount before tax" value={formatMoney(billSummary.total_amount_before_tax)} />
+            <SummaryFigure label="CGST" value={formatMoney(billSummary.total_cgst)} />
+            <SummaryFigure label="SGST" value={formatMoney(billSummary.total_sgst)} />
+            <SummaryFigure label="IGST" value={formatMoney(billSummary.total_igst)} />
+            <SummaryFigure label="Total GST" value={formatMoney(billSummary.total_gst)} />
+            <SummaryFigure label="Round off" value={formatMoney(billSummary.total_round_off)} />
+            <SummaryFigure
+              label="Amount after tax"
+              value={formatMoney(billSummary.total_amount_after_tax)}
+              emphasis
+            />
+            <SummaryFigure label="Average bill value" value={formatMoney(billSummary.average_bill_value)} />
+            <SummaryFigure label="Average quantity" value={formatQuantity(billSummary.average_quantity)} />
+            <SummaryFigure
+              label="Average before tax"
+              value={formatMoney(billSummary.average_amount_before_tax)}
+            />
+          </div>
+        </section>
+      )}
+
+      {billSummaryError && (
+        <p className="text-xs text-text-muted px-1">
+          Bill totals are unavailable: {billSummaryError}
+        </p>
+      )}
+
       {/* ── Item details ── */}
       <Modal
         open={!!previewItem}
@@ -905,6 +1028,41 @@ export default function FolderDetail() {
           </div>
         )}
       </Modal>
+
+      {/* ── Bill details, opened from inside a folder ── */}
+      <BillDetailModal
+        billId={billPreviewId}
+        onClose={() => setBillPreviewId(null)}
+        onOpenFolderPicker={() => setBillPreviewId(null)}
+      />
+    </div>
+  );
+}
+
+/** One figure in the folder bill summary. */
+function SummaryFigure({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div
+      className={`px-3 py-2 rounded-xl ${
+        emphasis ? "bg-primary-muted" : "bg-bg-secondary border border-border"
+      }`}
+    >
+      <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">{label}</p>
+      <p
+        className={`text-sm font-bold tabular-nums mt-0.5 ${
+          emphasis ? "text-primary" : "text-text"
+        }`}
+      >
+        {value}
+      </p>
     </div>
   );
 }

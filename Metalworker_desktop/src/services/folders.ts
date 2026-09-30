@@ -258,6 +258,33 @@ function buildCompanyStockLabel(data: {
   return label;
 }
 /**
+ * Build a display label for a `bills` record.
+ *
+ * A bill is one real invoice from a tax-invoice workbook, so the invoice number
+ * is what identifies it — the sheet name is only a fallback for a workbook whose
+ * invoice cell was left blank. The three print copies are NOT part of the label:
+ * they are three renderings of this one record, and listing them as three items
+ * would make a folder of 2 bills look like a folder of 6.
+ */
+function buildBillLabel(data: {
+  invoice_no?: string | null;
+  sheet_name?: string | null;
+  amount_after_tax?: number | string | null;
+}, fallbackId: string): string {
+  const invoice = data.invoice_no?.trim();
+  const sheet = data.sheet_name?.trim();
+  const money =
+    data.amount_after_tax === null || data.amount_after_tax === undefined
+      ? null
+      : Number(data.amount_after_tax);
+  const amount = money !== null && Number.isFinite(money) ? ` • ₹${money.toLocaleString("en-IN")}` : "";
+
+  if (invoice) return `${invoice}${amount}`;
+  if (sheet) return `Bill ${sheet}${amount}`;
+  return `Bill (${fallbackId.slice(0, 8)})`;
+}
+
+/**
  * Resolve display labels for folder items by batch-fetching from their source tables.
  * This avoids N+1 queries by grouping items by type and fetching each group in one query.
  */
@@ -306,6 +333,16 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
         .then(({ data }) => { data?.forEach((r: { id: string; job_no: string | null }) => labelMap.set(r.id, r.job_no ? `Job ${r.job_no}` : "Job")); })
     );
   }
+  if (groups.has("bill")) {
+    fetches.push(
+      supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax").in("id", groups.get("bill")!)
+        .then(({ data }) => {
+          data?.forEach((r: { id: string; invoice_no: string | null; sheet_name: string | null; amount_after_tax: number | null }) => {
+            labelMap.set(r.id, buildBillLabel(r, r.id));
+          });
+        })
+    );
+  }
 
   await Promise.all(fetches);
 
@@ -326,6 +363,9 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
     } else if (item.item_type === "job") {
       const name = labelMap.get(item.item_id);
       if (name) label = name;
+    } else if (item.item_type === "bill") {
+      const built = labelMap.get(item.item_id);
+      if (built) label = built;
     }
 
     return { ...item, label };
@@ -342,12 +382,13 @@ export async function fetchAvailableItems(
 
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
-  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes, taxBillRes] = await Promise.all([
     supabase.from("owner_stock").select("id, folder_no, folio_number, source_of_metal").order("created_at", { ascending: false }),
     supabase.from("company_stock").select("id, folder_no, company_name, product_name").order("created_at", { ascending: false }),
     supabase.from("bill_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("drawing_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("jobs").select("id, job_no").order("created_at", { ascending: false }),
+    supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax, invoice_date").order("created_at", { ascending: false }),
   ]);
 
   const available: { type: FolderItemType; id: string; label: string }[] = [];
@@ -367,17 +408,24 @@ export async function fetchAvailableItems(
   for (const j of jobRes.data ?? []) {
     if (!existingIds.has(j.id)) available.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
   }
+  // One row per real invoice. The three print copies are deliberately absent:
+  // adding "Original", "Duplicate" and "Triplicate" separately would put three
+  // copies of one bill into a folder and triple every folder total.
+  for (const b of taxBillRes.data ?? []) {
+    if (!existingIds.has(b.id)) available.push({ type: "bill", id: b.id, label: buildBillLabel(b, b.id) });
+  }
 
   return available;
 }
 
 export async function fetchAllItems(): Promise<{ type: FolderItemType; id: string; label: string }[]> {
-  const [ownerRes, companyRes, billRes, drawingRes, jobRes] = await Promise.all([
+  const [ownerRes, companyRes, billRes, drawingRes, jobRes, taxBillRes] = await Promise.all([
     supabase.from("owner_stock").select("id, folder_no, folio_number, source_of_metal").order("created_at", { ascending: false }),
     supabase.from("company_stock").select("id, folder_no, company_name, product_name").order("created_at", { ascending: false }),
     supabase.from("bill_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("drawing_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("jobs").select("id, job_no").order("created_at", { ascending: false }),
+    supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax, invoice_date").order("created_at", { ascending: false }),
   ]);
 
   const items: { type: FolderItemType; id: string; label: string }[] = [];
@@ -387,6 +435,7 @@ export async function fetchAllItems(): Promise<{ type: FolderItemType; id: strin
   for (const g of billRes.data ?? []) items.push({ type: "bill_group", id: g.id, label: `Bill Group - ${g.name}` });
   for (const g of drawingRes.data ?? []) items.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
   for (const j of jobRes.data ?? []) items.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
+  for (const b of taxBillRes.data ?? []) items.push({ type: "bill", id: b.id, label: buildBillLabel(b, b.id) });
 
   return items;
 }

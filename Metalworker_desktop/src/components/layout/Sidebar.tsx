@@ -10,6 +10,7 @@ import {
   Package,
   Building2,
   FileText,
+  Receipt,
   PenTool,
   FolderOpen,
   ClipboardList,
@@ -84,6 +85,7 @@ const navSections: NavSection[] = [
   {
     title: "DOCUMENTS",
     items: [
+      { label: "Bills", icon: <Receipt size={20} />, path: "/bills" },
       { label: "Group Bills", icon: <FileText size={20} />, path: "/group-bills" },
       { label: "Group Drawings", icon: <PenTool size={20} />, path: "/group-drawings" },
     ],
