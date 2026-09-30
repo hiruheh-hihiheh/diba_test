@@ -227,6 +227,90 @@ deployed, uploads return a clear "function not found".
 
 ---
 
+## P3.9 Live browser test — three real bugs found and fixed
+
+The Bills section was verified against the **deployed** backend with a real admin
+session and the real `SAMPLE.xlsx`, not just compiled. Uploading a workbook and
+watching the actual pipeline run surfaced three defects, all of them frontend, all
+of them silent. `MetalWorkerApp` and Supabase were not touched.
+
+### Bug 1 — "Upload workbook" did nothing (reported)
+
+`Metalworker_desktop/src/components/bills/BillUploadPanel.tsx`
+
+The `<input type="file">` lives inside `{!fileName && (…)}`, so it is **unmounted**
+the moment a file is chosen. `start()` then read the file back off that input:
+
+```ts
+const file = inputRef.current?.files?.[0];
+if (!file || busy) return;      // always returns, with no error
+```
+
+`inputRef.current` was null, so the guard returned and the button appeared dead.
+
+**Fix**: the selected `File` is now held in state (`useState<File | null>`); name and
+size are *derived* from it so the three cannot disagree; `start()` reads the state;
+`reset()` clears it; and a missing file is an explicit `setStage("failed")` plus
+`setError("Choose a workbook to upload first.")` rather than a silent no-op. The
+upload no longer depends on a DOM node still existing. The admin panel was never
+affected — it already stored a `PickedBillWorkbook` descriptor in state.
+
+### Bug 2 — every joined field was `undefined`
+
+`BILL_WITH_UPLOAD` selects `*, bill_uploads!inner(original_filename, …_pdf_path, …)`.
+PostgREST returns an embedded row **nested** under the relation name; it is *not*
+merged onto the parent row. The service cast the response straight to `Bill` with
+`as unknown as Bill[]`, which compiles and yields `undefined` for every joined field.
+
+Live symptom: the WORKBOOK column was blank, the detail header read
+`Sheet "274 L" · undefined`, the delete button was `Delete undefined`, and all three
+copy buttons rendered **"The original copy is not available"** — no bill PDF could be
+viewed, downloaded or printed at all.
+
+**Fix**: the real row shape is now a named type (`BillRowWithUpload`) and
+`flattenBill()` lifts the embedded upload onto the row, renaming `status` to
+`upload_status` so it can never be read as a `bills` column. `created_at` is
+deliberately left as the **bill's** own timestamp, not the upload's. The cast is gone,
+so the shape mismatch is now a compile error rather than a blank column.
+
+### Bug 3 — the folder Bill summary never rendered
+
+`get_folder_bill_summary` is declared `RETURNS TABLE`, so PostgREST answers with a
+**set**: an array of one row. The service spread the array, which produces `{0: {…}}`,
+so every figure fell through to the `EMPTY` default, `total_bills` stayed `0`, and
+the `total_bills > 0` guard hid the panel — with no error, because nothing failed.
+
+A second mismatch hid behind the same cast: the RPC's column names
+(`amount_before_tax`, `cgst`, `avg_bill_value`) do not match `FolderBillSummary`'s
+(`total_amount_before_tax`, `total_cgst`, `average_bill_value`), so even a correct
+row would have rendered twelve zeros.
+
+**Fix**: the result is unwrapped (`Array.isArray(data) ? data[0] : data`) and the
+RPC-to-type translation is written out explicitly through `toFiniteNumber`, so the
+two sides cannot drift into a silent zero again. **No migration change was needed** —
+the deployed function is correct and is left alone.
+
+### Verified live, against the deployed backend
+
+| Check | Result |
+| --- | --- |
+| `POST …/functions/v1/process-bill-upload` | HTTP 200, 37,198-byte body, `ok: true`, `invoice_count: 2` |
+| All seven steps, in order | Reading file -> Uploading workbook -> Validating workbook -> Reading invoices -> Generating PDFs -> Uploading PDFs -> Saving bill records -> 2 bills created |
+| Returned PDFs | `SAMPLE_original.pdf`, `SAMPLE_duplicate.pdf`, `SAMPLE_triplicate.pdf` |
+| Stored PDF fetched via signed URL | 200 `application/pdf`, 17,753 bytes, byte-identical to the self-test output; valid `%PDF-1.4` / `%%EOF`, 2 pages, both invoice numbers, both totals, labelled ORIGINAL |
+| `bills` rows | 274 L: 13,250.00 / 1,192.50 / 2,385.00 / 15,635.00 — 292: 35,837.00 / 3,225.33 / 6,450.66 / 42,288.00, round off 0.34 |
+| `.csv` rejected | "is not an Excel workbook", upload button disabled |
+| `reset()` (X) | picker returns, input remounts empty, no stale file |
+| Add 2 bills to a folder | folder item count 0 -> 2; labels `SEW/292/2026-27 • ₹42,288` and `SEW/274/2026-27 • ₹15,635`; badged **Bill**, distinct from the existing **Bill Group** |
+| `get_folder_bill_summary` via the app | 2 bills, 3, ₹49,087.00, ₹4,417.83, ₹4,417.83, ₹0.00, ₹8,835.66, ₹0.34, **₹57,923.00**, ₹28,961.50, 1.5, ₹24,543.50 — every acceptance figure |
+| Active-admin gate on the RPC | anon key rejected with `P0001 not_authenticated`; a function that does not exist returns `PGRST202`. The RPC exists and refuses non-admins. |
+| Re-verification after the fixes | admin `tsc` + `eslint` (0 problems) + `expo export` (`/bills` 21 KB) + `lint:edge`; desktop `tsc -b` + `lint` (53 = baseline, zero in bill files) + `build`; `npm run bills:selftest` all pass |
+
+**Test data left in the live project**: 1 workbook (`SAMPLE.xlsx`, 3 PDFs), 2 bills, and
+2 links in the pre-existing folder named `test`. Delete it from the Bills screen
+("Delete workbook") when you no longer want it — that removes the folder links, the
+bill rows, the line items, all three PDFs and the upload row.
+
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete

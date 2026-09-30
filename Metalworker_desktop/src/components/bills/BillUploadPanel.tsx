@@ -53,57 +53,73 @@ export function BillUploadPanel({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [dragging, setDragging] = useState(false);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [fileSize, setFileSize] = useState<number | null>(null);
+  /* The selected File is held in state, NOT read back off the <input> when the
+     upload starts. The input is unmounted as soon as a file is chosen (the
+     picker gives way to the "chosen file" card), so `inputRef.current.files`
+     is null by the time "Upload workbook" is pressed — reading it there made
+     the button do nothing at all, with no error. The upload must not depend on
+     a DOM node still existing. Name and size are derived from this one object
+     so they cannot disagree with it. */
+  const [file, setFile] = useState<File | null>(null);
   const [stage, setStage] = useState<BillUploadStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BillUploadResult | null>(null);
+
+  const fileName = file?.name ?? null;
+  const fileSize = file?.size ?? null;
 
   const finished = stage === "completed" || stage === "failed";
   const busy = stage !== null && !finished;
 
   function reset() {
-    setFileName(null);
-    setFileSize(null);
+    setFile(null);
     setStage(null);
     setError(null);
     setResult(null);
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  const choose = useCallback((file: File | null | undefined) => {
-    if (!file) return;
+  const choose = useCallback((picked: File | null | undefined) => {
+    if (!picked) return;
     setError(null);
     setResult(null);
 
-    setFileName(file.name);
-    setFileSize(file.size);
+    /* Retained even when validation rejects it, so the "chosen file" card can
+       name the file the user actually picked — that is the whole point of the
+       error. `start()` re-checks before uploading, and its button is disabled,
+       so a rejected file can never be sent. */
+    setFile(picked);
+    setStage(null);
 
-    if (!/\.xlsx$/i.test(file.name)) {
+    if (!/\.xlsx$/i.test(picked.name)) {
       setStage("failed");
       setError(
-        `“${file.name}” is not an Excel workbook. Upload the original .xlsx file — not .xls, .csv or a PDF.`
+        `“${picked.name}” is not an Excel workbook. Upload the original .xlsx file — not .xls, .csv or a PDF.`
       );
       return;
     }
-    if (file.size === 0) {
+    if (picked.size === 0) {
       setStage("failed");
       setError("That file is empty.");
       return;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
+    if (picked.size > MAX_UPLOAD_BYTES) {
       setStage("failed");
       setError(
-        `“${file.name}” is ${(file.size / 1024 / 1024).toFixed(1)} MB, over the 50 MB limit.`
+        `“${picked.name}” is ${(picked.size / 1024 / 1024).toFixed(1)} MB, over the 50 MB limit.`
       );
-      return;
     }
-    setStage(null);
   }, []);
 
   async function start() {
-    const file = inputRef.current?.files?.[0];
-    if (!file || busy) return;
+    if (busy) return;
+    /* Explicit failure, never a silent no-op: a missing file is a bug in the
+       flow or a stale click, and the user must be told which it was. */
+    if (!file) {
+      setStage("failed");
+      setError("Choose a workbook to upload first.");
+      return;
+    }
     setError(null);
     setStage("reading");
     try {

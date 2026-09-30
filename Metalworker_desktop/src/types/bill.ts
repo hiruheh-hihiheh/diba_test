@@ -48,13 +48,15 @@ export interface Bill extends BillColumns {
   sheet_name: string;
 
   // From the joined upload — needed to show the filename and the copy links.
+  // PostgREST returns these NESTED under `bill_uploads`; the service's
+  // `flattenBill` lifts them onto the row so screens can read them flat.
   original_filename: string;
   base_name: string;
-  created_at: string;
   original_pdf_path: string | null;
   duplicate_pdf_path: string | null;
   triplicate_pdf_path: string | null;
-  upload_status: BillUpload["status"];
+  /** The upload's own status, renamed so it cannot be read as a `bills` column. */
+  upload_status: BillUpload["status"] | null;
 }
 
 /** Columns that live on `bills` itself. */

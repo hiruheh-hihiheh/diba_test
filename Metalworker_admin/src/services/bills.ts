@@ -24,6 +24,7 @@ import { supabase } from "./supabase";
 import { logAudit } from "./auditLog";
 import type {
   Bill,
+  BillColumns,
   BillCopy,
   BillLineItem,
   BillUpload,
@@ -55,6 +56,62 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
  */
 const BILL_WITH_UPLOAD =
   "*, bill_uploads!inner(id, original_filename, base_name, created_at, status, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path)";
+
+/** The upload columns embedded by `BILL_WITH_UPLOAD`. */
+type EmbeddedUpload = Pick<
+  BillUpload,
+  | "id"
+  | "original_filename"
+  | "base_name"
+  | "created_at"
+  | "status"
+  | "original_pdf_path"
+  | "duplicate_pdf_path"
+  | "triplicate_pdf_path"
+>;
+
+/**
+ * What PostgREST ACTUALLY returns for `BILL_WITH_UPLOAD`.
+ *
+ * The embedded row arrives NESTED under the relation name. It is NOT merged onto
+ * the parent row, so `original_filename` and the three `*_pdf_path` values are
+ * only reachable as `row.bill_uploads.original_filename`. Declaring this shape
+ * is what makes the flattening below visible to the type checker — casting the
+ * response straight to `Bill` compiles, silently yields `undefined` for every
+ * joined field, and breaks the filename, the three copy buttons, the delete
+ * confirmation and the detail header all at once with no error anywhere.
+ */
+type BillRowWithUpload = BillColumns & {
+  bill_upload_id: string;
+  sheet_name: string;
+  bill_uploads: EmbeddedUpload | null;
+};
+
+/**
+ * Lift the embedded upload onto the bill row, which is the shape `Bill`
+ * promises and every screen reads.
+ *
+ * `status` is renamed to `upload_status` so it can never be mistaken for a
+ * `bills` column, and `created_at` is deliberately left as the BILL's own
+ * timestamp — `bills` has one too, and the upload's is not what "created" means
+ * to a user looking at a row.
+ *
+ * `!inner` means the upload is always present, but the type is honest about the
+ * possibility: a missing parent degrades to empty strings and null paths, which
+ * the copy buttons already render as "not available" instead of crashing.
+ */
+function flattenBill(row: BillRowWithUpload): Bill {
+  const { bill_uploads: upload, ...own } = row;
+  return {
+    ...own,
+    original_filename: upload?.original_filename ?? "",
+    base_name: upload?.base_name ?? "",
+    original_pdf_path: upload?.original_pdf_path ?? null,
+    duplicate_pdf_path: upload?.duplicate_pdf_path ?? null,
+    triplicate_pdf_path: upload?.triplicate_pdf_path ?? null,
+    upload_status: upload?.status ?? null,
+  };
+}
 
 export interface BillQuery {
   /** Free text: invoice no, filename, sheet name, party name or party GST. */
@@ -138,7 +195,12 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   const { data, error, count } = await q.range(from, from + pageSize - 1);
   if (error) throw new Error(error.message);
 
-  return { rows: (data ?? []) as unknown as Bill[], total: count ?? 0, page, pageSize };
+  return {
+    rows: ((data ?? []) as unknown as BillRowWithUpload[]).map(flattenBill),
+    total: count ?? 0,
+    page,
+    pageSize,
+  };
 }
 
 export async function fetchBill(id: string): Promise<Bill> {
@@ -148,7 +210,7 @@ export async function fetchBill(id: string): Promise<Bill> {
     .eq("id", id)
     .single();
   if (error) throw new Error(error.message);
-  return data as unknown as Bill;
+  return flattenBill(data as unknown as BillRowWithUpload);
 }
 
 export async function fetchBillLineItems(billId: string): Promise<BillLineItem[]> {
@@ -692,16 +754,58 @@ export async function deleteBillUpload(uploadId: string): Promise<{ ok: boolean;
  * regardless of RLS and because the de-duplication rule (one row per bill, never
  * per print copy) must not be reimplemented twice and drift.
  */
+/**
+ * One row of `get_folder_bill_summary`'s result, as migration 0006 declares it.
+ *
+ * These column names deliberately do NOT all match `FolderBillSummary` (0006 says
+ * `amount_before_tax`, the type says `total_amount_before_tax`). Rather than
+ * pretend the two agree, the mapping below states the translation explicitly, so
+ * neither side can drift into a silent zero.
+ */
+interface FolderBillSummaryRpcRow {
+  total_bills: number | string | null;
+  total_quantity: number | string | null;
+  amount_before_tax: number | string | null;
+  cgst: number | string | null;
+  sgst: number | string | null;
+  igst: number | string | null;
+  total_gst: number | string | null;
+  amount_after_tax: number | string | null;
+  round_off: number | string | null;
+  avg_bill_value: number | string | null;
+  avg_quantity: number | string | null;
+  avg_amount_before_tax: number | string | null;
+}
+
 export async function fetchFolderBillSummary(folderId: string): Promise<FolderBillSummary> {
   const { data, error } = await supabase.rpc("get_folder_bill_summary", {
     p_folder_id: folderId,
   });
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as Partial<FolderBillSummary>;
 
-  // The RPC already guards against division by zero, but a client that trusted
-  // `undefined` from a null average would print "₹NaN" on an empty folder.
-  return { ...EMPTY_FOLDER_BILL_SUMMARY, ...row };
+  /* `RETURNS TABLE` is a SET, so PostgREST answers with an ARRAY holding one row
+     - not the row itself. Spreading the array would yield `{0: {…}}`, every named
+     figure would fall through to the EMPTY default, and the summary panel would
+     silently never render. Unwrap before reading anything. */
+  const row = (Array.isArray(data) ? data[0] : data) as FolderBillSummaryRpcRow | undefined;
+  if (!row) return { ...EMPTY_FOLDER_BILL_SUMMARY };
+
+  /* The RPC already guards division by zero; the `?? 0` is so a null average can
+     never reach a formatter as NaN on an empty folder. */
+  return {
+    total_bills: toFiniteNumber(row.total_bills) ?? 0,
+    total_quantity: toFiniteNumber(row.total_quantity) ?? 0,
+    total_amount_before_tax: toFiniteNumber(row.amount_before_tax) ?? 0,
+    total_cgst: toFiniteNumber(row.cgst) ?? 0,
+    total_sgst: toFiniteNumber(row.sgst) ?? 0,
+    total_igst: toFiniteNumber(row.igst) ?? 0,
+    total_gst: toFiniteNumber(row.total_gst) ?? 0,
+    total_amount_after_tax: toFiniteNumber(row.amount_after_tax) ?? 0,
+    total_round_off: toFiniteNumber(row.round_off) ?? 0,
+    average_bill_value: toFiniteNumber(row.avg_bill_value) ?? 0,
+    average_quantity: toFiniteNumber(row.avg_quantity) ?? 0,
+    average_amount_before_tax: toFiniteNumber(row.avg_amount_before_tax) ?? 0,
+  };
 }
 
 /* ──────────────────────────────────────────────
