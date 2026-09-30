@@ -5,12 +5,13 @@
 //
 //   - exactly three files, named <base>_original/_duplicate/_triplicate.pdf
 //   - a %PDF header and a valid trailer
-//   - one page per bill, and /Pages /Count agreeing with that
+//   - at least one page per bill, and every page attributable to an invoice
 //   - `startxref` landing on the xref table, and every xref offset resolving
 //     to the object it claims (this is the check that would catch a
 //     byte-offset bug in the writer)
 //   - one content stream per page
-//   - every page carrying its own invoice number, total and quantity
+//   - each bill opening on its own page carrying its own invoice number,
+//     grand total and quantity
 //
 // `audit.ts` is the companion layout auditor: this file proves the file is
 // well-formed, audit.ts proves the page looks like an invoice.
@@ -45,12 +46,32 @@ const check = (ok: boolean, label: string, detail = ""): void => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  ${detail}` : ""}`);
 };
 
-/** `1234567.5` -> `"1,234,567.50"`, only to predict what the renderer prints. */
-const groupThousands = (n: number): string =>
-  Math.abs(n)
+/**
+ * The forms a total may be printed in, so the test does not depend on which one
+ * the renderer picked.
+ *
+ * The invoice uses INDIAN digit grouping — `3,99,991.00` — which differs from
+ * plain thousands grouping (`399,991.00`) from six digits upward, so both are
+ * accepted. The point of the check is that the AMOUNT is on the page, not which
+ * comma placement was used to write it.
+ */
+const groupIndian = (n: number): string => {
+  const [whole, frac] = Math.abs(n).toFixed(2).split(".");
+  const head = whole.length > 3 ? whole.slice(0, whole.length - 3) : "";
+  const tail = whole.slice(-3);
+  let grouped = "";
+  for (let i = head.length; i > 0; i -= 2) {
+    grouped = head.slice(Math.max(0, i - 2), i) + (grouped ? `,${grouped}` : "");
+  }
+  return `${n < 0 ? "-" : ""}${grouped ? `${grouped},${tail}` : tail}.${frac}`;
+};
+
+const groupWestern = (n: number): string =>
+  `${n < 0 ? "-" : ""}${Math.abs(n)
     .toFixed(2)
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-    .replace(/^/, n < 0 ? "-" : "");
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+
+const amountForms = (n: number): string[] => [n.toFixed(2), groupIndian(n), groupWestern(n)];
 
 console.log(
   `workbook: ${workbook}\n${bills.length} bill(s) from ${wb.sheets.map((s) => s.name).join(", ")}\n`
@@ -78,14 +99,12 @@ for (const copy of COPY_ORDER) {
   check(raw.startsWith("%PDF-1.4"), "valid PDF header", JSON.stringify(raw.slice(0, 8)));
   check(raw.trimEnd().endsWith("%%EOF"), "valid PDF trailer");
 
-  const pageCount = (raw.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
-  check(pageCount === bills.length, "one page per bill", `${pageCount} pages, ${bills.length} bills`);
-
   const declared = /\/Count\s+(\d+)/.exec(raw);
+  const pageCount = (raw.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
   check(
-    !!declared && Number(declared[1]) === bills.length,
-    "/Pages /Count matches",
-    declared ? declared[1] : "absent"
+    !!declared && Number(declared[1]) === pageCount,
+    "/Pages /Count matches the real page count",
+    `declared ${declared ? declared[1] : "absent"}, found ${pageCount}`
   );
 
   // `startxref` must point at the xref table itself, not at a stale offset.
@@ -130,31 +149,78 @@ for (const copy of COPY_ORDER) {
     `${xrefEntries} objects checked`
   );
 
-  const streams = (raw.match(/\/Length \d+ >>\s*stream/g) ?? []).length;
-  check(streams === bills.length, "one content stream per page", `${streams} streams`);
+  /* A bill MAY span two pages. The production workbook has invoices with ten
+     line items, and at a readable font those legitimately do not fit on one A4
+     sheet. Flowing onto a second page is correct; what must never happen is a
+     bill losing its content, pages appearing out of order, or a page belonging
+     to no bill at all.
 
-  // Each page must carry its own invoice no, total and quantity, so an
-  // overflowing or mis-ordered page can never pass silently. Content streams
-  // are uncompressed here, so a plain substring test on the per-page slice is
-  // enough — no PDF parser needed.
+     Pages are therefore attributed to bills through the FOOTER, which carries
+     the invoice number, rather than by assuming page N is bill N. That keeps the
+     check honest whether a bill takes one page or two. */
   const pages = [...raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)].map((m) => m[1]);
+  check(
+    pages.length >= bills.length,
+    "at least one page per bill",
+    `${pages.length} pages, ${bills.length} bills`
+  );
+  check(
+    (raw.match(/\/Length \d+ >>\s*stream/g) ?? []).length === pages.length,
+    "one content stream per page",
+    `${pages.length} streams`
+  );
+
+  // Which pages belong to which invoice, read from the footer run itself, which
+  // reads `ORIGINAL   |   SEW/305/2026-27   |   Page 6 of 23`.
+  const ownerOf = pages.map((p) => {
+    const m = /\((?:ORIGINAL|DUPLICATE|TRIPLICATE)\s*\|\s*([^|)]*?)\s*\|\s*Page\s*\d+\s*of\s*\d+\)/.exec(p);
+    return m ? m[1].trim() : null;
+  });
+  const unattributed = ownerOf.filter((o) => o === null).length;
+  check(unattributed === 0, "every page belongs to an invoice", `${unattributed} unattributed`);
+
+  const seen = new Set<string>();
+  let orderProblems = 0;
+  let contentProblems = 0;
+  let lastFirstPage = -1;
 
   bills.forEach((bill, i) => {
-    const page = pages[i] ?? "";
-    const has = (needle: string) => page.includes(`(${needle})`);
-    const no = has(bill.original.invoiceNo ?? "");
-    // The invoice prints grouped thousands ("15,635.00"), so both the grouped
-    // and the bare form are accepted: which one appears is a formatting choice,
-    // the amount itself is what is being asserted.
+    const no = bill.original.invoiceNo ?? "";
+    const own = ownerOf.map((o, idx) => (o === no ? idx : -1)).filter((idx) => idx >= 0);
+    if (own.length === 0) {
+      orderProblems++;
+      check(false, `${no || "bill " + i} was rendered at all`);
+      return;
+    }
+    /* Pages must run in worksheet order and must not interleave: each bill's first
+       page has to come after the previous bill's first page. */
+    if (own[0] <= lastFirstPage) orderProblems++;
+    lastFirstPage = own[0];
+    seen.add(no);
+
+    // The invoice's identity belongs on its opening page.
+    const first = pages[own[0]] ?? "";
+    const opensOk = first.includes(`(${no})`);
+
+    /* Its figures may sit on any of its pages — a ten-item invoice at a readable
+       font legitimately puts the totals on the second sheet — so the whole span
+       has to be searched. */
+    const span = own.map((idx) => pages[idx] ?? "").join("\n");
+    const has = (needle: string) => needle !== "" && span.includes(`(${needle})`);
     const amount = bill.original.amountAfterTax;
-    const total = has(amount.toFixed(2)) || has(groupThousands(amount));
-    const qty = has(String(bill.original.totalQuantity));
+    const hasTotal = amountForms(amount).some((f) => has(f));
+    const hasQty = has(String(bill.original.totalQuantity));
+    if (!opensOk || !hasTotal || !hasQty) contentProblems++;
+
     check(
-      no && total && qty,
-      `page ${i + 1} carries ${bill.original.invoiceNo}`,
-      `no=${no} total=${total} qty=${qty}`
+      opensOk && hasTotal && hasQty,
+      `${bill.original.invoiceNo} rendered complete across ${own.length} page(s)`,
+      `opens=${opensOk} total=${hasTotal} qty=${hasQty}`
     );
   });
+  check(orderProblems === 0, "pages are in worksheet order, none skipped", `${orderProblems} problem(s)`);
+  check(contentProblems === 0, "no bill lost its invoice no, total or quantity", `${contentProblems} problem(s)`);
+  check(seen.size === bills.length, "every bill was rendered", `${seen.size}/${bills.length}`);
 }
 
 console.log(

@@ -65,6 +65,32 @@ export type CopyKind = "original" | "duplicate" | "triplicate";
 
 export const COPY_ORDER: readonly CopyKind[] = ["original", "duplicate", "triplicate"];
 
+/**
+ * One row of the invoice's reference block, as the SOURCE wrote it.
+ *
+ * The reference block is a fixed part of the template — INVOICE NO., Our Challan
+ * No., Your Challan No., the order number, Eway Bill No., each with a Date. In
+ * the production workbook those five rows are always present, and on most sheets
+ * "Your Challan No." and "Eway Bill No." are present but BLANK.
+ *
+ * Recording the row separately from its value is the whole point. If the renderer
+ * only ever saw a non-empty value it would have to guess whether a missing value
+ * means "the template has no such field" (drop the row) or "this invoice left it
+ * blank" (keep the row). Only the second is true, and conflating them silently
+ * changes the invoice's structure. So the row is recorded, and the value may be
+ * null.
+ */
+export interface ReferenceRow {
+  /** The field's name as printed on the invoice, e.g. "Your Challan No.". */
+  label: string;
+  /** The identifier, or null when the source left this cell blank. */
+  value: string | null;
+  /** The row's own `Date:` cell, or null when blank or absent. */
+  date: string | null;
+  /** True when the source itself had no `Date:` cell on this row. */
+  hasDateCell: boolean;
+}
+
 /** One printed copy of the invoice. Rendered on its own PDF page. */
 export interface BillCopy {
   kind: CopyKind;
@@ -94,11 +120,28 @@ export interface BillCopy {
   orderNoLabel: string | null;
   orderDate: string | null;
   ewayBillNo: string | null;
+  /**
+   * The "Date:" sub-cell of the e-way row.
+   *
+   * Display-only: the production workbook writes `Eway Bill No.:` with a `Date:`
+   * beside it, and the invoice has to show both halves of that row even when
+   * they are blank. There is deliberately no column for it in `bills` — the PDF
+   * is rendered from this parse in the same request, so nothing needs storing.
+   */
+  ewayBillDate: string | null;
   placeOfSupply: string | null;
   state: string | null;
   stateCode: string | null;
   transporterMode: string | null;
   vehicleNumber: string | null;
+
+  /**
+   * The reference block exactly as the source laid it out, in source row order.
+   *
+   * Empty entries are KEPT: a blank `Your Challan No.` is still a row of the
+   * invoice. See `ReferenceRow`.
+   */
+  referenceRows: ReferenceRow[];
 
   lineItems: BillLineItem[];
   totalQuantity: number | null;
@@ -512,6 +555,33 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     return serial !== null ? serialToDate(serial) : null;
   };
 
+  /* ---- the reference block, in the order the source wrote it --------------
+   *
+   * Sorted by row so the PDF's grid follows the workbook rather than a hardcoded
+   * ordering, and a label found in the source is emitted even when its value is
+   * null. `invoiceNo` is included only when the source really had that label; the
+   * fallback below guarantees at least the invoice row so the grid is never empty.
+   */
+  const referenceRows: ReferenceRow[] = [
+    { hit: invoiceNo?.hit ?? null, label: "Invoice No.", value: invoiceNo?.value ?? null },
+    { hit: ourChallan?.hit ?? null, label: "Our Challan No.", value: ourChallan?.value ?? null },
+    { hit: yourChallan?.hit ?? null, label: "Your Challan No.", value: yourChallan?.value ?? null },
+    {
+      hit: order?.hit ?? null,
+      label: (order?.hit.text ?? "Order No.").replace(/[:.\s]+$/, ""),
+      value: order?.value ?? null,
+    },
+    { hit: eway?.hit ?? null, label: "Eway Bill No.", value: eway?.value ?? null },
+  ]
+    .filter((entry) => entry.hit !== null || entry.label === "Invoice No.")
+    .sort((a, b) => (a.hit?.row ?? Number.MAX_SAFE_INTEGER) - (b.hit?.row ?? Number.MAX_SAFE_INTEGER))
+    .map((entry) => ({
+      label: entry.label,
+      value: entry.value,
+      date: entry.hit ? dateOnRow(entry.hit.row) : null,
+      hasDateCell: entry.hit ? r.row(entry.hit.row).some((c) => /^date\s*:?$/i.test(c.text)) : false,
+    }));
+
   /* ---- state / party ---------------------------------------------------- */
 
   // The template merges "State: Maharashtra       State Code:27" into one cell
@@ -713,6 +783,8 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     orderNoLabel: order?.hit.text ?? null,
     orderDate: order ? dateOnRow(order.hit.row) : null,
     ewayBillNo: eway?.value ?? null,
+    ewayBillDate: eway ? dateOnRow(eway.hit.row) : null,
+    referenceRows,
     placeOfSupply: supply?.value ?? null,
     state,
     stateCode,

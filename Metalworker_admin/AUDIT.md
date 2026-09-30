@@ -411,6 +411,161 @@ the string `WITHMETAL` appears on no screen.
 Admin `tsc` + `eslint` + `expo export` + `lint:edge` clean; desktop `tsc -b` +
 `lint` (53 = baseline, zero in bill files) + `build` clean. `MetalWorkerApp` untouched.
 
+## P3.11 PDF layout corrected against the production workbook
+
+`BILL 301 TO.xlsx` (20 invoices, 301-320 plus 311L-318L) is the production
+invoice format and is now the layout reference. All 20 sheets parse with none
+skipped, and the workbook supplies both job classifications for real: `WITHMETAL`
+on 301-310, 319, 320 and `LABOUR JOB` on 311L-318L.
+
+This pass is renderer and parser only. No migration, no column, no RLS, no upload
+or storage change, no folder change, and `MetalWorkerApp` untouched.
+
+### What the reference workbook revealed
+
+Sheet `301`, ORIGINAL copy, is a **fixed** reference block of five labelled rows,
+each with its own `Date:` cell:
+
+| row | label | value | Date |
+| --- | --- | --- | --- |
+| 9 | `INVOICE NO.:` | `SEW/301/2026-27` | 23/09/2026 |
+| 10 | `Our Challan No.:` | `SEW/301/2026-27` | 23/09/2026 |
+| 11 | `Your Challan No.:` | **blank** | **blank** |
+| 12 | `Purchase Order No.:` | `WT/PO/TRM/600317` | 22/09/2026 |
+| 13 | `Eway Bill No.:` | **blank** | **blank** |
+
+The old renderer built that grid from the values it happened to have, so
+`Your Challan No.`, `Your Challan Date`, `Eway Bill No.` and their dates were
+pushed conditionally and simply vanished on every sheet of this workbook. The
+invoice on the page was shorter than the invoice in the workbook.
+
+### Fix 1 — the reference block follows the source, not the data
+
+`parseBills` now records the block as `referenceRows: ReferenceRow[]`, in source
+row order, with `value` and `date` nullable and a `hasDateCell` flag. The row and
+its value are separate facts, which is the only way to tell "the template has no
+such field" from "this invoice left it blank" — and only the second is true.
+
+`referenceGrid()` in the renderer walks that list and emits a row per label plus
+a date row per `Date:` cell, **always**. A blank value draws nothing
+(`page.text` skips an empty string) so the cell keeps its border and its space
+and reads as an empty field. The label column is measured from the longest label
+so `Purchase Order No.` cannot run into the value column.
+
+`ewayBillDate` is parsed for the e-way row. It is display-only and deliberately
+has no column: the PDF is rendered from the same parse in the same request.
+
+The parser's own reference row is only a floor for a sheet whose block could not
+be read at all. It never filters a row out.
+
+### Fix 2 — a line-item cell with no value is a blank cell
+
+`orDash` is gone. `money`/`qty` still print `-` because the template writes a
+literal `-` on the IGST row and the totals must mirror it, but the item table now
+uses `cellMoney`/`cellQty`, which return `""`. All seven columns are drawn on
+every row regardless: SR.NO., DESCRIPTION, HSN CODE, UOM, QTY, RATE, AMOUNT.
+
+The reverse-charge totals row is likewise unconditional. On this workbook it is
+`GST Payable on reverse` with no figure, so it now prints the label with an empty
+value cell instead of not printing at all.
+
+### Fix 3 — type scale, and no column can be cut off
+
+A named `T` scale replaced scattered 7-7.5pt literals: seller 12.5/8.6, heading
+16.5, badge 9.5, metadata 8.6/9, table 8.4, totals 9/9.4 with the grand total at
+10, words 9, bank and terms 8.4, signatures 8.4, footer 7.5.
+
+Column widths are derived from the usable A4 width rather than chosen, with
+`COL_AMT` absorbing the remainder, so the table always ends exactly on the right
+margin. `DESCRIPTION` gave up 15pt to `HSN CODE` and the numeric columns, because
+it is the only free-text column. Each column heading is drawn at a size that fits
+**its own** column rather than at one global size, so `DESCRIPTION` is never
+cramped and `UOM` is never clipped. Long descriptions wrap and grow the row.
+
+Continuation rows were already correct in the parser — a row with no SR.NO. is
+appended to the previous description — and are now confirmed against this
+workbook, where e.g. sheet 320 merges `MAIN ROLLER HARD FOR RIGHT ANGLE MACHINE
+DIA` + `152 X 50MM [3017288 - 29586 AND 29587]` into one 83-character item, and
+sheet 310 carries a 139-character description.
+
+### Fix 4 — a latent page-break bug that made the new sizes unusable
+
+`renderTable` (and every other block) began with `const { page } = sheet`. But
+`Sheet.reserve()` can call `newPage()`, which **replaces** `sheet.page`. So after
+a break the block kept drawing on the *previous* page at coordinates that had
+restarted from the top margin — the repeated table header landed on top of the
+seller block, and the real new page received only whatever came after. This was
+already wrong before the type change; the larger fonts simply made it happen on
+every multi-item invoice.
+
+The page is now read from the sheet at each draw site. The final footer pass is
+the one deliberate exception, because it iterates all pages and must stamp each
+one.
+
+### Fix 5 — pagination that does not orphan half an invoice
+
+The table broke against a fixed guess at the space needed below it, so a bill
+overflowing by one or two rows pushed those rows onto a fresh page and left the
+totals, words, bank block, terms, certification note and signatures behind. The
+auditor caught it as 107-330pt holes.
+
+`trailingHeight(bill)` now measures everything below the table, and the table
+breaks against `CONTENT_BOTTOM - trailing`. Each measure function is the single
+source of truth for its block: the renderer places the block with the same number
+the reservation used, so the two cannot drift.
+
+Result on `BILL 301 TO.xlsx`: 23 pages for 20 invoices. 305, 306 and 310 have 7,
+8 and 10 line items and legitimately span two sheets at a readable font, which
+the requirements explicitly allow. The auditor reports **no problems** — no
+overlap, nothing off the page, no orphaned page, no mid-page hole.
+
+### Tests
+
+Two new self-tests, both driven by the source rather than by hardcoded lists:
+
+- `test-pdf.ts` reworked. A bill may span two pages, so pages are attributed
+  through the footer instead of assuming page N is bill N; it asserts every page
+  belongs to an invoice, pages run in worksheet order without interleaving, and
+  no bill lost its invoice number, total or quantity across its whole span. It
+  also accepts both Indian and Western digit grouping, because `3,99,991.00` and
+  `399,991.00` are the same number and the test should not care which was used.
+- `test-structure.ts` new. The blank-value requirement as an assertion: every
+  reference row the source declared is still drawn, rows with a blank value keep
+  their label, all seven columns are on every table, no text starts outside the
+  printable width, and no empty cell was given a dash the workbook did not
+  contain.
+- `test-jobkind.ts` reworked to work off any workbook and to report which sheets
+  are which kind.
+
+`npm run bills:selftest` runs parse, PDF structure, job kind, structure and the
+layout audit. All five pass on **both** `SAMPLE.xlsx` and `BILL 301 TO.xlsx`.
+
+### Verified by reading the rendered output
+
+Page 1 (`SEW/301`, WITHMETAL) shows the `WITH METAL` badge inside the heading box;
+the reference grid with all six source rows including blank `Your Challan No.`,
+`Your Challan Date`, `Eway Bill No.` and `Eway Bill Date`; the two-item table with
+HSN `82073000`, UOM `NOS` and both continuation rows wrapped onto their own
+items; `Total Amount After Tax 77,290.00` boxed; `GST Payable on Reverse Charge`
+present with an empty value; and amount in words, bank details and terms below.
+Across the document, pages 1-13, 22, 23 carry `WITH METAL` and pages 14-21 carry
+`LABOUR JOB`, matching the workbook sheet for sheet.
+
+### Checks
+
+Admin `tsc` 0, `eslint` 0, `expo export` ok, `lint:edge` 0. Desktop `tsc -b` 0,
+`lint` 53 = the pre-existing baseline with zero problems in any bill file,
+`build` ok. `MetalWorkerApp` untouched.
+
+### Not done here
+
+Screenshots of the rendered pages were not captured: the browser reported
+"needs a visible tab" for the whole of this session's PDF viewing. The inspection
+above is from the auditor's geometric map, which reconstructs each page from the
+real content stream using the real glyph metrics — it is a faithful rendering of
+the same data, but it is not a photograph. Open
+`Metalworker_admin/supabase/functions/_selftest/out/BILL 301 TO_original.pdf`
+to look at it directly.
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete
