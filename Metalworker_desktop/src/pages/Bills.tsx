@@ -16,6 +16,7 @@ import {
   FileText,
   Filter,
   Loader2,
+  Receipt,
   RefreshCw,
   SearchX,
   Trash2,
@@ -24,12 +25,15 @@ import {
 } from "lucide-react";
 
 import {
-  deleteBillUpload,
+  deleteBill,
+  fetchBillJobFacets,
   fetchBillUploads,
   fetchBills,
   formatBillDate,
   formatMoney,
   formatJobKind,
+  type BillJobFacet,
+  type BillJobGroup,
   formatQuantity,
 } from "../services/bills";
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillUpload } from "../types/bill";
@@ -77,12 +81,33 @@ export default function BillsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeRaw] = useState(DEFAULT_PAGE_SIZE);
 
+  /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
+  const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
+  const [facets, setFacets] = useState<BillJobFacet[]>([]);
+
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const hasFilters = !!uploadFilter || !!from || !!to;
+  const hasFilters = !!uploadFilter || !!from || !!to || jobGroup !== null;
+
+  /* The facet strip is derived from `job_kind` alone, so it does not change with
+     the search box, the date range or the current page: it always answers "how
+     many of each kind exist", which is what a user picking a bucket needs. */
+  const jobKindValuesForGroup = useMemo(() => {
+    if (jobGroup === null) return null;
+    return facets.filter((f) => f.group === jobGroup).map((f) => f.raw ?? "");
+  }, [facets, jobGroup]);
+
+  const facetTotals = useMemo(() => {
+    const totals = new Map<BillJobGroup, number>();
+    for (const f of facets) {
+      if (f.group === "other" && !f.raw) continue; // unclassified sits in its own chip
+      totals.set(f.group, (totals.get(f.group) ?? 0) + f.count);
+    }
+    return totals;
+  }, [facets]);
 
   /* Changing the page size restarts at page 1: staying on page 4 of the old
      size would land past the end of the new, shorter result set. */
@@ -96,13 +121,25 @@ export default function BillsPage() {
       if (silent) setRefreshing(true);
       else setLoading(true);
       try {
-        const [pageData, uploadList] = await Promise.all([
-          fetchBills({ search, uploadId: uploadFilter || null, from: from || null, to: to || null, page, pageSize }),
+        const [pageData, uploadList, facetList] = await Promise.all([
+          fetchBills({
+            search,
+            uploadId: uploadFilter || null,
+            from: from || null,
+            to: to || null,
+            jobKindValues: jobKindValuesForGroup,
+            page,
+            pageSize,
+          }),
           fetchBillUploads(),
+          // The facet strip is cheap and independent of the page, so it rides
+          // along rather than becoming a second load path that can disagree.
+          fetchBillJobFacets(),
         ]);
         setBills(pageData.rows);
         setTotal(pageData.total);
         setUploads(uploadList);
+        setFacets(facetList);
         setLoadError(null);
       } catch (err) {
         setLoadError(
@@ -114,7 +151,7 @@ export default function BillsPage() {
         setLoadedOnce(true);
       }
     },
-    [search, uploadFilter, from, to, page, pageSize]
+    [search, uploadFilter, from, to, jobKindValuesForGroup, page, pageSize]
   );
 
   useEffect(() => {
@@ -146,71 +183,116 @@ export default function BillsPage() {
     setUploadFilter("");
     setFrom("");
     setTo("");
+    setJobGroup(null);
     setPage(1);
   }
 
-  async function handleDelete(bill: Bill) {
-    const sameWorkbook = bills.filter((b) => b.bill_upload_id === bill.bill_upload_id);
-    const onScreen = sameWorkbook.length;
+  /**
+   * Delete ONE bill.
+   *
+   * This is a bill-level delete, not a workbook delete: siblings from the same
+   * upload, their line items and their own documents are all left alone. The
+   * confirmation says so explicitly, because the previous wording implied the
+   * whole workbook was going and that was the single most misleading thing about
+   * the old behaviour.
+   */
+  async function deleteOneBill(bill: Bill) {
     const ok = await confirm({
-      title: "Delete this workbook?",
+      title: "Delete this bill?",
       message: (
         <>
-          <strong className="text-text">{bill.original_filename}</strong> will be deleted
-          completely:{" "}
-          {bill.invoice_no ? (
-            <>
-              the invoice <strong className="text-text">{bill.invoice_no}</strong>
-              {onScreen > 1 ? " and every other invoice in that workbook" : ""}
-            </>
-          ) : (
-            "every invoice in that workbook"
-          )}
-          , all three PDFs (original, duplicate and triplicate), and any folder links to
-          them. This cannot be undone.
+          Invoice{" "}
+          <strong className="text-text">{bill.invoice_no || bill.sheet_name}</strong> and its
+          three print copies (original, duplicate, triplicate) will be deleted, along with
+          its line items and any folder links to it.{" "}
+          <strong className="text-text">Other invoices from the same workbook are not
+          affected.</strong> This cannot be undone.
         </>
       ),
-      confirmLabel: "Delete workbook",
+      confirmLabel: "Delete this bill",
+      tone: "danger",
     });
     if (!ok) return;
 
-    setDeleting(bill.bill_upload_id);
+    setDeleting(bill.id);
     try {
-      const res = await deleteBillUpload(bill.bill_upload_id);
+      const res = await deleteBill(bill.id);
       if (!res.ok) {
         toast.error({
-          title: "The workbook was not deleted",
+          title: "The bill was not deleted",
           description: res.error || "Please try again.",
         });
         return;
       }
+      const gone = bill.invoice_no || bill.sheet_name;
       toast.success({
-        title: "Workbook deleted",
-        description: `${bill.original_filename} and its three PDFs are gone.`,
+        title: "Bill deleted",
+        description:
+          (res.siblingsRemaining ?? 0) > 0
+            ? `${gone} and its three PDFs are gone. ${res.siblingsRemaining} other invoice(s) from ${bill.original_filename} remain.`
+            : `${gone} was the last invoice in ${bill.original_filename}, so the workbook was removed too.`,
       });
-      selection.prune(bills.filter((b) => b.bill_upload_id !== bill.bill_upload_id).map((b) => b.id));
+      selection.prune([bill.id]);
       await load(true);
     } finally {
       setDeleting(null);
     }
   }
 
-  /* Deleting one row deletes its whole workbook, so a multi-selection that spans
-     two workbooks would be ambiguous. Rather than guess, say so. */
-  const selectedWorkbooks = useMemo(
-    () => Array.from(new Set(selectedBills.map((b) => b.bill_upload_id))),
-    [selectedBills]
-  );
-
+  /**
+   * Delete every selected bill, one at a time.
+   *
+   * Per bill, not per workbook, and deliberately not all-or-nothing across the
+   * selection: each `deleteBill` is independent, so a failure on one is reported
+   * and the rest still go. That is the honest behaviour when the user has ticked
+   * eight invoices from three different workbooks and asked for all eight.
+   */
   async function handleBulkDelete() {
-    if (selectedWorkbooks.length !== 1) {
-      toast.warning({
-        title: "Select one workbook at a time",
-        description: `Your selection spans ${selectedWorkbooks.length} workbooks. Delete uploads one workbook at a time so you can see exactly what goes.`,
-      });
-      return;
+    if (selectedBills.length === 0) return;
+    const ids = selectedBills.map((b) => b.id);
+    const names = selectedBills.map((b) => b.invoice_no || b.sheet_name);
+    const ok = await confirm({
+      title: ids.length === 1 ? "Delete this bill?" : `Delete ${ids.length} bills?`,
+      message: (
+        <>
+          {ids.length === 1 ? (
+            <>Invoice <strong className="text-text">{names[0]}</strong> and its three print
+            copies will be deleted.</>
+          ) : (
+            <>
+              These {ids.length} invoices and their print copies will be deleted:{" "}
+              <strong className="text-text">{names.join(", ")}</strong>.
+            </>
+          )}{" "}
+          <strong className="text-text">Any other invoice, including the rest of their
+          workbooks, is not affected.</strong> This cannot be undone.
+        </>
+      ),
+      confirmLabel: ids.length === 1 ? "Delete this bill" : `Delete ${ids.length} bills`,
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    setDeleting(null);
+    const failed: string[] = [];
+    for (const bill of selectedBills) {
+      const res = await deleteBill(bill.id);
+      if (!res.ok) failed.push(`${bill.invoice_no || bill.sheet_name}: ${res.error ?? "failed"}`);
     }
-    await handleDelete(selectedBills[0]);
+
+    selection.prune(ids);
+    if (failed.length === 0) {
+      toast.success({
+        title: ids.length === 1 ? "Bill deleted" : `${ids.length} bills deleted`,
+        description: "The selected invoices and their print copies are gone.",
+      });
+    } else {
+      toast.error({
+        title: `${failed.length} of ${ids.length} could not be deleted`,
+        description: failed.join(" · "),
+      });
+    }
+    await load(true);
   }
 
   const openBulkFolderPicker = () => setPickerOpen(true);
@@ -290,6 +372,57 @@ export default function BillsPage() {
           placeholder="Search invoices…"
           className="lg:max-w-2xl"
         />
+
+        {/* Job-type grouping.
+            One workbook legitimately contains both kinds, so this is a filter on
+            the one `job_kind` column, not a second list: no rows are duplicated
+            and a bill appears under exactly one chip. A workbook whose job type
+            this build has not seen lands in "Other" rather than disappearing
+            between two known buckets. */}
+        {facets.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Group bills by job type"
+          >
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+              <Receipt size={13} />
+              Job type
+            </span>
+            <JobGroupChip
+              active={jobGroup === null}
+              onClick={() => {
+                setJobGroup(null);
+                setPage(1);
+              }}
+              label="All"
+              count={facets.reduce((sum, f) => sum + f.count, 0)}
+            />
+            {(["with_metal", "labour", "other"] as BillJobGroup[]).map((group) => {
+              const count = facetTotals.get(group) ?? 0;
+              if (count === 0) return null;
+              const names = Array.from(
+                new Set(
+                  facets
+                    .filter((f) => f.group === group && f.raw !== null)
+                    .map((f) => f.label)
+                )
+              );
+              return (
+                <JobGroupChip
+                  key={group}
+                  active={jobGroup === group}
+                  onClick={() => {
+                    setJobGroup(jobGroup === group ? null : group);
+                    setPage(1);
+                  }}
+                  label={group === "other" ? `Other (${names.join(", ")})` : names[0] ?? group}
+                  count={count}
+                />
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted">
@@ -520,13 +653,13 @@ export default function BillsPage() {
                                 onClick={() => setDetailId(bill.id)}
                               />
                               <IconButton
-                                label={`Delete ${bill.original_filename}`}
+                                label={`Delete bill ${bill.invoice_no ?? bill.sheet_name}`}
                                 size="sm"
                                 tooltipPlacement="top-end"
                                 variant="danger"
                                 icon={<Trash2 size={15} />}
                                 busy={rowBusy}
-                                onClick={() => handleDelete(bill)}
+                                onClick={() => deleteOneBill(bill)}
                               />
                             </div>
                           </td>
@@ -570,7 +703,7 @@ export default function BillsPage() {
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors cursor-pointer"
         >
           <Trash2 size={13} />
-          Delete workbook
+          {selection.count === 1 ? "Delete bill" : `Delete ${selection.count} bills`}
         </button>
       </BulkActionBar>
 
@@ -638,5 +771,40 @@ function JobKindPill({ label }: { label: string }) {
     >
       {label}
     </span>
+  );
+}
+
+/**
+ * One button in the job-type facet strip.
+ *
+ * A toggle rather than a radio: clicking the active chip returns to All, which is
+ * the fastest way out of a filter that turns out to be wrong. The count is part
+ * of the label so a user can see the split before choosing.
+ */
+function JobGroupChip({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+        active
+          ? "border-primary bg-primary text-[var(--theme-primary-text)]"
+          : "border-border bg-surface text-text-secondary hover:border-primary hover:text-primary"
+      }`}
+    >
+      {label}
+      <span className={active ? "opacity-80" : "text-text-muted"}>{count}</span>
+    </button>
   );
 }

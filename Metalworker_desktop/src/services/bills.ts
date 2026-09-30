@@ -25,7 +25,7 @@ import type {
   BillUploadStage,
   FolderBillSummary,
 } from "../types/bill";
-import { EMPTY_FOLDER_BILL_SUMMARY } from "../types/bill";
+import { EMPTY_FOLDER_BILL_SUMMARY, BILL_COPY_LABEL } from "../types/bill";
 
 const BILLS = "bills";
 const UPLOADS = "bill_uploads";
@@ -48,50 +48,82 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
  * what `Bill` describes.
  */
 const BILL_WITH_UPLOAD =
-  "*, bill_uploads!inner(id, original_filename, base_name, created_at, status, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path)";
+  "*, bill_uploads!inner(id, original_filename, base_name, created_at, status)";
 
 /** The upload columns embedded by `BILL_WITH_UPLOAD`. */
 type EmbeddedUpload = Pick<
   BillUpload,
-  | "id"
-  | "original_filename"
-  | "base_name"
-  | "created_at"
-  | "status"
-  | "original_pdf_path"
-  | "duplicate_pdf_path"
-  | "triplicate_pdf_path"
+  "id" | "original_filename" | "base_name" | "created_at" | "status"
 >;
+
+/**
+ * Which classification bucket a bill falls into on the Bills screen.
+ *
+ * `other` exists so an unrecognised `job_kind` is never silently dropped: a
+ * workbook with a job type this build has never seen still shows those bills,
+ * under their own cleaned-up label, rather than vanishing from a two-bucket list.
+ */
+export type BillJobGroup = "with_metal" | "labour" | "other";
+
+/**
+ * Map one stored `job_kind` to its bucket, using the SAME squashed-key rule as
+ * `formatJobKind` so the filter and the label can never disagree.
+ */
+export function jobGroupOf(jobKind: string | null | undefined): BillJobGroup {
+  if (jobKind === null || jobKind === undefined) return "other";
+  const key = String(jobKind).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (key === "WITHMETAL" || key === "WITHMATERIAL") return "with_metal";
+  if (key === "LABOURJOB" || key === "LABOUR") return "labour";
+  return "other";
+}
+
+/** One row of the job-type facet strip. */
+export interface BillJobFacet {
+  group: BillJobGroup;
+  /** The label to show, e.g. "WITH METAL", "LABOUR JOB", or the cleaned raw value. */
+  label: string;
+  /** How many bills carry this exact stored value. */
+  count: number;
+  /** The stored value itself, so the list query can filter on it exactly. */
+  raw: string | null;
+}
 
 /**
  * What PostgREST ACTUALLY returns for `BILL_WITH_UPLOAD`.
  *
  * The embedded row arrives NESTED under the relation name. It is NOT merged onto
- * the parent row, so `original_filename` and the three `*_pdf_path` values are
- * only reachable as `row.bill_uploads.original_filename`. Declaring this shape
- * is what makes the flattening below visible to the type checker — casting the
- * response straight to `Bill` compiles, silently yields `undefined` for every
- * joined field, and breaks the workbook column, the three copy buttons, the
- * delete confirmation and the detail header all at once with no error anywhere.
+ * the parent row, so `original_filename` is only reachable as
+ * `row.bill_uploads.original_filename`. Declaring this shape is what makes the
+ * flattening below visible to the type checker — casting the response straight to
+ * `Bill` compiles, silently yields `undefined` for every joined field, and breaks
+ * the workbook column, the copy buttons, the delete confirmation and the detail
+ * header all at once with no error anywhere.
+ *
+ * The three `*_pdf_path` columns are declared on the ROW, not the embedded upload,
+ * because since migration 0007 they belong to the bill itself.
  */
 type BillRowWithUpload = BillColumns & {
   bill_upload_id: string;
   sheet_name: string;
+  original_pdf_path: string | null;
+  duplicate_pdf_path: string | null;
+  triplicate_pdf_path: string | null;
   bill_uploads: EmbeddedUpload | null;
 };
 
 /**
- * Lift the embedded upload onto the bill row, which is the shape `Bill`
- * promises and every screen reads.
+ * Lift the embedded upload onto the bill row, which is the shape `Bill` promises
+ * and every screen reads.
  *
- * `status` is renamed to `upload_status` so it can never be mistaken for a
- * `bills` column, and `created_at` is deliberately left as the BILL's own
- * timestamp — `bills` has one too, and the upload's is not what "created" means
- * to a user looking at a row.
+ * The PDF paths are deliberately NOT touched. They live on the `bills` row itself
+ * (migration 0007) and `select("*")` already returned them; the upload no longer
+ * carries any. `status` is renamed to `upload_status` so it can never be mistaken
+ * for a `bills` column, and `created_at` is deliberately left as the BILL's own
+ * timestamp, not the upload's.
  *
  * `!inner` means the upload is always present, but the type is honest about the
- * possibility: a missing parent degrades to empty strings and null paths, which
- * the copy buttons already render as "not available" instead of crashing.
+ * possibility: a missing parent degrades to empty strings, which the UI shows as
+ * an unknown workbook rather than crashing.
  */
 function flattenBill(row: BillRowWithUpload): Bill {
   const { bill_uploads: upload, ...own } = row;
@@ -99,9 +131,6 @@ function flattenBill(row: BillRowWithUpload): Bill {
     ...own,
     original_filename: upload?.original_filename ?? "",
     base_name: upload?.base_name ?? "",
-    original_pdf_path: upload?.original_pdf_path ?? null,
-    duplicate_pdf_path: upload?.duplicate_pdf_path ?? null,
-    triplicate_pdf_path: upload?.triplicate_pdf_path ?? null,
     upload_status: upload?.status ?? null,
   };
 }
@@ -114,8 +143,52 @@ export interface BillQuery {
   /** ISO `YYYY-MM-DD` inclusive bounds on `invoice_date`. */
   from?: string | null;
   to?: string | null;
+  /**
+   * Restrict to one job-type bucket.
+   *
+   * Takes the RAW stored `job_kind` values, not the label, because `job_kind` is
+   * stored verbatim ("WITHMETAL", "LABOUR JOB", "Labour") and the list query has
+   * to match the column exactly. `fetchBillJobFacets()` produces them.
+   *
+   * `null` means no restriction, which is what "All" sends.
+   */
+  jobKindValues?: string[] | null;
   page?: number;
   pageSize?: number;
+}
+
+/**
+ * Every distinct `job_kind` in the database, bucketed and counted, for the facet
+ * strip on the Bills screen.
+ *
+ * Read from the raw column and bucketed here with `jobGroupOf`, rather than
+ * filtering the column by a pattern. The vocabulary is tiny in practice (a
+ * workbook writes one of a handful of spellings), so one bounded select is enough;
+ * the bound is stated rather than assumed, and anything beyond it would only
+ * affect a workbook using an implausible number of spellings.
+ */
+export async function fetchBillJobFacets(): Promise<BillJobFacet[]> {
+  const FACET_SCAN_LIMIT = 5000;
+  const { data, error } = await supabase
+    .from(BILLS)
+    .select("job_kind")
+    .limit(FACET_SCAN_LIMIT);
+  if (error) throw new Error(error.message);
+
+  const counts = new Map<string, number>();
+  for (const row of (data ?? []) as { job_kind: string | null }[]) {
+    const key = row.job_kind ?? "";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([raw, count]) => ({
+      raw: raw === "" ? null : raw,
+      count,
+      group: jobGroupOf(raw === "" ? null : raw),
+      label: raw === "" ? "Unclassified" : (formatJobKind(raw) ?? raw),
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 export interface BillPage {
@@ -160,6 +233,25 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   if (query.uploadId) q = q.eq("bill_upload_id", query.uploadId);
   if (query.from) q = q.gte("invoice_date", query.from);
   if (query.to) q = q.lte("invoice_date", query.to);
+
+  /* Job-type grouping is a FILTER on the one classification column, not a second
+     data source: no rows are duplicated, and a bill appears under exactly one
+     bucket because the stored value maps to exactly one bucket.
+
+     `is.null` handles the unclassified case, because a null `job_kind` is a real
+     value in the column and `in.(...)` cannot express it. */
+  if (query.jobKindValues) {
+    if (query.jobKindValues.length === 0) {
+      // An empty facet selection is "no bills carry this", not "all bills".
+      q = q.eq("id", "00000000-0000-0000-0000-000000000000");
+    } else if (query.jobKindValues.includes("")) {
+      const present = query.jobKindValues.filter((v) => v !== "");
+      if (present.length === 0) q = q.is("job_kind", null);
+      else q = q.or(`job_kind.is.null,job_kind.in.(${present.map(safeOrTerm).join(",")})`);
+    } else {
+      q = q.in("job_kind", query.jobKindValues);
+    }
+  }
 
   const needle = safeOrTerm((query.search ?? "").trim());
   if (needle) {
@@ -279,8 +371,22 @@ interface ProcessBillUploadResponse {
   upload_id?: string;
   base_name?: string;
   invoice_count?: number;
-  bills?: { id: string; sheet_name: string }[];
-  pdfs?: { copy: BillCopy; label: string; path: string; filename: string }[];
+  /** One entry per bill, each carrying its own three document paths. */
+  bills?: {
+    id: string;
+    sheet_name: string;
+    invoice_no: string | null;
+    job_kind: string | null;
+    paths: { original: string; duplicate: string; triplicate: string };
+  }[];
+  /** The optional whole-workbook documents, kept separate on purpose. */
+  aggregate_pdfs?: {
+    copy: BillCopy;
+    label: string;
+    path: string;
+    filename: string;
+    scope: "workbook";
+  }[];
 }
 
 /**
@@ -373,7 +479,7 @@ export async function uploadBillWorkbook(
     base_name: data.base_name as string,
     invoice_count: data.invoice_count ?? 0,
     bills: data.bills ?? [],
-    pdfs: data.pdfs ?? [],
+    aggregate_pdfs: data.aggregate_pdfs ?? [],
   };
 }
 
@@ -407,11 +513,18 @@ async function readErrorBody(
    PDFs
    ────────────────────────────────────────────── */
 
+/** The three storage paths, i.e. everything needed to resolve a bill's documents. */
+export type BillDocumentSource = Pick<
+  Bill,
+  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path"
+> & {
+  invoice_no?: string | null;
+  sheet_name?: string | null;
+  base_name?: string | null;
+};
+
 /** The storage path of one copy, or null when that copy was never produced. */
-export function billCopyPath(
-  source: Pick<Bill, "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path">,
-  copy: BillCopy
-): string | null {
+export function billCopyPath(source: BillDocumentSource, copy: BillCopy): string | null {
   switch (copy) {
     case "original":
       return source.original_pdf_path;
@@ -422,30 +535,71 @@ export function billCopyPath(
   }
 }
 
+/**
+ * True when this row has no per-bill document of its own.
+ *
+ * Only rows written before migration 0007 are in this state, and for them the
+ * only document that exists is the workbook-level one containing every invoice in
+ * the upload. That is NOT silently substituted: the copy buttons stay disabled and
+ * say why, because handing back a 20-page PDF in response to "download invoice
+ * 301" is the bug being fixed, not a degraded version of it.
+ */
+export function isLegacyBill(source: BillDocumentSource): boolean {
+  return !source.original_pdf_path && !source.duplicate_pdf_path && !source.triplicate_pdf_path;
+}
+
+/**
+ * The download filename for one copy, derived from the BILL, not the workbook.
+ *
+ * `SEW/301/2026-27` -> `SEW_301_2026-27_original.pdf`, so a user who downloads
+ * three bills has three sensibly named files rather than three files all called
+ * after the source workbook. Mirrors `safeBillToken` in the edge function's
+ * `_shared/parseBill.ts`, which names the stored object; they must agree or the
+ * saved name would not match the stored one.
+ */
+export function billDocumentFilename(source: BillDocumentSource, copy: BillCopy): string {
+  const raw = (source.invoice_no ?? "").trim() || (source.sheet_name ?? "").trim() || "bill";
+  const token =
+    raw
+      // Slashes become "_" so they cannot create a nested object path, while a
+      // hyphen that is part of the number is kept.
+      .replace(/[\\/]+/g, "_")
+      // Hyphen is deliberately preserved: it is safe in a storage object name and
+      // in a download filename, and `SEW_301_2026-27` reads far better than
+      // `SEW_301_2026_27`. Must match `safeBillToken` in the edge function.
+      .replace(/[<>:"/\\|?*\s]/g, "_")
+      .replace(/_{2,}/g, "_")
+      .replace(/^[_.]+|[_.]+$/g, "")
+      .slice(0, 60) || "bill";
+  return `${token}_${copy}.pdf`;
+}
+
 /** Signed URLs are short-lived; two minutes is enough to open or print. */
 const SIGNED_URL_TTL_SECONDS = 120;
 
 /**
- * Mint a short-lived signed URL for one copy.
+ * Mint a short-lived signed URL for ONE COPY OF ONE BILL.
  *
- * The bucket is private, so this is the ONLY way a client can read a PDF. The
- * object's last path segment is already `<base>_original.pdf`, and it is passed
- * again as `download` so the browser saves it under exactly that name.
+ * The bucket is private, so this is the only way a client can read a PDF. The path
+ * comes from the `bills` row and is a single-invoice document, so the URL cannot
+ * resolve to a sibling's figures. There is deliberately no fallback to the
+ * workbook-level document.
  */
-export async function getBillPdfUrl(
-  source: Pick<Bill, "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path"> & {
-    base_name?: string | null;
-  },
-  copy: BillCopy
-): Promise<string> {
+export async function getBillPdfUrl(source: BillDocumentSource, copy: BillCopy): Promise<string> {
+  if (isLegacyBill(source)) {
+    throw new Error(
+      "This bill was uploaded before each bill got its own document, so there is no single-invoice PDF for it. Re-upload the workbook to generate one."
+    );
+  }
   const path = billCopyPath(source, copy);
   if (!path) {
-    throw new Error(`The ${copy} copy is not available for this bill.`);
+    throw new Error(`The ${BILL_COPY_LABEL[copy]} copy is not available for this bill.`);
   }
-  const filename = `${source.base_name || "bill"}_${copy}.pdf`;
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, { download: filename });
+    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, {
+      download: billDocumentFilename(source, copy),
+    });
   if (error) throw new Error(error.message);
   if (!data?.signedUrl) throw new Error("Could not open that document.");
   return data.signedUrl;
@@ -541,13 +695,149 @@ export async function printBillPdf(
    ────────────────────────────────────────────── */
 
 /**
+ * Delete ONE bill, and only what that bill owns.
+ *
+ * This is the operation a bill row's Delete button means. Sibling invoices from
+ * the same workbook are untouched — same line items, same documents, same folder
+ * memberships.
+ *
+ * Order is the reverse of creation:
+ *   1. folder_items pointing at THIS bill   — otherwise the folder would list an
+ *      entry whose record no longer exists.
+ *   2. this bill's line items.
+ *   3. this bill's row.
+ *   4. this bill's own three PDF objects.
+ *
+ * The rows go before the files deliberately: if the storage call then fails, the
+ * leftovers are unreferenced objects, which cost nothing. The other order would
+ * leave live rows pointing at documents that are already gone.
+ *
+ * The parent `bill_uploads` row is removed ONLY when this was the workbook's last
+ * bill, so a workbook that still has invoices keeps its provenance and its
+ * optional aggregate document.
+ *
+ * Removing a bill from a folder without deleting it is a different operation
+ * (`removeFolderItem`) and touches none of this.
+ */
+export async function deleteBill(billId: string): Promise<{
+  ok: boolean;
+  error?: string;
+  /** Bills from the same workbook that survived, for the confirmation message. */
+  siblingsRemaining?: number;
+}> {
+  // Read what we need BEFORE deleting, because afterwards it is gone.
+  let bill: Pick<Bill, "invoice_no" | "sheet_name" | "bill_upload_id" | "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path">;
+  try {
+    const { data, error } = await supabase
+      .from(BILLS)
+      .select("invoice_no, sheet_name, bill_upload_id, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
+      .eq("id", billId)
+      .single();
+    if (error) throw new Error(error.message);
+    bill = data as typeof bill;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not read that bill." };
+  }
+
+  // Used in the failure messages so an error names the invoice the user clicked.
+  const label = bill.invoice_no?.trim() || bill.sheet_name?.trim() || "this bill";
+
+  const { error: folderError } = await supabase
+    .from(FOLDER_ITEMS)
+    .delete()
+    .eq("item_type", "bill")
+    .eq("item_id", billId);
+  if (folderError) {
+    return { ok: false, error: `Could not unlink ${label} from its folders: ${folderError.message}` };
+  }
+
+  const { error: linesError } = await supabase.from(LINE_ITEMS).delete().eq("bill_id", billId);
+  if (linesError) {
+    return { ok: false, error: `Could not delete the line items of ${label}: ${linesError.message}` };
+  }
+
+  const { error: billError } = await supabase.from(BILLS).delete().eq("id", billId);
+  if (billError) {
+    return { ok: false, error: `Could not delete ${label}: ${billError.message}` };
+  }
+
+  // Only THIS bill's documents. The workbook's aggregate PDF is another bill's
+  // business and, while any sibling exists, a live provenance artefact.
+  const paths = [bill.original_pdf_path, bill.duplicate_pdf_path, bill.triplicate_pdf_path].filter(
+    (p): p is string => !!p
+  );
+  if (paths.length > 0) {
+    const { error: storageError } = await supabase.storage.from(BUCKET).remove(paths);
+    // Reported, never fatal: the records are already gone and correct.
+    if (storageError) {
+      console.warn("[Bills] PDF cleanup after deleting one bill failed:", storageError.message, paths);
+    }
+  }
+
+  // Did that empty the workbook? If so the upload row is now a husk.
+  const { data: remaining } = await supabase
+    .from(BILLS)
+    .select("id")
+    .eq("bill_upload_id", bill.bill_upload_id);
+  const siblingsRemaining = Array.isArray(remaining) ? remaining.length : 0;
+
+  if (siblingsRemaining === 0) {
+    const { data: upload } = await supabase
+      .from(UPLOADS)
+      .select("original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
+      .eq("id", bill.bill_upload_id)
+      .maybeSingle();
+    const orphanAggregate = [
+      upload?.original_pdf_path,
+      upload?.duplicate_pdf_path,
+      upload?.triplicate_pdf_path,
+    ].filter((p): p is string => !!p);
+
+    const { error: uploadError } = await supabase
+      .from(UPLOADS)
+      .delete()
+      .eq("id", bill.bill_upload_id);
+    if (uploadError) {
+      // The bill is already gone, which is what was asked for. Report the husk
+      // rather than pretending the whole thing failed.
+      console.warn("[Bills] empty upload row could not be removed:", uploadError.message);
+    }
+    if (orphanAggregate.length > 0) {
+      const { error: aggError } = await supabase.storage.from(BUCKET).remove(orphanAggregate);
+      if (aggError) {
+        console.warn("[Bills] aggregate PDF cleanup failed:", aggError.message, orphanAggregate);
+      }
+    }
+  }
+
+  void logAudit({
+    action: "bill.deleted",
+    targetType: "bill",
+    targetId: billId,
+    detail: {
+      invoice_no: bill.invoice_no,
+      sheet_name: bill.sheet_name,
+      upload_id: bill.bill_upload_id,
+      documents_removed: paths.length,
+      siblings_remaining: siblingsRemaining,
+      upload_removed: siblingsRemaining === 0,
+    },
+  });
+
+  return { ok: true, siblingsRemaining };
+}
+
+/**
  * Delete one uploaded workbook, with everything it owns.
+ *
+ * This is still correct and is what "delete this workbook" means — but it is NO
+ * LONGER what a single bill row's Delete button does. That is `deleteBill`.
  *
  * Order matters and is the reverse of creation:
  *   1. folder_items rows that point at the bills  — otherwise the folder would
  *      show entries whose records no longer exist.
  *   2. the bill_uploads row, which CASCADES to `bills` and `bill_line_items`.
- *   3. the three PDF objects.
+ *   3. the aggregate PDF objects, plus every bill's own three.
  *
  * The database row goes before the files deliberately: if the storage call then
  * fails, the leftovers are unreferenced objects, which cost nothing. The other
@@ -559,9 +849,25 @@ export async function printBillPdf(
 export async function deleteBillUpload(uploadId: string): Promise<{ ok: boolean; error?: string }> {
   let billIds: string[];
   let upload: BillUpload;
+  let perBillPaths: string[];
   try {
     billIds = await fetchBillIdsForUpload(uploadId);
     upload = await fetchBillUpload(uploadId);
+    // The upload row CASCADEs to `bills`, but storage objects are not in the
+    // database and so do not cascade. Every bill's own three documents have to be
+    // collected explicitly or they are orphaned in the bucket.
+    const { data: billRows, error: pathsError } = await supabase
+      .from(BILLS)
+      .select("original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
+      .eq("bill_upload_id", uploadId);
+    if (pathsError) throw new Error(pathsError.message);
+    perBillPaths = (billRows ?? [])
+      .flatMap((r) => [
+        (r as { original_pdf_path: string | null }).original_pdf_path,
+        (r as { duplicate_pdf_path: string | null }).duplicate_pdf_path,
+        (r as { triplicate_pdf_path: string | null }).triplicate_pdf_path,
+      ])
+      .filter((p): p is string => !!p);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Could not read that upload." };
   }
@@ -578,8 +884,12 @@ export async function deleteBillUpload(uploadId: string): Promise<{ ok: boolean;
   const { error: uploadError } = await supabase.from(UPLOADS).delete().eq("id", uploadId);
   if (uploadError) return { ok: false, error: uploadError.message };
 
-  const paths = [upload.original_pdf_path, upload.duplicate_pdf_path, upload.triplicate_pdf_path]
-    .filter((p): p is string => !!p);
+  const paths = [
+    ...perBillPaths,
+    upload.original_pdf_path,
+    upload.duplicate_pdf_path,
+    upload.triplicate_pdf_path,
+  ].filter((p): p is string => !!p);
   if (paths.length > 0) {
     const { error: storageError } = await supabase.storage.from(BUCKET).remove(paths);
     // Reported, never fatal: the records are already gone and correct.

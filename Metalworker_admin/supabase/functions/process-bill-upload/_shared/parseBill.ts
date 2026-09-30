@@ -907,3 +907,32 @@ export function sanitizeBaseName(filename: string): string {
     .trim();
   return cleaned.length > 0 ? cleaned.slice(0, 80) : "bill";
 }
+
+/**
+ * A short, safe, human-readable token for ONE bill, used to name that bill's own
+ * PDF objects.
+ *
+ * The invoice number is a bill's real identity, so it is preferred:
+ * `SEW/301/2026-27` becomes `SEW_301_2026-27`, and the stored object is
+ * `<upload-id>/<bill-id>_SEW_301_2026-27_original.pdf`. The bill's id is always
+ * part of the path, so two invoices can never collide even if this token did.
+ *
+ * Falls back to the sheet name, then to a generic token, so a workbook whose
+ * invoice cell was left blank still produces a named, readable file rather than
+ * `undefined_original.pdf`.
+ */
+export function safeBillToken(invoiceNo: string | null, sheetName: string | null): string {
+  const raw = (invoiceNo ?? "").trim() || (sheetName ?? "").trim() || "bill";
+  const cleaned = raw
+    // Slashes get their own pass so they cannot become a nested object path, and
+    // they become "_" so `SEW/301/2026-27` reads as `SEW_301_2026-27`: the path
+    // separators are replaced, the ones that are part of the number are kept.
+    .replace(/[\\/]+/g, "_")
+    // Hyphen is deliberately NOT in this set. It is safe in a storage object name
+    // and in a download filename, and `SEW_301_2026-27` reads far better as a
+    // document name than `SEW_301_2026_27`.
+    .replace(/[<>:"/\\|?*\s]/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^[_.]+|[_.]+$/g, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 60) : "bill";
+}

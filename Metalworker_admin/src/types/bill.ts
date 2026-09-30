@@ -47,14 +47,22 @@ export interface Bill extends BillColumns {
   bill_upload_id: string;
   sheet_name: string;
 
-  // From the joined upload — needed to show the filename and the copy links.
-  // PostgREST returns these NESTED under `bill_uploads`; the service's
-  // `flattenBill` lifts them onto the row so screens can read them flat.
-  original_filename: string;
-  base_name: string;
+  // This bill's OWN documents (migration 0007). Each is a one-invoice document, so
+  // a bill's View / Download / Print can never hand back a sibling's figures.
+  //
+  // All three are null together on rows created before 0007, which is how a legacy
+  // row is recognised. They are NOT back-filled with the workbook PDF: doing so
+  // would point every sibling at a document containing all of them, which is the
+  // exact bug 0007 exists to fix.
   original_pdf_path: string | null;
   duplicate_pdf_path: string | null;
   triplicate_pdf_path: string | null;
+
+  // From the joined upload. `original_filename` is the SOURCE WORKBOOK, shown as
+  // provenance only — it is never the bill's identity, and it is never a document
+  // this bill resolves to.
+  original_filename: string;
+  base_name: string;
   /** The upload's own status, renamed so it cannot be read as a `bills` column. */
   upload_status: BillUpload["status"] | null;
 }
@@ -166,9 +174,34 @@ export interface PickedWorkbook {
 export interface BillUploadResult {
   upload_id: string;
   base_name: string;
+  /** Sheets parsed. Each is ONE bill, printed three times. */
   invoice_count: number;
-  bills: { id: string; sheet_name: string }[];
-  pdfs: { copy: BillCopy; label: string; path: string; filename: string }[];
+  /**
+   * One entry per bill, each with ITS OWN three documents.
+   *
+   * `job_kind` is the workbook's own classification, returned verbatim so the
+   * upload summary can count WITH METAL against LABOUR JOB without guessing from
+   * sheet names.
+   */
+  bills: {
+    id: string;
+    sheet_name: string;
+    invoice_no: string | null;
+    job_kind: string | null;
+    paths: { original: string; duplicate: string; triplicate: string };
+  }[];
+  /**
+   * The optional whole-workbook documents, one per print copy. These contain
+   * EVERY invoice in the upload and are never what a single bill's View /
+   * Download / Print resolves to.
+   */
+  aggregate_pdfs: {
+    copy: BillCopy;
+    label: string;
+    path: string;
+    filename: string;
+    scope: "workbook";
+  }[];
 }
 
 /**

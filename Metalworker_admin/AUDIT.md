@@ -566,6 +566,149 @@ real content stream using the real glyph metrics — it is a faithful rendering 
 the same data, but it is not a photograph. Open
 `Metalworker_admin/supabase/functions/_selftest/out/BILL 301 TO_original.pdf`
 to look at it directly.
+## P3.12 One workbook, many independent bills (migration 0007)
+
+`BILL 301 TO.xlsx` exposed a structural bug, not a cosmetic one. It is recorded
+here because the shape of the fix matters more than the lines.
+
+### The bug
+
+`process-bill-upload` rendered
+
+    renderBillDocument(parsed.map((b) => b[kind]), COPY_LABEL[kind])
+
+which is ONE document containing every invoice in the workbook, and stored its
+path on `bill_uploads`. Every `bills` row pointed at that same object, so on a
+20-sheet workbook:
+
+- "Download Original" on bill 301 returned a 20-page PDF of all 20 invoices;
+- the bill detail sheet could only ever offer a document containing other
+  invoices;
+- deleting one row had to delete the workbook, because the documents and the
+  sibling rows shared a lifetime.
+
+The clients made it worse rather than better: `flattenBill` copied the UPLOAD's
+paths onto every bill row, so the sharing was invisible in the type as well as in
+the data.
+
+### The model now
+
+The workbook is the SOURCE. The invoice is the RECORD. A record owns its
+documents.
+
+- `bill_uploads` still means "this Excel file was uploaded" and now also holds an
+  optional whole-workbook aggregate, clearly separate.
+- `bills` gains `original_pdf_path`, `duplicate_pdf_path`, `triplicate_pdf_path`
+  (migration 0007), and each is a one-invoice document named
+  `<upload-id>/<bill-id>_<token>_original.pdf` where `<token>` is the invoice
+  number — `SEW_301_2026-27`. The bill id is in the path, so two invoices cannot
+  collide whatever the token does.
+
+`token` keeps hyphens and turns separators into underscores, because a document
+called `SEW_301_2026-27_original.pdf` is one a person can recognise. Slashes get
+their own pass so they can never create a nested object path.
+
+### Write order changed, and why
+
+The bill rows are inserted BEFORE the documents, because the filename contains the
+bill's id and that only exists once the row does:
+
+1. insert `bill_uploads` -> upload id
+2. parse -> one `ParsedBill` per worksheet
+3. insert one `bills` row per worksheet -> bill ids
+4. insert that bill's line items
+5. render `[p[kind]]` per copy and upload -> 3 objects per bill
+6. `update` each `bills` row with its OWN three paths
+7. render + upload the three aggregates
+8. `update` `bill_uploads` with the aggregate paths
+
+A render or storage failure before step 6 unwinds through the same `rollback()` as
+before, so no partial upload is left. A failure in step 7 does NOT unwind: the
+per-bill documents are already written and linked, so the upload is usable and
+only the convenience document is missing, which the response says.
+
+### Classification and grouping (BUG 1, BUG 6)
+
+`job_kind` is stored verbatim and grouped on read by `jobGroupOf`, which uses the
+same squashed-key rule as `formatJobKind`, so a bucket and its label cannot
+disagree. A mixed workbook is normal: `BILL 301 TO.xlsx` gives 12 WITH METAL
+(301-310, 319, 320) and 8 LABOUR JOB (311L-318L) from one upload.
+
+Three buckets, not two: `other` catches any classification this build has not seen,
+so an unknown `job_kind` is shown with a cleaned-up label instead of vanishing
+between two known ones. The facet strip is a FILTER on the one column — no
+duplicated rows, no second data source, and a bill is in exactly one bucket
+because its stored value maps to exactly one bucket.
+
+The facet counts come from one bounded read of the distinct raw values rather than
+a pattern match on the column, so `WITHMETAL`, `WITH METAL` and `WITH-METAL` all
+land in the same bucket without the query having to know the vocabulary.
+
+### Deletion (BUG 3, BUG 8)
+
+`deleteBill(billId)` replaces workbook deletion as what a row's Delete button
+means. It removes only that bill's folder links, line items, row and three
+objects. The parent upload row is removed ONLY when that was the workbook's last
+bill, so a workbook with surviving invoices keeps its provenance and its
+aggregate. Rows go before files deliberately: a failed storage call then leaves
+unreferenced objects rather than live rows pointing at nothing.
+
+`deleteBillUpload` still exists for "delete this workbook" and now collects every
+bill's own paths, because the upload row cascades to `bills` in the database but
+storage objects do not cascade and would otherwise be orphaned.
+
+Bulk delete runs one `deleteBill` per selected bill and is deliberately not
+all-or-nothing: a failure on one is reported and the rest still go.
+
+### Legacy uploads (BUG 10)
+
+`bills.*_pdf_path` is nullable and the migration deliberately performs no
+back-fill. Back-filling each old row with the workbook PDF would point every
+sibling at a document containing all of them — the exact bug being fixed, and it
+would do it invisibly. A null path is therefore how a legacy row is *recognised*:
+
+- `isLegacyBill()` reports it,
+- the copy buttons stay disabled and say "uploaded before each bill had its own
+  document",
+- `getBillPdfUrl` throws with a re-upload instruction rather than falling back.
+
+Nothing existing is deleted or rewritten, and no old row is made to look like it
+has its own document.
+
+### Verified with `BILL 301 TO.xlsx`
+
+New `test-per-bill.ts`, plus the existing five:
+
+- 20 sheets -> 20 bills, 0 skipped, and the three copies are still three renderings
+  of one bill rather than three records;
+- 12 WITH METAL + 8 LABOUR JOB, 0 unrecognised, all from the `job_kind` column;
+- 60 distinct document paths (20 bills x 3), every token safe and invoice-derived;
+- all 60 single-invoice documents rendered and checked: each contains its own
+  invoice number, contains NO sibling invoice number, carries the normalized
+  classification, and never shows the raw token;
+- the aggregate still contains all 20 and is 23 pages, which is precisely why
+  nothing may resolve to it;
+- layout audit clean on all three aggregates.
+
+`node supabase/functions/_selftest/render-one.ts "SEW/301/2026-27"` writes one
+bill's three documents for inspection. The original is 10.6 KiB, **1 page**, and
+its footer reads `ORIGINAL | SEW/301/2026-27 | Page 1 of 1`.
+
+### Checks
+
+Admin `tsc` 0, `eslint` 0, `expo export` ok, `lint:edge` 0. Desktop `tsc -b` 0,
+`lint` 53 = the pre-existing baseline with zero problems in any bill file, `build`
+ok. `MetalWorkerApp` untouched. `npm run bills:selftest` green on both
+`SAMPLE.xlsx` and `BILL 301 TO.xlsx`.
+
+### Not done here
+
+Migration 0007 and the rewritten edge function are **not deployed** — that needs
+`supabase db push` and `supabase functions deploy process-bill-upload`, and the
+existing rows keep working (as legacy) until then. Tests 6-11 of the acceptance
+list, which need a deployed function and a real database, are therefore still
+outstanding; tests 1-5, 9's data shape and 12 are covered above.
+
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete

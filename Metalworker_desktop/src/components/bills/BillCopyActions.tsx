@@ -11,6 +11,8 @@ import { Eye, Download, Printer, Loader2, FileWarning } from "lucide-react";
 
 import {
   billCopyPath,
+  billDocumentFilename,
+  isLegacyBill,
   downloadBillPdf,
   printBillPdf,
   viewBillPdf,
@@ -28,9 +30,15 @@ type BillSource = Pick<
 /**
  * One row per copy, with View / Download / Print.
  *
+ * Every action resolves against THIS bill's own path, so a button can never hand
+ * back a document containing other invoices from the same workbook.
+ *
  * A copy that was never generated shows as unavailable and its buttons are
  * disabled, rather than offering a button that mints a signed URL for an object
- * that does not exist and then fails with a 404.
+ * that does not exist and then fails with a 404. A row uploaded before per-bill
+ * documents existed is called out separately, because the only file that exists
+ * for it is the whole-workbook one and substituting it would be the bug this
+ * replaced.
  */
 export function BillCopyActions({
   bill,
@@ -60,6 +68,11 @@ export function BillCopyActions({
     }
   }
 
+  /* A bill uploaded before each bill had its own document. The buttons stay
+     disabled and the reason is shown, because the alternative — quietly handing
+     back the workbook PDF — is exactly the behaviour this replaced. */
+  const legacy = isLegacyBill(bill);
+
   if (layout === "compact") {
     /* Three small icons in a row — used in the list's "Copies" column, where the
        invoice total is already shown and repeating the amount per copy would be
@@ -78,7 +91,9 @@ export function BillCopyActions({
               label={
                 available
                   ? `View the ${BILL_COPY_LABEL[copy].toLowerCase()} copy`
-                  : `The ${BILL_COPY_LABEL[copy].toLowerCase()} copy is not available`
+                  : legacy
+                    ? `This bill predates per-bill documents (${BILL_COPY_LABEL[copy].toLowerCase()})`
+                    : `The ${BILL_COPY_LABEL[copy].toLowerCase()} copy is not available`
               }
               icon={
                 available ? (
@@ -109,8 +124,12 @@ export function BillCopyActions({
               <p className="text-sm font-bold text-text">{BILL_COPY_LABEL[copy]}</p>
               <p className="text-xs text-text-muted truncate">
                 {available
-                  ? `${bill.base_name}_${copy}.pdf`
-                  : "Not generated for this workbook"}
+                  ? // Named after the BILL, not the workbook, so three downloaded
+                    // bills are three distinguishable files.
+                    billDocumentFilename(bill, copy)
+                  : legacy
+                    ? "This bill was uploaded before each bill had its own document"
+                    : "Not generated for this bill"}
               </p>
             </div>
 

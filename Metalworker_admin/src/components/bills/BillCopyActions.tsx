@@ -13,6 +13,8 @@ import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import {
   billCopyPath,
+  isLegacyBill,
+  billDocumentFilename,
   downloadBillPdf,
   printBillPdf,
   viewBillPdf,
@@ -68,6 +70,11 @@ export function BillCopyActions({
       setBusy(null);
     }
   }
+
+  /* A bill uploaded before each bill had its own document. The buttons stay
+     disabled and the reason is shown, because the alternative — quietly handing
+     back the workbook PDF — is exactly the behaviour this replaced. */
+  const legacy = isLegacyBill(bill);
 
   if (layout === "compact") {
     /* Three small buttons in a row — used in the list's "Copies" column, where
@@ -125,8 +132,12 @@ export function BillCopyActions({
               <Text style={styles.rowTitle}>{BILL_COPY_LABEL[copy]}</Text>
               <Text style={styles.rowSub} numberOfLines={1}>
                 {available
-                  ? `${bill.base_name}_${copy}.pdf`
-                  : "Not generated for this workbook"}
+                  ? // Named after the BILL, not the workbook, so three downloaded
+                    // bills are three distinguishable files.
+                    billDocumentFilename(bill, copy)
+                  : legacy
+                    ? "Uploaded before each bill had its own document"
+                    : "Not generated for this bill"}
               </Text>
             </View>
 

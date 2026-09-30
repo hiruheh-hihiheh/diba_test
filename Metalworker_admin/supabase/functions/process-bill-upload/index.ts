@@ -13,9 +13,34 @@
 //
 // A workbook holds several invoices, each printed three times (ORIGINAL /
 // DUPLICATE / TRIPLICATE). Those three blocks are three PHYSICAL COPIES of one
-// bill, so this function writes ONE `bills` row per worksheet and three PDF
-// objects, each PDF holding one page per invoice. No financial figure is ever
-// stored three times over.
+// bill, so this function writes ONE `bills` row per worksheet. No financial
+// figure is ever stored three times over.
+//
+// ONE DOCUMENT PER BILL, NOT PER WORKBOOK
+// This used to render
+//
+//     renderBillDocument(parsed.map((b) => b[kind]), COPY_LABEL[kind])
+//
+// which is ONE document containing every invoice in the workbook, and stored its
+// path on `bill_uploads`. Every bill then pointed at the same file, so
+// "Download Original" on one bill handed back a PDF of all of them, and the only
+// way to delete a bill's documents was to delete the whole upload.
+//
+// The workbook is the SOURCE. The invoice is the RECORD. So each bill now gets
+// its own three documents, named after it, and its own three columns
+// (migration 0007):
+//
+//     <upload-id>/<bill-id>_<token>_original.pdf
+//     <upload-id>/<bill-id>_<token>_duplicate.pdf
+//     <upload-id>/<bill-id>_<token>_triplicate.pdf
+//
+// The bill's id is in the path, so two invoices can never collide. The three
+// copies are still three renderings of ONE invoice — 20 sheets produce 20 bills
+// and 60 documents, not 60 bills.
+//
+// The aggregate "whole workbook" documents are STILL produced and still stored on
+// `bill_uploads`, clearly separate, so a user who wants every invoice in one file
+// can have it. Nothing that reads a single bill ever touches them.
 //
 // ORDER OF OPERATIONS (deliberate)
 //   method -> environment -> authentication -> ACTIVE-ADMIN check -> body parse
@@ -24,10 +49,14 @@
 //
 //   1. insert  bill_uploads  (status 'uploaded')  -> gives us the upload id
 //   2. parse    workbook -> one ParsedBill per worksheet
-//   3. render   three PDF documents
-//   4. upload   three objects into the private `bills` bucket
-//   5. insert  one `bills` row + its line items per worksheet
-//   6. update  bill_uploads -> 'completed' with the three storage paths
+//   3. insert   one `bills` row + its line items per worksheet -> bill ids
+//   4. render + upload  THREE documents PER BILL, named after that bill
+//   5. update   each `bills` row with its own three storage paths
+//   6. render + upload  the three aggregate "whole workbook" documents
+//   7. update   bill_uploads -> 'completed' with the aggregate paths
+//
+// The bill rows are written BEFORE the PDFs because the filename contains the
+// bill's id, which only exists once the row does.
 //
 // Any failure after step 1 unwinds: the partial rows are deleted and the
 // uploaded objects are removed, so a failed upload can never leave an orphaned
@@ -46,6 +75,7 @@ import {
   sanitizeBaseName,
 } from "./_shared/parseBill.ts";
 import { renderBillDocument } from "./_shared/renderBill.ts";
+import { safeBillToken } from "./_shared/parseBill.ts";
 
 /** Private bucket created by migration 0005_bills.sql. */
 const BUCKET = "bills";
@@ -310,46 +340,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ---------------- 3. Render ----------------
-    let pdfs: { kind: (typeof COPY_ORDER)[number]; path: string; bytes: Uint8Array }[];
-    try {
-      pdfs = COPY_ORDER.map((kind) => ({
-        kind,
-        path: `${uploadId}/${baseName}_${kind}.pdf`,
-        bytes: renderBillDocument(
-          parsed.map((b) => b[kind]),
-          COPY_LABEL[kind]
-        ),
-      }));
-    } catch (err) {
-      console.error("PDF render error:", err);
-      await rollback(adminClient, uploadId, uploadedPaths);
-      uploadId = null;
-      return json(
-        { ok: false, error: "The bill PDFs could not be generated.", reason: "pdf_failed" },
-        500
-      );
-    }
-
-    // ---------------- 4. Upload the PDFs ----------------
-    for (const pdf of pdfs) {
-      const { error } = await adminClient.storage
-        .from(BUCKET)
-        .upload(pdf.path, pdf.bytes, { contentType: "application/pdf", upsert: false });
-      if (error) {
-        console.error("Storage upload error:", pdf.path, error);
-        uploadedPaths.push(pdf.path);
-        await rollback(adminClient, uploadId, uploadedPaths);
-        uploadId = null;
-        return json(
-          { ok: false, error: "The bill PDFs could not be saved.", reason: "storage_failed" },
-          500
-        );
-      }
-      uploadedPaths.push(pdf.path);
-    }
-
-    // ---------------- 5. Insert bills + line items ----------------
+    // ---------------- 3. Insert the bill rows first ----------------
+    // The bill id goes into the PDF filename, so the row has to exist before its
+    // documents can be named. Writing the rows before the documents also means a
+    // render failure unwinds to the same rollback as a storage failure, rather
+    // than leaving documents with no records pointing at them.
     const billRows = parsed.map((p) => toBillRow(p, uploadId as string));
     const { data: insertedBills, error: billsError } = await adminClient
       .from("bills")
@@ -365,10 +360,10 @@ Deno.serve(async (req) => {
         500
       );
     }
+    const insertedIds = (insertedBills as { id: string; sheet_name: string }[]).map((b) => b.id);
 
     // Line items are inserted per bill rather than in one batch so a single
     // malformed sheet cannot roll the whole upload back.
-    const insertedIds = (insertedBills as { id: string; sheet_name: string }[]).map((b) => b.id);
     for (const [i, p] of parsed.entries()) {
       const lines = toLineItemRows(insertedIds[i], p.original.lineItems);
       if (lines.length === 0) continue;
@@ -384,17 +379,142 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ---------------- 6. Finalize the upload row ----------------
-    const pathFor = (kind: (typeof COPY_ORDER)[number]): string =>
-      `${uploadId}/${baseName}_${kind}.pdf`;
+    // ---------------- 4. Render + upload ONE document set PER BILL ----------------
+    //
+    // `renderBillDocument([copy], LABEL)` — a single-element array — is the whole
+    // point. It produces a one-page document for that invoice alone, so the row's
+    // View / Download / Print cannot reach a sibling's figures.
+    type CopyKind = (typeof COPY_ORDER)[number];
+    const uploadOne = async (
+      path: string,
+      bytes: Uint8Array
+    ): Promise<{ ok: true } | { ok: false; message: string }> => {
+      const { error } = await adminClient.storage
+        .from(BUCKET)
+        .upload(path, bytes, { contentType: "application/pdf", upsert: false });
+      if (error) {
+        console.error("Storage upload error:", path, error);
+        uploadedPaths.push(path);
+        return { ok: false, message: "The bill PDFs could not be saved." };
+      }
+      uploadedPaths.push(path);
+      return { ok: true };
+    };
+
+    /** What the client receives, and how the UI describes each bill. */
+    const billDocs: {
+      id: string;
+      sheet_name: string;
+      invoice_no: string | null;
+      job_kind: string | null;
+      paths: { original: string; duplicate: string; triplicate: string };
+    }[] = [];
+
+    for (const [i, p] of parsed.entries()) {
+      const billId = insertedIds[i];
+      // Invoice number is the readable identity; the id in the path is what makes
+      // it unique. A sheet with a blank invoice cell still gets a named file.
+      const token = safeBillToken(p.original.invoiceNo, p.sheetName);
+      const paths = {
+        original: `${uploadId}/${billId}_${token}_original.pdf`,
+        duplicate: `${uploadId}/${billId}_${token}_duplicate.pdf`,
+        triplicate: `${uploadId}/${billId}_${token}_triplicate.pdf`,
+      };
+
+      const rendered: Partial<Record<CopyKind, Uint8Array>> = {};
+      try {
+        for (const kind of COPY_ORDER) {
+          rendered[kind] = renderBillDocument([p[kind]], COPY_LABEL[kind]);
+        }
+      } catch (err) {
+        console.error("PDF render error for bill", billId, err);
+        await rollback(adminClient, uploadId, uploadedPaths);
+        uploadId = null;
+        return json(
+          { ok: false, error: "The bill PDFs could not be generated.", reason: "pdf_failed" },
+          500
+        );
+      }
+
+      for (const kind of COPY_ORDER) {
+        const bytes = rendered[kind];
+        if (!bytes) continue;
+        const outcome = await uploadOne(paths[kind], bytes);
+        if (!outcome.ok) {
+          await rollback(adminClient, uploadId, uploadedPaths);
+          uploadId = null;
+          return json({ ok: false, error: outcome.message, reason: "storage_failed" }, 500);
+        }
+      }
+
+      // ---------------- 5. Store this bill's own paths on its own row ----------------
+      const { error: pathError } = await adminClient
+        .from("bills")
+        .update({
+          original_pdf_path: paths.original,
+          duplicate_pdf_path: paths.duplicate,
+          triplicate_pdf_path: paths.triplicate,
+        })
+        .eq("id", billId);
+
+      if (pathError) {
+        console.error("bill path update error:", billId, pathError);
+        await rollback(adminClient, uploadId, uploadedPaths);
+        uploadId = null;
+        return json(
+          { ok: false, error: "The bill documents could not be linked to the bill.", reason: "save_failed" },
+          500
+        );
+      }
+
+      billDocs.push({
+        id: billId,
+        sheet_name: p.sheetName,
+        invoice_no: p.original.invoiceNo,
+        job_kind: p.original.jobKind,
+        paths,
+      });
+    }
+
+    // ---------------- 6. The optional aggregate "whole workbook" documents ----------
+    // Kept, because "give me every invoice in one file" is a real request, but
+    // clearly separate: these live on `bill_uploads` and no single-bill action
+    // ever reads them.
+    const aggregatePaths: Record<CopyKind, string> = {
+      original: `${uploadId}/${baseName}_original.pdf`,
+      duplicate: `${uploadId}/${baseName}_duplicate.pdf`,
+      triplicate: `${uploadId}/${baseName}_triplicate.pdf`,
+    };
+
+    for (const kind of COPY_ORDER) {
+      let bytes: Uint8Array;
+      try {
+        bytes = renderBillDocument(
+          parsed.map((b) => b[kind]),
+          COPY_LABEL[kind]
+        );
+      } catch (err) {
+        // The per-bill documents are already written and linked at this point, so
+        // a failure here must NOT unwind them: the upload is usable, only the
+        // convenience document is missing. Say so in the response instead.
+        console.error("aggregate PDF render error:", kind, err);
+        continue;
+      }
+      const outcome = await uploadOne(aggregatePaths[kind], bytes);
+      if (!outcome.ok) continue;
+    }
+
+    // ---------------- 7. Finalize the upload row ----------------
     const { error: finalizeError } = await adminClient
       .from("bill_uploads")
       .update({
         status: "completed",
         invoice_count: insertedIds.length,
-        original_pdf_path: pathFor("original"),
-        duplicate_pdf_path: pathFor("duplicate"),
-        triplicate_pdf_path: pathFor("triplicate"),
+        // Only paths that were actually written are recorded, so a missing
+        // aggregate is absent rather than pointing at a 404.
+        original_pdf_path: uploadedPaths.includes(aggregatePaths.original) ? aggregatePaths.original : null,
+        duplicate_pdf_path: uploadedPaths.includes(aggregatePaths.duplicate) ? aggregatePaths.duplicate : null,
+        triplicate_pdf_path: uploadedPaths.includes(aggregatePaths.triplicate) ? aggregatePaths.triplicate : null,
       })
       .eq("id", uploadId as string);
 
@@ -422,6 +542,10 @@ Deno.serve(async (req) => {
         filename,
         invoice_count: insertedIds.length,
         invoice_nos: parsed.map((p) => p.original.invoiceNo),
+        // Recorded because a mixed workbook is the normal case, and knowing how
+        // many of each kind arrived is what makes a later audit readable.
+        job_kinds: parsed.map((p) => p.original.jobKind),
+        documents_per_bill: 3,
       },
     });
     if (auditError) console.warn("Audit log write skipped:", auditError.message);
@@ -431,15 +555,17 @@ Deno.serve(async (req) => {
       upload_id: uploadId,
       base_name: baseName,
       invoice_count: insertedIds.length,
-      bills: (insertedBills as { id: string; sheet_name: string }[]).map((b) => ({
-        id: b.id,
-        sheet_name: b.sheet_name,
-      })),
-      pdfs: COPY_ORDER.map((kind) => ({
+      // Per-bill identity plus its own three documents. The client uses these to
+      // show what was created without a second round trip.
+      bills: billDocs,
+      // The optional whole-workbook documents, clearly named as such. No
+      // single-bill View / Download / Print reads these.
+      aggregate_pdfs: COPY_ORDER.filter((k) => uploadedPaths.includes(aggregatePaths[k])).map((kind) => ({
         copy: kind,
         label: COPY_LABEL[kind],
-        path: pathFor(kind),
+        path: aggregatePaths[kind],
         filename: `${baseName}_${kind}.pdf`,
+        scope: "workbook",
       })),
     });
   } catch (error) {
