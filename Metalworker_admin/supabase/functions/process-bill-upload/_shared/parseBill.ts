@@ -3,11 +3,25 @@
 // Deterministic parser for THIS client's tax-invoice workbook format.
 //
 // THE ONE INVARIANT THAT MATTERS
-// A sheet holds ONE invoice, printed three times as ORIGINAL / DUPLICATE /
-// TRIPLICATE stacked vertically. Those three blocks are three physical print
+// A sheet holds ONE invoice. That invoice is always printed as three physical
+// copies — ORIGINAL / DUPLICATE / TRIPLICATE — which are three physical print
 // copies of ONE financial bill. This module therefore produces ONE Bill per
 // WORKSHEET and keeps the three copies as rendering variants of that single
 // bill. Nothing downstream ever sees three financial rows for one invoice.
+//
+// THE WORKBOOK MAY HOLD ONE, TWO OR THREE OF THOSE COPIES
+// The Excel author is not required to prepare all three blocks. A sheet may
+// carry ORIGINAL alone, ORIGINAL + DUPLICATE, DUPLICATE alone, and so on — an
+// invoice typed out once, or a sheet exported from software that prints a
+// single copy. What is required is ONE recognisable copy block; the missing
+// copies are then SYNTHESISED by cloning the canonical parse, so the output is
+// always the complete ORIGINAL / DUPLICATE / TRIPLICATE set. Which block was
+// present is recorded per SHEET, never per workbook, so a workbook may mix a
+// single-copy sheet with a three-copy sheet freely.
+//
+// The clone is what makes synthesis lossless: it carries the nested line
+// items, bank lines, terms, signatures, notes and reference rows, and each
+// synthesized copy is an independent object that nothing else can mutate.
 //
 // NOTHING IS POSITIONAL
 // The row span of each copy is discovered from the copy labels themselves, and
@@ -64,6 +78,46 @@ export interface BillLineItem {
 export type CopyKind = "original" | "duplicate" | "triplicate";
 
 export const COPY_ORDER: readonly CopyKind[] = ["original", "duplicate", "triplicate"];
+
+/**
+ * Deep-clone a value: arrays, plain objects and nested combinations.
+ *
+ * Used to synthesize a missing print copy. Hand-writing the field list would be a
+ * standing invitation to forget one — add an array to `BillCopy`, forget it here,
+ * and two of the three printed copies quietly share mutable state with the
+ * canonical. Recursing over whatever is actually there cannot go stale.
+ */
+function deepClone<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(deepClone) as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = deepClone(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
+ * Build one print copy from the canonical parse: every field deep-cloned, then the
+ * copy's OWN identity stamped on it.
+ *
+ * The label and kind are set from `kind`, not copied from the canonical, because the
+ * designation is an OUTPUT property. Cloning ORIGINAL to make a DUPLICATE and
+ * leaving `label` as "ORIGINAL" produces three PDFs that all say ORIGINAL in the
+ * corner — a duplicate that is not identified as a duplicate.
+ *
+ * `firstRow`/`lastRow` are deliberately kept as the canonical's: they describe the
+ * source rows the content came from, which for a synthesized copy really is where
+ * the data was read.
+ */
+export function synthesizeCopy(canonical: BillCopy, kind: CopyKind): BillCopy {
+  const copy = deepClone(canonical);
+  copy.kind = kind;
+  copy.label = COPY_LABEL[kind];
+  return copy;
+}
 
 /**
  * One row of the invoice's reference block, as the SOURCE wrote it.
@@ -205,11 +259,37 @@ export interface BillCopy {
   notesExtra: string[];
 }
 
+/**
+ * ONE worksheet -> ONE bill, always carrying all three print copies.
+ *
+ * `original` / `duplicate` / `triplicate` are populated unconditionally. A copy
+ * the workbook did not contain is a DEEP CLONE of the canonical parse, so a
+ * consumer never has to ask "is this copy real or synthesized?" — every field is
+ * populated on all three, and only the copy label differs.
+ */
 export interface ParsedBill {
   sheetName: string;
   original: BillCopy;
   duplicate: BillCopy;
   triplicate: BillCopy;
+  /**
+   * Which copy the invoice's data was read from.
+   *
+   * ORIGINAL when present, else DUPLICATE, else TRIPLICATE. This is the sheet's
+   * canonical source: the values stored in the database and printed on all three
+   * documents come from it.
+   */
+  canonicalKind: CopyKind;
+  /**
+   * The copies the WORKBOOK actually contained, in `COPY_ORDER`.
+   *
+   * Recorded per sheet, which is what makes a mixed workbook legible: sheet `274 L`
+   * may hold `["original"]` while sheet `292` holds all three. Downstream,
+   * `copyDisagreements` compares only these — a synthesized copy is a clone of
+   * the canonical and agrees with it by construction, so comparing it would
+   * report a disagreement that does not exist.
+   */
+  sourceCopies: CopyKind[];
 }
 
 /** Rejection reason, phrased for the admin who uploaded the file. */
@@ -1016,15 +1096,31 @@ export interface CopyDisagreement {
 
 export function copyDisagreements(parsed: ParsedBill): CopyDisagreement[] {
   const show = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : String(v));
+
+  /* Only SOURCE copies can disagree. A synthesized copy is a deep clone of the
+     canonical, so it agrees with it by construction — comparing it would either
+     report nothing (correct, but by luck) or, once the clone logic changes,
+     report a disagreement between a sheet and itself.
+
+     This is also why `sourceCopies` is recorded per sheet: sheet `274 L` holding
+     ORIGINAL alone has nothing to compare, while sheet `292` holding all three has
+     three values to reconcile. */
+  const sources = parsed.sourceCopies;
+  if (sources.length < 2) return [];
+
   const out: CopyDisagreement[] = [];
   for (const field of CROSS_CHECKED_FIELDS) {
-    const values = [
-      show(parsed.original[field]),
-      show(parsed.duplicate[field]),
-      show(parsed.triplicate[field]),
-    ];
-    if (values[0] === values[1] && values[1] === values[2]) continue;
-    out.push({ field: String(field), original: values[0], duplicate: values[1], triplicate: values[2] });
+    const values = sources.map((k) => show(parsed[k][field]));
+    if (values.every((v) => v === values[0])) continue;
+    /* Reported for all three designations, not just the sources present, because
+       the reader needs to see what will actually be PRINTED — and the synthesized
+       copies print the canonical's value on every field. */
+    out.push({
+      field: String(field),
+      original: show(parsed.original[field]),
+      duplicate: show(parsed.duplicate[field]),
+      triplicate: show(parsed.triplicate[field]),
+    });
   }
   return out;
 }
@@ -1038,28 +1134,46 @@ export function parseSheet(sheet: Sheet): ParsedBill {
   const found = new Map<CopyKind, Block>();
   for (const b of blocks) if (!found.has(b.kind)) found.set(b.kind, b);
 
-  const missing = COPY_ORDER.filter((k) => !found.has(k));
-  if (missing.length > 0) {
-    const pretty = missing.map((k) => COPY_LABEL[k]).join(", ");
+  /* AT LEAST ONE COPY IS REQUIRED; ALL THREE ARE NOT.
+     A missing DUPLICATE is not a malformed workbook — it is a workbook whose
+     author typed the invoice once. The only rejection here is a sheet with no
+     recognisable copy label at all, which means it is not one of our invoices. */
+  const canonicalKind = COPY_ORDER.find((k) => found.has(k));
+  if (!canonicalKind) {
     throw new BillFormatError(
       `Could not recognize the bill format on sheet '${sheet.name}'. ` +
-        `Expected ORIGINAL, DUPLICATE and TRIPLICATE sections; missing ${pretty}.`,
+        `No ORIGINAL, DUPLICATE or TRIPLICATE invoice copy was found. ` +
+        `Each sheet needs at least one invoice copy; missing duplicate/triplicate ` +
+        `copies are generated automatically.`,
       sheet.name
     );
   }
 
-  const original = parseCopy(sheet, found.get("original")!, sheet.name);
-  const duplicate = parseCopy(sheet, found.get("duplicate")!, sheet.name);
-  const triplicate = parseCopy(sheet, found.get("triplicate")!, sheet.name);
+  /* Parse only the copies the workbook really has. Synthesizing first and parsing
+     the clone instead would paper over a genuine second block: if a DUPLICATE is
+     present but unparseable, that is a fact about the source worth failing on. */
+  const parsed: Partial<Record<CopyKind, BillCopy>> = {};
+  for (const kind of COPY_ORDER) {
+    const block = found.get(kind);
+    if (!block) continue;
+    parsed[kind] = parseCopy(sheet, block, sheet.name);
+  }
 
-  if (!original.invoiceNo) {
+  /* Read the invoice number off the CANONICAL. This is where "canonical" earns its
+     name: with all three blocks present, a number that differs between them is a
+     real inconsistency in the source, and picking whichever block happened to parse
+     first would silently invent an answer. The mismatch is reported by
+     `copyDisagreements` for a human to look at. */
+  const canonical = parsed[canonicalKind]!;
+
+  if (!canonical.invoiceNo) {
     throw new BillFormatError(
       `Could not recognize the bill format on sheet '${sheet.name}'. ` +
         `The invoice number could not be identified.`,
       sheet.name
     );
   }
-  if (original.amountBeforeTax === null && original.amountAfterTax === null) {
+  if (canonical.amountBeforeTax === null && canonical.amountAfterTax === null) {
     throw new BillFormatError(
       `Could not recognize the bill format on sheet '${sheet.name}'. ` +
         `The financial totals could not be determined.`,
@@ -1067,7 +1181,25 @@ export function parseSheet(sheet: Sheet): ParsedBill {
     );
   }
 
-  return { sheetName: sheet.name, original, duplicate, triplicate };
+  /* SYNTHESIZE THE MISSING COPIES.
+     Each absent copy is a deep clone of the canonical, so all three are complete,
+     independent objects. Nothing downstream can tell a synthesized copy from a
+     parsed one except by `canonicalKind` / `sourceCopies`, which is exactly the
+     distinction the UI is allowed to show and the financial code must not act on. */
+  const copies: Record<CopyKind, BillCopy> = { ...(parsed as Record<CopyKind, BillCopy>) };
+  for (const kind of COPY_ORDER) {
+    if (copies[kind]) continue;
+    copies[kind] = synthesizeCopy(canonical, kind);
+  }
+
+  return {
+    sheetName: sheet.name,
+    original: copies.original,
+    duplicate: copies.duplicate,
+    triplicate: copies.triplicate,
+    canonicalKind,
+    sourceCopies: COPY_ORDER.filter((k) => found.has(k)),
+  };
 }
 
 export const COPY_LABEL: Record<CopyKind, string> = {

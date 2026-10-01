@@ -392,7 +392,12 @@ Deno.serve(async (req) => {
 
            Rendering from one block makes the three copies identical by construction,
            and `copyDisagreements` reports the source inconsistency in the audit log
-           rather than letting it decide what a customer sees. */
+           rather than letting it decide what a customer sees.
+
+           `p.original` is the sheet's CANONICAL parse, which is the ORIGINAL block
+           whenever the workbook had one and a synthesized clone of the DUPLICATE or
+           TRIPLICATE otherwise — so this line is correct for all six workbook shapes
+           without knowing which ones the author actually typed out. */
         for (const kind of COPY_ORDER) {
           rendered[kind] = renderBillDocument([p.original], COPY_LABEL[kind]);
         }
@@ -498,17 +503,33 @@ Deno.serve(async (req) => {
       );
     }
 
-    /* Where the workbook's three print copies of one invoice disagree, the copies are
-       resolved in favour of ORIGINAL and the disagreement is recorded. Not fatal —
-       a whole 20-invoice upload is not worth refusing over one inconsistent cell —
-       and not silent, because a reviewer has to be able to see that the source
-       needed a human decision. */
+    /* Where the workbook's print copies of one invoice disagree, the copies are
+       resolved in favour of the CANONICAL block and the disagreement is recorded.
+       Not fatal — a whole 20-invoice upload is not worth refusing over one
+       inconsistent cell — and not silent, because a reviewer has to be able to see
+       that the source needed a human decision.
+
+       Only source copies are compared, so a sheet the author typed once reports
+       nothing. */
     const disagreements = parsed
       .map((p) => ({ sheet: p.sheetName, fields: copyDisagreements(p) }))
       .filter((d) => d.fields.length > 0);
     if (disagreements.length > 0) {
-      console.warn("Copy blocks disagree; ORIGINAL used for all three copies:", JSON.stringify(disagreements));
+      console.warn("Copy blocks disagree; canonical used for all three copies:", JSON.stringify(disagreements));
     }
+
+    /* Which copies each sheet actually carried. A workbook may mix them freely —
+       sheet `274 L` with ORIGINAL alone, sheet `292` with all three — so this is
+       per sheet, and it is the record that distinguishes "the author typed one
+       copy" from "the author typed three that agree". */
+    const synthesized = parsed
+      .filter((p) => p.sourceCopies.length < COPY_ORDER.length)
+      .map((p) => ({
+        sheet: p.sheetName,
+        canonical: p.canonicalKind,
+        source_copies: p.sourceCopies,
+        generated_copies: COPY_ORDER.filter((k) => !p.sourceCopies.includes(k)),
+      }));
 
     // ---------------- Audit (never blocks the write) ----------------
     // Written server-side with the service role, so the entry is still recorded
@@ -528,6 +549,9 @@ Deno.serve(async (req) => {
         // many of each kind arrived is what makes a later audit readable.
         job_kinds: parsed.map((p) => p.original.jobKind),
         documents_per_bill: 3,
+        // Which sheets arrived with fewer than three source copies, and which copies
+        // were generated for them. Empty for the usual three-copy workbook.
+        synthesized_copies: synthesized,
         // Non-empty only when the source needed a human decision; see above.
         copy_disagreements: disagreements,
       },

@@ -890,6 +890,161 @@ confirming the sibling is untouched in the live data, folder relationships survi
 save — are therefore still outstanding. The behaviour they cover is exercised above
 against the real workbook through the same code paths, but not through HTTP.
 
+## P3.14 A workbook had to carry all three print copies, or be rejected
+
+`parseSheet` used to treat a missing copy block as a malformed file:
+
+```ts
+const missing = COPY_ORDER.filter((k) => !found.has(k));
+if (missing.length > 0) throw new BillFormatError(`... missing ${pretty}.`);
+```
+
+So a workbook whose author typed the invoice once was unimportable. That is not a
+format error, it is a normal thing to produce: in a single-copy workbook the ORIGINAL
+block is the entire sheet, and there is nothing wrong with stopping there. Rejecting it
+meant an admin had to go back to Excel and manufacture two more identical blocks by hand
+before the file could be uploaded.
+
+### The rule now
+
+**ONE PHYSICAL INVOICE = ONE BILL RECORD = THREE PRINTABLE COPY PDFs.**
+
+The workbook may hold one, two or three copies. What is required is one recognisable
+copy block; the missing copies are synthesized. Presence is decided **per sheet**, so
+one workbook may mix a single-copy sheet with a three-copy sheet.
+
+### Canonical selection, and why it is not arbitrary
+
+`canonicalKind` is the first present copy in `COPY_ORDER` — ORIGINAL, else DUPLICATE,
+else TRIPLICATE. With all three blocks present, a number that differs between them is a
+genuine inconsistency in the source, and taking whichever block happened to be parsed
+first would invent an answer. So the invoice number and the totals are read off the
+canonical, and the difference is reported by `copyDisagreements` for a human to look
+at. This is the same policy that already existed for three-copy workbooks, applied
+unchanged to two-copy and one-copy ones.
+
+### Synthesis is a deep clone, and that is load-bearing
+
+```ts
+export function synthesizeCopy(canonical: BillCopy, kind: CopyKind): BillCopy {
+  const copy = deepClone(canonical);
+  copy.kind = kind;
+  copy.label = COPY_LABEL[kind];
+  return copy;
+}
+```
+
+A shallow `{ ...canonical }` passes every value comparison in the suite and still
+shares the `lineItems`, `bankLines`, `termsLines`, `referenceRows` and `partyAddress`
+arrays across all three documents, so an edit through one model's array would silently
+rewrite the other two. `deepClone` recurses over whatever is actually present rather
+than listing the fields by hand, so adding an array to `BillCopy` cannot quietly
+outlive the clone.
+
+`kind` and `label` are stamped from the requested copy, never copied from the
+canonical. Leaving them alone produces three PDFs that all read ORIGINAL in the corner
+— a duplicate that is not identified as a duplicate.
+
+### Only source copies are compared
+
+`copyDisagreements` now returns nothing when a sheet carries fewer than two source
+copies. A synthesized copy is a clone of the canonical and agrees with it by
+construction; comparing it would report a disagreement between a sheet and itself.
+`ParsedBill` gained `canonicalKind` and `sourceCopies` for exactly this, and the upload
+records `synthesized_copies` in the audit metadata so "the author typed one copy" stays
+distinguishable from "the author typed three that agree".
+
+### The uploaded workbook is never written to
+
+Synthesis happens only in the parsed in-memory model and the generated PDFs. The stored
+`.xlsx` is the customer's file, untouched — requirement, not accident.
+
+### Tests, and a note on the fixtures
+
+`_selftest/test-copies.ts` covers all seven source shapes, canonical selection, label
+assignment on the model *and* on the rendered page, clone independence, per-sheet
+mixing, the rejection that must still happen, the sanitized single-copy fixture, and the
+two real workbooks. Fixtures are real invoice sheets with blocks relabelled or appended,
+and the mixed workbook is written as a genuine `.xlsx` by `_selftest/write-xlsx.ts` (a
+test-only minimal writer) and read back through the production reader.
+
+### The single-copy fixture is generated, and sanitized
+
+The acceptance workbook for this feature was a real invoice, so committing it would have
+published a customer's name, address, GST numbers, bank account and IFSC. It is not in
+the repository. Instead `_selftest/make-fixture.ts` regenerates
+`test-bills-sanitized.xlsx` from that workbook's LAYOUT with every identifying value
+replaced, so the fixture is reproducible and auditable rather than a binary blob.
+
+Kept deliberately, because the tests depend on it: the ORIGINAL-only structure, the 49x8
+extent, the table and its squashed headers, `LABOUR JOB`, the whole arithmetic
+(1 x 9,000, then 810 + 810 + 0 = 1,620, giving 10,620, round off 0, the matching words),
+the rate cells written as FRACTIONS so the percent conversion is still exercised, the
+blank e-way row kept as a row with a null value, the three-line recipient address, the
+bank block, and every trailing space — including `" E & O.E"`'s leading space, which is
+what the invoice prints.
+
+The header sentence *"Original Copy of Invoice for Receipt … Duplicate & Triplicate
+Supplier or Transporter"* is kept verbatim, because the exact-match copy detection has to
+survive it and dropping it would quietly weaken the test.
+
+The suite asserts the absence of all 14 real identifiers rather than trusting the
+generator, since a pasted-back real value would otherwise slip in unnoticed. The three
+rendered PDFs were also read back and checked: each carries its own copy label and
+10,620.00, and none contains a real name, GSTIN, account number, IFSC or vehicle.
+
+The suite was checked against deliberate regressions, because a suite that cannot fail
+proves nothing:
+
+| Injected fault | Failures |
+| --- | --- |
+| `synthesizeCopy` shallow-cloned | 5 — array sharing caught |
+| label stamping removed | 14 |
+| canonical preference reversed | 6 |
+| disagreement guard removed | 0 — see below |
+
+`test-bills-sanitized.xlsx` → 1 bill, 3 documents, 1 page each, `TEST/001/2026-27`,
+`10,620.00`, `LABOUR JOB`, and exactly one copy label each. The same workbook structure
+was first verified against the real acceptance file, which parsed identically apart from
+the substituted identifiers.
+`SAMPLE.xlsx` → 2 bills, all three source copies still parsed and still agreeing.
+`BILL 301 TO.xlsx` → 20 bills, and sheet `320`'s `Your Challan No.: abc` inconsistency
+is still reported rather than silenced.
+
+**The fourth probe found nothing, and that is worth recording.** Removing the
+`sources.length < 2` guard produced zero failures, because on the tested workbooks a
+synthesized clone always agrees with its canonical — so the guard is a semantic
+statement (only real copies can disagree) rather than a currently-exercised branch. It
+is kept because it is what makes that statement true as the clone logic changes, but it
+is not covered by a failing test, and a guard that no test distinguishes is a guard
+whose necessity rests on reading alone.
+
+### Not done here
+
+No migration: the data model is unchanged, three PDF paths per bill as before.
+`MetalWorkerApp` untouched; both clients call the same edge function, so the change is
+central and neither client duplicates any copy logic. Client UI needs no change beyond
+the upload help text, since it already always shows Original / Duplicate / Triplicate.
+Not deployed, so the live HTTP upload of a single-copy workbook is still outstanding — as
+for P3.13.
+
+### Repository hygiene, alongside this change
+
+Two pre-existing problems were cleaned up while this work was in flight, neither related
+to bill behaviour.
+
+**The real invoice workbook is not committed.** See the fixture note above: it is
+regenerated, sanitized, by a committed script.
+
+**`supabase/.temp/` was tracked.** All 19 files across three projects, holding the linked
+project ref, the pooler host URL, and the organisation slug and org id. `**/supabase/.temp/`
+is now in the root `.gitignore` and the files are `git rm --cached`. Nothing was deleted
+from disk — `supabase link` still reads the same state — and no `config.toml` or migration
+was touched. These were never credentials (no access token, no database password), but
+the pooler URL is the first half of what a connection string needs, so the state has no
+business in a repository. **They remain in the history**, so if that project ref is
+considered sensitive it should be rotated rather than merely untracked.
+
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete

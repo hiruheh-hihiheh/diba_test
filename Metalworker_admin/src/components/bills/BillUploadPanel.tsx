@@ -132,6 +132,8 @@ export function BillUploadPanel({
           <Text style={styles.dropBody}>
             One .xlsx file holding every invoice. Each sheet becomes one bill, and
             the workbook produces three PDFs — original, duplicate and triplicate.
+            Each sheet needs at least one invoice copy; missing duplicate or
+            triplicate copies are generated automatically.
           </Text>
           <Button
             title={picking ? "Opening…" : "Choose workbook"}

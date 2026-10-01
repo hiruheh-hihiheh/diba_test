@@ -169,7 +169,9 @@ export function BillUploadPanel({
           <p className="text-sm font-bold text-text">Drop an Excel workbook here</p>
           <p className="text-sm text-text-muted mt-1 max-w-md mx-auto leading-relaxed">
             One .xlsx file holding every invoice. Each sheet becomes one bill, and the
-            workbook produces three PDFs — original, duplicate and triplicate.
+            workbook produces three PDFs — original, duplicate and triplicate. Each
+            sheet needs at least one invoice copy; missing duplicate or triplicate
+            copies are generated automatically.
           </p>
 
           <input
