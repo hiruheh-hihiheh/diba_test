@@ -118,6 +118,19 @@ export interface TextOptions {
   color?: [number, number, number];
 }
 
+/**
+ * Width of `text` as it would be drawn, without needing a page.
+ *
+ * Exists because layout has to be measurable before anything is drawn: a block
+ * reserves its height and only afterwards is placed, and the two must agree or the
+ * document overlaps itself. A caller holding no page still needs the same number
+ * `PdfPage.measure` would give, and duplicating the `toWinAnsi` conversion at each
+ * call site is how those two numbers start to differ.
+ */
+export function measurePdfText(text: string, opts: TextOptions = {}): number {
+  return measureText(toWinAnsi(text), opts.font ?? "regular", opts.size ?? 9);
+}
+
 export class PdfPage {
   readonly width: number;
   readonly height: number;
@@ -130,7 +143,7 @@ export class PdfPage {
 
   /** Width of `text` as it would be drawn on this page. */
   measure(text: string, opts: TextOptions = {}): number {
-    return measureText(toWinAnsi(text), opts.font ?? "regular", opts.size ?? 9);
+    return measurePdfText(text, opts);
   }
 
   /**

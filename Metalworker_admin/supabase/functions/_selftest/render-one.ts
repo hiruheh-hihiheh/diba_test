@@ -45,8 +45,13 @@ const fakeBillId = "11111111-1111-1111-1111-111111111111";
 console.log(`bill: ${bill.original.invoiceNo}  (sheet ${bill.sheetName}, job ${bill.original.jobKind})`);
 for (const copy of COPY_ORDER) {
   if (only && copy !== only) continue;
-  const bytes = renderBillDocument([bill[copy]], COPY_LABEL[copy]);
-  const file = `${fakeBillId}_${token}_${copy}.pdf`;
+  /* All three documents are rendered from the ORIGINAL block, which is what
+     `process-bill-upload` does. Rendering each copy from its own block would make
+     this tool disagree with production, and sheet `320` of the production workbook is
+     exactly the case where they differ: its ORIGINAL writes `Your Challan No.: abc`
+     and its other two leave the row blank. */
+  const bytes = renderBillDocument([bill.original], COPY_LABEL[copy]);
+  const file = `${fakeBillId}_${token}_v1_${copy}.pdf`;
   writeFileSync(resolve(outDir, file), bytes);
   const pages = (new TextDecoder("latin1").decode(bytes).match(/stream\r?\n([\s\S]*?)\r?\nendstream/g) ?? []).length;
   console.log(`  ${file}  ${(bytes.length / 1024).toFixed(1)} KiB  ${pages} page(s)`);

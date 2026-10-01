@@ -44,6 +44,7 @@ import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { BillDetailModal } from "../components/bills/BillDetailModal";
+import BillEditModal from "../components/bills/BillEditModal";
 import {
   fetchFolderBillSummary,
   formatMoney,
@@ -157,6 +158,8 @@ export default function FolderDetail() {
      "this record lives on its own page" box is not enough for an invoice with
      line items and three PDFs. */
   const [billPreviewId, setBillPreviewId] = useState<string | null>(null);
+  /** The bill open in the editor, or null. */
+  const [billEditId, setBillEditId] = useState<string | null>(null);
 
   /* Financial totals for the bills in this folder. Null until loaded, and null
      again on failure, so the panel can say "could not load" instead of printing
@@ -1040,7 +1043,25 @@ export default function FolderDetail() {
         billId={billPreviewId}
         onClose={() => setBillPreviewId(null)}
         onOpenFolderPicker={() => setBillPreviewId(null)}
+        onEdit={(bill) => {
+          /* Editing from inside a folder re-prints the bill and reloads the folder,
+             so the summary below reflects the new figures. The bill keeps this
+             folder's item row: the editor never touches folder relationships, and
+             the saved PDF is still the same one this folder item points at. */
+          setBillPreviewId(null);
+          setBillEditId(bill.id);
+        }}
       />
+
+      {billEditId && (
+        <BillEditModal
+          billId={billEditId}
+          onClose={() => setBillEditId(null)}
+          onSaved={() => {
+            void load(true);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
   FileText,
   Filter,
   Loader2,
+  Pencil,
   Receipt,
   RefreshCw,
   SearchX,
@@ -51,6 +52,7 @@ import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
 import { BillDetailModal } from "../components/bills/BillDetailModal";
+import BillEditModal from "../components/bills/BillEditModal";
 import { BillUploadPanel } from "../components/bills/BillUploadPanel";
 import { BillFolderPickerModal } from "../components/bills/BillFolderPickerModal";
 
@@ -87,6 +89,8 @@ export default function BillsPage() {
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  /** The bill open in the editor, or null. Separate from the read-only detail view. */
+  const [editId, setEditId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -653,6 +657,13 @@ export default function BillsPage() {
                                 onClick={() => setDetailId(bill.id)}
                               />
                               <IconButton
+                                label={`Edit bill ${bill.invoice_no ?? bill.sheet_name}`}
+                                size="sm"
+                                tooltipPlacement="top-end"
+                                icon={<Pencil size={15} />}
+                                onClick={() => setEditId(bill.id)}
+                              />
+                              <IconButton
                                 label={`Delete bill ${bill.invoice_no ?? bill.sheet_name}`}
                                 size="sm"
                                 tooltipPlacement="top-end"
@@ -732,7 +743,27 @@ export default function BillsPage() {
           setDetailId(null);
           setPickerOpen(true);
         }}
+        onEdit={(bill) => {
+          // Close the read-only view first: the editor reloads the same row, and
+          // two modals stacked on one bill is a confusing thing to leave open.
+          setDetailId(null);
+          setEditId(bill.id);
+        }}
       />
+
+      {/* Editing re-prints this bill's three documents from the saved values, so the
+          list is reloaded afterwards: the amounts, the copy column and the
+          download links all have to show the new version, and a PDF path that
+          changed under the row would otherwise be served from a stale link. */}
+      {editId && (
+        <BillEditModal
+          billId={editId}
+          onClose={() => setEditId(null)}
+          onSaved={() => {
+            void load(true);
+          }}
+        />
+      )}
 
       <BillFolderPickerModal
         open={pickerOpen}

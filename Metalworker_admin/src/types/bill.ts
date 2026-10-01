@@ -84,6 +84,7 @@ export interface BillColumns {
   order_date: string | null;
 
   eway_bill_no: string | null;
+  eway_bill_date: string | null;
   place_of_supply: string | null;
   state: string | null;
   state_code: string | null;
@@ -92,6 +93,17 @@ export interface BillColumns {
 
   party_gst_no: string | null;
   party_name: string | null;
+  /**
+   * The billed-to address, one source line per row separated by newlines.
+   *
+   * A single text column rather than `address_line_1..4` because an address has a
+   * variable number of lines and the invoice has to print them with the breaks the
+   * workbook gave them. A fixed set of columns would have to drop or invent a line
+   * for any address that is not exactly four.
+   */
+  party_address: string | null;
+  recipient_label: string | null;
+  recipient_note: string | null;
 
   total_quantity: number | null;
   amount_before_tax: number | null;
@@ -104,11 +116,146 @@ export interface BillColumns {
   round_off: number | null;
   amount_in_words: string | null;
 
+  /** Tax RATES as percentages: 9 means 9%, matching the workbook's "0.09" cell. */
+  cgst_rate: number | null;
+  sgst_rate: number | null;
+  igst_rate: number | null;
+
   job_kind: string | null;
   seller_name: string | null;
   seller_address: string | null;
-  bank_details: string[] | null;
+  /**
+   * The seller's header, split out of `seller_address`.
+   *
+   * 0005 packed the descriptor, the GST/MSME line and the contact into one joined
+   * string, which displays correctly and cannot be re-rendered with: the order is
+   * only recoverable if none of the three was ever null. These are the same three
+   * values as separate columns, and `seller_address` is still written for the
+   * detail screen.
+   */
+  seller_descriptor: string | null;
+  seller_tax_line: string | null;
+  seller_contact: string | null;
+  /** Label/value parts since the editing migration; an array of lines before it. */
+  bank_details: BillBankDetails | string[] | null;
   terms: string | null;
+  certification: string | null;
+  on_behalf_of: string | null;
+  signature_designation: string | null;
+  receiver_signature: string | null;
+  notes_extra: string | null;
+
+  /** When the bill was last saved from the editor. Null = imported, never edited. */
+  updated_at: string | null;
+  /** Which re-print is stored: 1 after import, +1 per save. */
+  pdf_version: number | null;
+}
+
+/**
+ * One editable part of the bank block, keeping the label the invoice prints.
+ *
+ * The label is stored so that `label + value` reproduces the printed line exactly.
+ * The template is inconsistent about the gap after the colon — "Bank Name: THE
+ * FEDERAL BANK LTD" has one, "IFSC CODE:FDRL0001775" does not — and a renderer that
+ * reinserted its own separator would retype every bank line on every re-print.
+ */
+export interface BillBankPart {
+  label: string;
+  value: string;
+}
+
+export type BillBankDetails = Record<string, BillBankPart>;
+
+/** The four bank parts this template writes, in the order it prints them. */
+export const BILL_BANK_PARTS: readonly { key: string; label: string }[] = [
+  { key: "bank_name", label: "Bank name" },
+  { key: "account_number", label: "Account number" },
+  { key: "branch", label: "Branch" },
+  { key: "ifsc_code", label: "IFSC code" },
+] as const;
+
+/**
+ * The fields the bill editor may change, and the one thing it may not.
+ *
+ * The copy designation is deliberately absent: ORIGINAL / DUPLICATE / TRIPLICATE are
+ * three printings of the same bill, so there is nothing for a user to choose. Saving
+ * regenerates all three from the single edited record.
+ *
+ * `amount_in_words` has three cases, not two. `null` asks the server to rebuild the
+ * words from the new total; a string keeps exactly what is typed; OMITTING the key
+ * leaves the imported wording alone, because replacing it silently on every save
+ * would alter the printed invoice for no reason anyone asked for.
+ */
+export interface BillPatch {
+  job_kind?: string | null;
+
+  invoice_no?: string | null;
+  invoice_date?: string | null;
+  our_challan_no?: string | null;
+  our_challan_date?: string | null;
+  your_challan_no?: string | null;
+  your_challan_date?: string | null;
+  order_no?: string | null;
+  order_no_label?: string | null;
+  order_date?: string | null;
+  eway_bill_no?: string | null;
+  eway_bill_date?: string | null;
+
+  recipient_label?: string | null;
+  recipient_note?: string | null;
+  party_name?: string | null;
+  party_address?: string | null;
+  party_gst_no?: string | null;
+  place_of_supply?: string | null;
+  state?: string | null;
+  state_code?: string | null;
+
+  transporter_mode?: string | null;
+  vehicle_number?: string | null;
+
+  seller_name?: string | null;
+  seller_descriptor?: string | null;
+  seller_tax_line?: string | null;
+  seller_address?: string | null;
+  seller_contact?: string | null;
+
+  /** Source values: what the business charged or decided, not what arithmetic gives. */
+  cgst_rate?: number | null;
+  sgst_rate?: number | null;
+  igst_rate?: number | null;
+  reverse_charge_gst?: number | null;
+  round_off?: number | null;
+
+  bank_details?: BillBankDetails | null;
+  terms?: string | null;
+  certification?: string | null;
+  on_behalf_of?: string | null;
+  signature_designation?: string | null;
+  receiver_signature?: string | null;
+  notes_extra?: string | null;
+
+  amount_in_words?: string | null;
+
+  line_items?: BillLineItemPatch[];
+}
+
+/** One editable line. `amount` is not listed: the server derives it as qty x rate. */
+export interface BillLineItemPatch {
+  sr_no?: number | null;
+  description: string;
+  hsn_code?: string | null;
+  uom?: string | null;
+  quantity?: number | null;
+  rate?: number | null;
+}
+
+/** What a successful save returns: the new document version and its three paths. */
+export interface BillUpdateResult {
+  bill_id: string;
+  pdf_version: number;
+  amount_after_tax: number | null;
+  amount_in_words: string | null;
+  pdfs: { copy: BillCopy; label: string; path: string; filename: string }[];
 }
 
 export interface BillLineItem {

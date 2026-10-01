@@ -108,6 +108,18 @@ export interface BillCopy {
   recipientHeading: string | null;
   recipientNote: string | null;
   partyName: string | null;
+  /**
+   * The billed-to address BELOW the company name, as the source wrote it, one
+   * source line per entry.
+   *
+   * Kept as lines rather than a single joined string because the line breaks are
+   * part of the address: "C-21,22 \"U\" Road," / "Wagle Industrial Estate," /
+   * "Thane - 400 604." is three facts, and re-joining them would let a renderer
+   * reflow the invoice in a way the workbook never did. Empty on a sheet whose
+   * billed-to block carries no name or address, which is a real case — the
+   * acceptance workbook SAMPLE.xlsx has none on either sheet.
+   */
+  partyAddress: string[];
   partyGstNo: string | null;
 
   invoiceNo: string | null;
@@ -156,10 +168,41 @@ export interface BillCopy {
   amountInWords: string | null;
   jobKind: string | null;
 
+  /**
+   * The tax RATES, as PERCENTAGE numbers: 9 means 9%.
+   *
+   * The workbook writes the rate as a fraction in the cell beside "ADD:  CGST"
+   * (0.09 for 9%), so the fraction is converted once, here, and every reader
+   * downstream works in percent. A stored rate is also the only way the rate can
+   * be printed when the tax AMOUNT is zero: IGST is 0.00 on every intra-state
+   * invoice, so a rate derived from the amount would be absent exactly when the
+   * 18% IGST rate is most worth showing.
+   *
+   * Null when the source printed no rate cell, which falls back to deriving it
+   * from the amount at render time.
+   */
+  cgstRate: number | null;
+  sgstRate: number | null;
+  igstRate: number | null;
+
   bankLines: string[];
   termsLines: string[];
   signatureLines: string[];
   notes: string[];
+
+  /**
+   * The footer's template wording, named so it can be edited and so a re-print
+   * from the database can restore it instead of inventing it.
+   */
+  certification: string | null;
+  /** "For SAASTHA ENGINEERING WORKS" */
+  onBehalfOf: string | null;
+  /** "(Proprietor)" */
+  signatureDesignation: string | null;
+  /** "(Receivers Signature)" */
+  receiverSignature: string | null;
+  /** Any footer annotation that is none of the four above, kept so none is lost. */
+  notesExtra: string[];
 }
 
 export interface ParsedBill {
@@ -365,6 +408,27 @@ function readTaxRow(r: CopyReader, row: number, col: number): { rate: number | n
   return { rate: first, amount: second };
 }
 
+/**
+ * The workbook's tax-rate cell to a PERCENTAGE.
+ *
+ * Every sheet in the production workbook writes the rate as a FRACTION — 0.09
+ * beside "ADD:  CGST" for a 9% CGST, 0.18 for IGST — while the amount beside it is
+ * the currency figure. The fraction is converted once, here, so that every
+ * consumer downstream works in percent and none of them has to remember a factor
+ * of 100.
+ *
+ * The `>= 1` branch is not a guess at the workbook's style. It makes the function
+ * total: a template that already wrote `9` is read as 9%, and a rate below 1 is
+ * read as a fraction. Both are the only two ways a rate can be written, and the
+ * alternative — assuming one style — would silently print 0.09% for a workbook
+ * that wrote 9.
+ */
+function taxRatePercent(rate: number | null): number | null {
+  if (rate === null || !Number.isFinite(rate) || rate < 0) return null;
+  if (rate === 0) return 0;
+  return rate < 1 ? Math.round(rate * 10000) / 100 : rate;
+}
+
 /* ──────────────────────────────────────────────
    Line-item table
    ────────────────────────────────────────────── */
@@ -473,6 +537,16 @@ const TOTAL_LABELS = new Set([
 const SIGNATURE_RE = /signature|proprietor|receiver|authori[sz]ed\s*(sign|for)/i;
 
 /**
+ * A footer line that is ONLY a designation — "(Proprietor)", "Director" — as
+ * opposed to "For SAASTHA ENGINEERING WORKS", which names a party.
+ *
+ * The two are separated because they print on different lines of the same
+ * signature block and a re-print has to know which is which.
+ */
+const DESIGNATION_ONLY_RE =
+  /^\s*\(?\s*(proprietor|proprietorship|director|partner|signatory|manager)\s*\)?\s*$/i;
+
+/**
  * Every label this template uses in the invoice header band. Used only to tell
  * a field's VALUE apart from a neighbouring field's LABEL.
  */
@@ -512,6 +586,20 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
 
   const invoiceHit = r.findMatch(/\bINVOICE\s*NO\b/i, first, 1);
   const headerBottom = invoiceHit ? invoiceHit.row - 1 : Math.min(last, headerTop + 8);
+
+  /* The line-item table is located up front because it is the hard floor for
+     every header-side block that follows: the recipient's address run, the state
+     line and the bank block all have to stop before it, and finding it here means
+     they do not each have to rediscover it. `findTableHeader` is a pure scan, so
+     calling it before it is used changes nothing about the result. */
+  const tableHeader = findTableHeader(r);
+  if (!tableHeader) {
+    throw new BillFormatError(
+      `Could not recognize the bill format on sheet '${sheetName}'. ` +
+        `Expected a line-item table with SR.NO., DESCRIPTION, QUANTITY and AMOUNT columns.`,
+      sheetName
+    );
+  }
 
   // leftHeader[0] is the title itself; the rest are the seller's lines in order.
   const leftHeader = r.colCells(leftCol, headerTop, headerBottom);
@@ -632,12 +720,55 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
         ?.text ?? null)
     : null;
 
-  // Recipient name is optional: this template leaves the billed-to name blank on
-  // the sample, so only a non-empty left-column cell in that band counts.
-  const partyName =
-    recipientHit && invoiceHit
-      ? (r.colCells(leftCol, recipientHit.row + 1, invoiceHit.row - 1)[0]?.text ?? null)
-      : null;
+  /* ---- recipient name and address ---------------------------------------- */
+
+  /* The billed-to block is a run of consecutive left-column cells under its
+     heading: the company name first, then one or more address lines. It is found
+     by WALKING the column, not by assuming where the block ends.
+
+     The previous implementation read `recipientHit.row + 1 .. invoiceHit.row - 1`,
+     which is correct only if the recipient and the invoice number sit on
+     different rows. In this template they sit on the SAME row — "M/s. Hawkins
+     Cookers Ltd.," is in column B of the row whose column D reads "INVOICE
+     NO.:" — so the range was always empty and the billed-to name and address were
+     silently dropped from every invoice. Reading the column fixes that without
+     hardcoding a row number.
+
+     The run stops at the first of:
+       * a blank row, because an address does not contain blank lines;
+       * a cell that is really a labelled field ("State: ...", "Party's GST No...")
+         rather than address prose;
+       * the line-item table, which is the block's hard floor.
+
+     A sheet with no billed-to name or address therefore yields an empty list,
+     which is correct and not a failure. */
+  const addressLinesRaw: string[] = [];
+  if (recipientHit) {
+    const headingRow = recipientHit.row;
+    const stateHit = r.findMatch(/^\s*state\s*:/i, headerTop, leftCol);
+    const gstFieldHit = r.findMatch(/party'?s?\s*gst\s*no/i, headerTop, leftCol);
+    const candidates = [stateHit?.row, gstFieldHit?.row, tableHeader.row].filter(
+      (v): v is number => typeof v === "number" && v > headingRow
+    );
+    const blockEnd = candidates.length > 0 ? Math.min(...candidates) : tableHeader.row;
+
+    for (let row = headingRow + 1; row < blockEnd; row++) {
+      const [cell] = r.colCells(leftCol, row, row);
+      // A blank ends the run: an address is consecutive lines, and a gap means
+      // the next cell belongs to a different part of the invoice.
+      if (!cell) break;
+      if (/^\s*(state\s*:|party'?s?\s*gst\b|place\s*of\s*supply\b)/i.test(cell.text)) break;
+      if (/^\s*(sr\.?\s*no|description|hsn|uom|quantity|rate|amount)\b/i.test(cell.text)) break;
+      addressLinesRaw.push(cell.text.trim());
+    }
+  }
+
+  /* The first line is the company name and the rest is the address — but only
+     when there is more than one line. With a single line there is nothing to
+     split and it is read as the name, which is what a one-line "billed to" means
+     on a template that allows it. */
+  const partyName = addressLinesRaw.length > 0 ? addressLinesRaw[0] : null;
+  const partyAddress = addressLinesRaw.slice(1);
 
   /* ---- transporter mode / vehicle --------------------------------------- */
 
@@ -655,14 +786,8 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
 
   /* ---- line items and totals ------------------------------------------- */
 
-  const header = findTableHeader(r);
-  if (!header) {
-    throw new BillFormatError(
-      `Could not recognize the bill format on sheet '${sheetName}'. ` +
-        `Expected a line-item table with SR.NO., DESCRIPTION, QUANTITY and AMOUNT columns.`,
-      sheetName
-    );
-  }
+  // `tableHeader` was resolved with the rest of the header block, above.
+  const header = tableHeader;
 
   const totalQtyHit = r.findExact("TOTALQUANTITY", header.row);
   const totalRow = totalQtyHit ? totalQtyHit.row : last;
@@ -756,6 +881,29 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     }
   }
 
+  /* ---- footer wording, named so it stays editable ----------------------- */
+  /* The four phrases the template prints in its footer are separated out by what
+     they ARE, not by position, so a re-print from the database can restore them
+     and an editor can offer them as fields. Anything left over is kept rather
+     than dropped, because an unrecognised annotation on a real invoice is still
+     part of that invoice. */
+  let certification: string | null = null;
+  let onBehalfOf: string | null = null;
+  let signatureDesignation: string | null = null;
+  const notesExtra: string[] = [];
+
+  for (const note of notes) {
+    if (/certif/i.test(note) && certification === null) certification = note;
+    else if (DESIGNATION_ONLY_RE.test(note) && signatureDesignation === null) signatureDesignation = note;
+    else if (/^\s*for\s+\S/i.test(note) && onBehalfOf === null) onBehalfOf = note;
+    else notesExtra.push(note);
+  }
+
+  /* The receiver's caption is the left-hand half of the signature block, so it
+     arrives in `signatureLines` rather than in `notes`. The first line is the
+     caption; the rest stay as they are. */
+  const receiverSignature = signatureLines[0] ?? null;
+
   return {
     kind: block.kind,
     label: block.label,
@@ -771,6 +919,7 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     recipientHeading,
     recipientNote,
     partyName,
+    partyAddress,
     partyGstNo,
 
     invoiceNo: invoiceNo?.value ?? null,
@@ -797,6 +946,12 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     cgst: cgstHit ? readTaxRow(r, cgstHit.row, cgstHit.col).amount : null,
     sgst: sgstHit ? readTaxRow(r, sgstHit.row, sgstHit.col).amount : null,
     igst: igstHit ? readTaxRow(r, igstHit.row, igstHit.col).amount : null,
+    // The rate cell was always read but always thrown away, which is why the
+    // shipped PDF never showed the 18% IGST rate the workbook prints beside an
+    // IGST amount of 0.00.
+    cgstRate: cgstHit ? taxRatePercent(readTaxRow(r, cgstHit.row, cgstHit.col).rate) : null,
+    sgstRate: sgstHit ? taxRatePercent(readTaxRow(r, sgstHit.row, sgstHit.col).rate) : null,
+    igstRate: igstHit ? taxRatePercent(readTaxRow(r, igstHit.row, igstHit.col).rate) : null,
     totalGst: totalGstHit ? amountRightOf(r, totalGstHit.row, totalGstHit.col) : null,
     amountAfterTax: afterTaxHit ? amountRightOf(r, afterTaxHit.row, afterTaxHit.col) : null,
     reverseChargeGst: reverseHit ? amountRightOf(r, reverseHit.row, reverseHit.col) : null,
@@ -809,7 +964,69 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     termsLines,
     signatureLines,
     notes,
+
+    certification,
+    onBehalfOf,
+    signatureDesignation,
+    receiverSignature,
+    notesExtra,
   };
+}
+
+/**
+ * Fields whose three print copies disagree.
+ *
+ * The three blocks on a worksheet are three PHYSICAL COPIES of one invoice, so
+ * every field they carry should be identical. They are not always: the production
+ * workbook's sheet `320` writes `Your Challan No.: abc` in its ORIGINAL block and
+ * leaves the row blank in its DUPLICATE and TRIPLICATE, so rendering each copy from
+ * its own block produces an original that names a challan the other two do not.
+ *
+ * This exists so that is REPORTED rather than silently resolved. It is not fatal —
+ * refusing a whole 20-invoice upload because one cell on one sheet is inconsistent
+ * would be worse than importing it — and it is not silently corrected either,
+ * because choosing which of two values is right is a business decision. The upload
+ * records it in the audit log and prints all three copies from ORIGINAL, so the
+ * three documents agree with each other and with the stored record.
+ *
+ * `firstRow`/`lastRow` and the row spans are excluded: they are diagnostics and
+ * differ by construction.
+ */
+const CROSS_CHECKED_FIELDS: (keyof BillCopy)[] = [
+  "invoiceNo", "invoiceDate",
+  "ourChallanNo", "ourChallanDate",
+  "yourChallanNo", "yourChallanDate",
+  "orderNo", "orderNoLabel", "orderDate",
+  "ewayBillNo", "ewayBillDate",
+  "placeOfSupply", "state", "stateCode",
+  "transporterMode", "vehicleNumber",
+  "partyName", "partyGstNo", "jobKind",
+  "totalQuantity", "amountBeforeTax", "cgst", "sgst", "igst", "totalGst",
+  "amountAfterTax", "reverseChargeGst", "roundOff", "amountInWords",
+  "cgstRate", "sgstRate", "igstRate",
+];
+
+/** One field whose three copies print different values. */
+export interface CopyDisagreement {
+  field: string;
+  original: string | null;
+  duplicate: string | null;
+  triplicate: string | null;
+}
+
+export function copyDisagreements(parsed: ParsedBill): CopyDisagreement[] {
+  const show = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : String(v));
+  const out: CopyDisagreement[] = [];
+  for (const field of CROSS_CHECKED_FIELDS) {
+    const values = [
+      show(parsed.original[field]),
+      show(parsed.duplicate[field]),
+      show(parsed.triplicate[field]),
+    ];
+    if (values[0] === values[1] && values[1] === values[2]) continue;
+    out.push({ field: String(field), original: values[0], duplicate: values[1], triplicate: values[2] });
+  }
+  return out;
 }
 
 /* ──────────────────────────────────────────────

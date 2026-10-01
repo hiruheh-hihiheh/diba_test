@@ -35,6 +35,7 @@ import { DraggableItem } from "./DraggableItem";
 import { FolderDropTarget } from "./FolderDropTarget";
 import { ItemPreviewModal } from "./ItemPreviewModal";
 import { BillDetailModal } from "../bills/BillDetailModal";
+import { BillEditScreen } from "../bills/BillEditScreen";
 import { FolderBillSummaryPanel } from "./FolderBillSummaryPanel";
 
 /* ─── Constants ─── */
@@ -76,6 +77,8 @@ export function FolderContents({ folderId }: FolderContentsProps) {
     id: string;
     label: string;
   } | null>(null);
+  /** The bill open in the editor, or null. */
+  const [editBillId, setEditBillId] = useState<string | null>(null);
 
   /**
    * Destructive confirmations go through the shared ConfirmDialog modal
@@ -786,7 +789,27 @@ export function FolderContents({ folderId }: FolderContentsProps) {
         billId={previewItem?.type === "bill" ? previewItem.id : null}
         onClose={() => setPreviewItem(null)}
         onOpenFolderPicker={() => setPreviewItem(null)}
+        onEdit={(bill) => {
+          /* Editing from inside a folder re-prints the bill and reloads the
+             folder, so the summary reflects the new figures. The bill keeps this
+             folder's item row: the editor never touches folder relationships. */
+          setPreviewItem(null);
+          setEditBillId(bill.id);
+        }}
       />
+
+      {editBillId && (
+        <BillEditScreen
+          billId={editBillId}
+          onClose={() => setEditBillId(null)}
+          onSaved={() => {
+            /* Reload the folder so the summary and the bill's row show the figures
+               the save produced. The item row itself is untouched: the editor never
+               changes folder relationships, only the bill. */
+            void loadData();
+          }}
+        />
+      )}
 
       {(selectedAvailableItemIds.size > 0 || selectedFolderItemIds.size > 0) && (
         <View style={styles.stickyActionBar}>

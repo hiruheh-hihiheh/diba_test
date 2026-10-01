@@ -709,6 +709,187 @@ existing rows keep working (as legacy) until then. Tests 6-11 of the acceptance
 list, which need a deployed function and a real database, are therefore still
 outstanding; tests 1-5, 9's data shape and 12 are covered above.
 
+## P3.13 The labour invoice was losing its recipient, and a bill could not be corrected
+
+`BILL 301 TO.xlsx` and specifically `SEW/316/2026-27` exposed two separate problems:
+a real gap in the parser, and the absence of any way to fix a bill after import.
+Both are recorded here because the second one's design is the interesting part.
+
+### 1. The billed-to name and address were never read
+
+`partyName` was computed as
+
+    r.colCells(leftCol, recipientHit.row + 1, invoiceHit.row - 1)[0]?.text
+
+which assumes the recipient block and `INVOICE NO.:` sit on different rows. In this
+template they sit on the SAME row — "M/s. Hawkins Cookers Ltd.," is column B of the
+row whose column D reads `INVOICE NO.:` — so the range was always empty and the
+company name and address were dropped from every single invoice. The comment beside
+it said the block "is optional", which was true of `SAMPLE.xlsx` and false of the
+production workbook; one fixture had been generalised into a rule.
+
+The fix walks the left column instead of assuming where the block ends, stopping at a
+blank row, at a cell that is really a labelled field ("State:", "Party's GST No."),
+or at the line-item table. The first line is the name, the rest is the address, kept
+as separate entries so the invoice prints the line breaks the workbook gave it.
+
+### 2. The transporter was in the wrong box
+
+"Transporter: VEHICLE / Vehicle No.: MH 04 JQ 4172" was drawn inside the Details of
+Recipient box on the left. The workbook prints it on the right, under the reference
+table, and that is where it now goes — as a labelled pair below the grid, in the same
+column and row rhythm, so it reads as metadata attached to the references rather than
+as addressee information.
+
+### 3. The tax rate cell was read and thrown away
+
+`readTaxRow` returned `{ rate, amount }` and the parser used only `.amount`. The
+workbook writes the rate as a FRACTION (0.09 beside "ADD:  CGST") and the amount
+beside it, so the rate was available and discarded. The visible consequence: IGST is
+0.00 on every intra-state invoice, so a rate derived from the amount was absent
+exactly where the 18% IGST rate is most worth showing. Rates are now stored as
+percentages and printed from the stored value, with the derived form as the fallback
+for pre-existing rows.
+
+### 4. The three print copies were rendered from three different blocks
+
+`process-bill-upload` rendered `[p[kind]]` — each copy from its own block. The blocks
+are supposed to be three physical copies of ONE invoice, and in the production
+workbook they are not always: sheet `320` writes `Your Challan No.: abc` in its
+ORIGINAL and leaves the row blank in its DUPLICATE and TRIPLICATE. The shipped
+original therefore named a challan the other two did not.
+
+All three are now rendered from the ORIGINAL block with only the designation
+differing, which makes the three documents identical by construction, and
+`copyDisagreements()` reports the source inconsistency in the audit log rather than
+letting it silently decide what a customer sees. Choosing between two values is a
+business decision and is not one to make on the user's behalf.
+
+A second defect fell out of that change: the corner marker read `bill.label`, which
+after the change is the block's own label, so the DUPLICATE printed "ORIGINAL" in the
+corner while its footer said DUPLICATE. `copyLabel` is now authoritative and `kind` is
+recovered from it, so the two cannot disagree.
+
+There was also no cross-check between the copies at all, despite a comment claiming
+one existed. `copyDisagreements` is it, and it is what found sheet 320.
+
+### 5. The auditor's own width table had drifted
+
+`_selftest/audit.ts` carried a retyped copy of the Helvetica advance widths, and the
+copy was missing `/` and `-`, so both fell through to the 556 default instead of
+their real 278 and 333. Every invoice on this template contains a slash and a hyphen
+— "SEW/316/2026-27", "28/09/2026" — so the auditor over-measured them by up to 7
+points and reported phantom overlaps between adjacent runs. It now imports
+`fontMetrics.ts` rather than describing it twice, which makes that class of false
+positive impossible rather than merely unlikely.
+
+### 6. Terms: a payment window is emphasised, and never split
+
+`EMPHASIS_RE` matches the SHAPE of a payment window —
+`\d+\s*(DAYS?|WEEKS?|MONTHS?)` — not the literal "40 DAYS", because the number is a
+business decision that changes between clients. The emphasised run shares the
+baseline of its line, so "40 DAYS" is bold and one point larger without inflating the
+row, and it is atomic: it moves to the next line whole rather than breaking "40" at
+the end of one line and "DAYS" at the start of the next, which is exactly the
+misreading the emphasis exists to prevent. Both the measurement and the drawing go
+through `layoutRuns`, so the reserved height and the drawn height cannot disagree.
+
+### 7. Editing: what the data model had to gain
+
+The `bills` row was a SUMMARY. The renderer consumes a much richer model, and a bill
+could not be re-printed from the database at all — only re-uploaded, which re-created
+every sibling. Migration 0008 stores the model: the recipient address, the recipient
+label and note, the e-way date, the three tax rates, the seller's header split back
+out of its joined string, the four footer phrases, and `pdf_version` / `updated_at`.
+
+Deliberately NOT stored: the reference block. It is DERIVED from the flat
+invoice/challan/order/eway columns by `referenceRowsFromFields()` plus
+`order_no_label`. Storing it as well would create two copies that can disagree, and
+the disagreement would be invisible until an invoice printed the wrong invoice number.
+
+The bank block is stored as label/value PARTS rather than a flat array, each part
+carrying the label the workbook used — "Bank Name: " with its space, "IFSC CODE:"
+without one — so `label + value` reproduces the printed line byte for byte. Trimming
+the label loses that distinction and reprints every bank line one space tighter.
+
+### 8. The calculation rules, verified against the data rather than assumed
+
+    line amount       = quantity x rate          exact on all 20 sheets
+    amount_before_tax = SUM(line amount)         exact on all 20 sheets
+    tax               = base x rate / 100, for the taxes the bill CHARGES
+    amount_after_tax  = before + total gst + round off
+
+Two of those were not obvious. `round_off` is a SOURCE value, never recomputed: 8 of
+the 20 sheets round, and 302 ends at 19,800.40 and prints 19,800.00. A
+`total = before + gst` rule would print 19,800.40 on an invoice billed 19,800.00.
+
+And "the taxes the bill charges" is not derivable from the rates. Every sheet prints
+all three slab rates (9 / 9 / 18) as a reference table while charging only two of
+them. Charging every rated tax turned a 77,290.00 bill into an 89,080.00 one, which
+the self-test caught on its first run. Applicability is a property of the supply and
+is carried explicitly, derived once from what the bill already charges.
+
+### 9. `update-bill`, and the order of its writes
+
+The row is written BEFORE the documents, because a document that disagrees with its
+own row is the failure this feature could easily introduce. The row's PATHS are
+updated only after all three uploads succeed, so a failure part-way leaves the
+previous three documents in place and still reachable. If the documents cannot be
+produced at all, the row is RESTORED — a save that reports failure while leaving new
+numbers in the database and old numbers on the PDF is the one outcome that cannot be
+allowed.
+
+Documents are written to a versioned path,
+`<upload>/<bill>_<token>_v<N>_<copy>.pdf`. Overwriting an object in place does not
+change its URL and a browser will not re-fetch a URL it has already fetched, so an
+edited invoice would keep showing its pre-edit document to anyone who had opened it. A
+new name is a new URL, and the superseded objects are removed once the new row is
+written.
+
+### 10. The check that makes the whole thing trustworthy
+
+`test-edit.ts` asserts, for all 20 bills and all 3 copies, that
+`render(from the parse)` and `render(from the stored record)` are BYTE IDENTICAL.
+That single assertion is what proves the database bridge loses nothing — if it dropped
+a field, reformatted the bank block, or mislabelled the seller header, the two
+documents would differ and a re-print would silently produce a different invoice. It
+took four real bugs to reach zero: the bank object not being read back, the seller
+address read positionally instead of by set difference, the per-copy rendering, and
+the corner marker.
+
+Also covered: the recalculation rules against all 20 production totals, the
+amount-in-words generator, the bank's lossless round trip, validation (rejects a
+non-ISO date, a malformed GST, a rate over 100, a negative quantity; accepts 0.09 as a
+rate, a negative round off, and a blank optional field), and that editing one bill
+leaves its sibling byte-identical.
+
+### 11. What is duplicated, and why
+
+`previewTotals` exists in both clients so the editor can show the effect of a quantity
+or rate change before the user commits to it. It mirrors `_shared/billEdit.ts` and is
+labelled a preview in both UIs. The server does not trust it: it recomputes every
+figure on save and the saved values are what print, so a disagreement here can only
+show a number the save then corrects. The three compilation targets cannot import each
+other, which is the same reason `formatJobKind` and `safeBillToken` are already
+duplicated in this codebase.
+
+### Checks
+
+Admin `tsc` 0, `eslint` 0, `expo export` ok, `lint:edge` 0. Desktop `tsc -b` 0,
+`lint` 53 = the pre-existing baseline with zero problems in any bill file, `build` ok.
+`MetalWorkerApp` untouched. `bills:selftest` green on both `SAMPLE.xlsx` and
+`BILL 301 TO.xlsx` — 7 suites. `SEW/316/2026-27` renders to three one-page documents,
+11.5 KiB each, all three layout audits clean.
+
+### Not done here
+
+Migrations 0007 and 0008 and both edge functions are **not deployed**; that needs
+`supabase db push` and `supabase functions deploy process-bill-upload update-bill`.
+The acceptance tests that need a live database — saving through the real function,
+confirming the sibling is untouched in the live data, folder relationships surviving a
+save — are therefore still outstanding. The behaviour they cover is exercised above
+against the real workbook through the same code paths, but not through HTTP.
+
 # PASS 2 — Cross-app production hardening
 
 Scope: security, audit security, folder system, Cloudinary cleanup, multi-step delete

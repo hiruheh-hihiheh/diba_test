@@ -19,6 +19,7 @@ import {
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import {
+  bankLinesOf,
   fetchBill,
   fetchBillLineItems,
   formatBillDate,
@@ -98,10 +99,12 @@ export function BillDetailModal({
   billId,
   onClose,
   onOpenFolderPicker,
+  onEdit,
 }: {
   billId: string | null;
   onClose: () => void;
   onOpenFolderPicker: (bill: Bill) => void;
+  onEdit: (bill: Bill) => void;
 }) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -165,6 +168,12 @@ export function BillDetailModal({
       setLoading(false);
     }
   }
+
+  /* The bank block is stored as label/value parts and was an array of printed lines
+     before the editing migration, so it is resolved once here rather than being
+     mapped over in the markup, where the two shapes would not type-check against
+     each other. */
+  const bankLines = bankLinesOf(bill?.bank_details);
 
   return (
     <Modal
@@ -315,12 +324,12 @@ export function BillDetailModal({
               )}
 
               {/* ── Bank / seller / terms ───────────────────────── */}
-              {bill.bank_details || bill.seller_address || bill.terms ? (
+              {bankLines.length > 0 || bill.seller_address || bill.terms ? (
                 <View style={styles.stackSection}>
-                  {bill.bank_details ? (
+                  {bankLines.length > 0 ? (
                     <View>
                       <Text style={styles.sectionTitle}>Bank details</Text>
-                      {bill.bank_details.map((line, i) => (
+                      {bankLines.map((line, i) => (
                         <Text key={i} style={styles.bodyText}>
                           {line}
                         </Text>
@@ -346,8 +355,8 @@ export function BillDetailModal({
               <Text style={styles.sectionTitle}>Print copies</Text>
               <Text style={[styles.muted, { marginBottom: theme.spacing.sm }]}>
                 Original, duplicate and triplicate are three print copies of this one
-                invoice, each holding every bill in the workbook. They are the same
-                figures, not extra charges.
+                invoice. Each holds this invoice alone, and they are the same figures,
+                not extra charges.
               </Text>
               <BillCopyActions bill={bill} />
             </ScrollView>
@@ -359,6 +368,13 @@ export function BillDetailModal({
               <Button
                 title="Add to folder"
                 onPress={() => onOpenFolderPicker(bill)}
+                style={styles.actionButton}
+              />
+            )}
+            {bill && !loading && (
+              <Button
+                title="Edit bill"
+                onPress={() => onEdit(bill)}
                 style={styles.actionButton}
               />
             )}

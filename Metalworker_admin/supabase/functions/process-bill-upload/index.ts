@@ -75,7 +75,8 @@ import {
   sanitizeBaseName,
 } from "./_shared/parseBill.ts";
 import { renderBillDocument } from "./_shared/renderBill.ts";
-import { safeBillToken } from "./_shared/parseBill.ts";
+import { safeBillToken, copyDisagreements } from "./_shared/parseBill.ts";
+import { toBillRecord } from "./_shared/billDocument.ts";
 
 /** Private bucket created by migration 0005_bills.sql. */
 const BUCKET = "bills";
@@ -113,58 +114,10 @@ function base64ToBytes(b64: string): Uint8Array {
    Row mapping
    ────────────────────────────────────────────── */
 
-/**
- * The `bills` row for a worksheet.
- *
- * Values come from the ORIGINAL copy: the three blocks are the same invoice
- * printed three times, and ORIGINAL is the one an auditor treats as the record.
- * The parser cross-checks the copies against each other, so a workbook whose
- * copies disagree is a template problem, not a data-entry one.
- */
-function toBillRow(parsed: ParsedBill, uploadId: string): Record<string, unknown> {
-  const o = parsed.original;
-  return {
-    bill_upload_id: uploadId,
-    sheet_name: parsed.sheetName,
-    invoice_no: o.invoiceNo,
-    invoice_date: o.invoiceDate,
-    our_challan_no: o.ourChallanNo,
-    our_challan_date: o.ourChallanDate,
-    your_challan_no: o.yourChallanNo,
-    your_challan_date: o.yourChallanDate,
-    order_no: o.orderNo,
-    order_no_label: o.orderNoLabel,
-    order_date: o.orderDate,
-    eway_bill_no: o.ewayBillNo,
-    place_of_supply: o.placeOfSupply,
-    state: o.state,
-    state_code: o.stateCode,
-    transporter_mode: o.transporterMode,
-    vehicle_number: o.vehicleNumber,
-    party_gst_no: o.partyGstNo,
-    party_name: o.partyName,
-    total_quantity: o.totalQuantity,
-    amount_before_tax: o.amountBeforeTax,
-    cgst: o.cgst,
-    sgst: o.sgst,
-    igst: o.igst,
-    total_gst: o.totalGst,
-    amount_after_tax: o.amountAfterTax,
-    reverse_charge_gst: o.reverseChargeGst,
-    round_off: o.roundOff,
-    amount_in_words: o.amountInWords,
-    job_kind: o.jobKind,
-    seller_name: o.sellerName,
-    // The workbook's address cell is a single long string; keep the postal and
-    // tax lines alongside it so the detail screen can show the full identity.
-    seller_address: [o.sellerTaxLine, o.sellerAddress, o.sellerContact]
-      .filter((part): part is string => !!part)
-      .join("\n") || null,
-    bank_details: o.bankLines.length > 0 ? o.bankLines : null,
-    terms: o.termsLines.length > 0 ? o.termsLines.join("\n") : null,
-  };
-}
-
+/* Row mapping lives in `_shared/billDocument.ts` as `toBillRecord`, so the
+   self-test runs the real upload mapping and a field added to the parser but
+   forgotten in the insert fails a test instead of producing a bill that cannot be
+   edited. */
 function toLineItemRows(
   billId: string,
   items: BillCopy["lineItems"]
@@ -345,7 +298,7 @@ Deno.serve(async (req) => {
     // documents can be named. Writing the rows before the documents also means a
     // render failure unwinds to the same rollback as a storage failure, rather
     // than leaving documents with no records pointing at them.
-    const billRows = parsed.map((p) => toBillRow(p, uploadId as string));
+    const billRows = parsed.map((p) => toBillRecord(p, uploadId as string));
     const { data: insertedBills, error: billsError } = await adminClient
       .from("bills")
       .insert(billRows)
@@ -415,16 +368,33 @@ Deno.serve(async (req) => {
       // Invoice number is the readable identity; the id in the path is what makes
       // it unique. A sheet with a blank invoice cell still gets a named file.
       const token = safeBillToken(p.original.invoiceNo, p.sheetName);
+      /* Version 1, and the version is part of the name rather than an overwrite of
+         a fixed name. `update-bill` bumps it on every save, which makes a re-print a
+         new URL — the only reliable way to stop a browser or a PDF viewer that has
+         already fetched the old object from continuing to show it. */
+      const base = `${uploadId}/${billId}_${token}_v1`;
       const paths = {
-        original: `${uploadId}/${billId}_${token}_original.pdf`,
-        duplicate: `${uploadId}/${billId}_${token}_duplicate.pdf`,
-        triplicate: `${uploadId}/${billId}_${token}_triplicate.pdf`,
+        original: `${base}_original.pdf`,
+        duplicate: `${base}_duplicate.pdf`,
+        triplicate: `${base}_triplicate.pdf`,
       };
 
       const rendered: Partial<Record<CopyKind, Uint8Array>> = {};
       try {
+        /* All three documents are rendered from the ORIGINAL block, with only the
+           copy designation differing. The three blocks on a worksheet are three
+           physical print copies of ONE invoice, so they must carry identical data —
+           and in the source they do not always. The production workbook's sheet 320
+           writes `Your Challan No.: abc` in its ORIGINAL block and leaves the row
+           blank in the other two, so rendering each copy from its own block printed
+           a challan number on one document and not on the other two, and produced
+           three documents that a folder summary could not reconcile.
+
+           Rendering from one block makes the three copies identical by construction,
+           and `copyDisagreements` reports the source inconsistency in the audit log
+           rather than letting it decide what a customer sees. */
         for (const kind of COPY_ORDER) {
-          rendered[kind] = renderBillDocument([p[kind]], COPY_LABEL[kind]);
+          rendered[kind] = renderBillDocument([p.original], COPY_LABEL[kind]);
         }
       } catch (err) {
         console.error("PDF render error for bill", billId, err);
@@ -528,6 +498,18 @@ Deno.serve(async (req) => {
       );
     }
 
+    /* Where the workbook's three print copies of one invoice disagree, the copies are
+       resolved in favour of ORIGINAL and the disagreement is recorded. Not fatal —
+       a whole 20-invoice upload is not worth refusing over one inconsistent cell —
+       and not silent, because a reviewer has to be able to see that the source
+       needed a human decision. */
+    const disagreements = parsed
+      .map((p) => ({ sheet: p.sheetName, fields: copyDisagreements(p) }))
+      .filter((d) => d.fields.length > 0);
+    if (disagreements.length > 0) {
+      console.warn("Copy blocks disagree; ORIGINAL used for all three copies:", JSON.stringify(disagreements));
+    }
+
     // ---------------- Audit (never blocks the write) ----------------
     // Written server-side with the service role, so the entry is still recorded
     // under the forged-row policy from 0003. A failure here is logged and
@@ -546,6 +528,8 @@ Deno.serve(async (req) => {
         // many of each kind arrived is what makes a later audit readable.
         job_kinds: parsed.map((p) => p.original.jobKind),
         documents_per_bill: 3,
+        // Non-empty only when the source needed a human decision; see above.
+        copy_disagreements: disagreements,
       },
     });
     if (auditError) console.warn("Audit log write skipped:", auditError.message);

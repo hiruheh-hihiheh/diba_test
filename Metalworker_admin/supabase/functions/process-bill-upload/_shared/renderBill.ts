@@ -28,9 +28,10 @@
 // * A page break is only ever taken between table rows, and the footer is
 //   stamped last, so there are no orphaned headings and no blank trailing sheet.page.
 
-import type { BillCopy, BillLineItem } from "./parseBill.ts";
+import type { BillCopy, BillLineItem, CopyKind } from "./parseBill.ts";
+import { COPY_LABEL } from "./parseBill.ts";
 import { formatJobKind } from "./formatJobKind.ts";
-import { PdfDocument, type PdfPage, wrapText } from "./pdf.ts";
+import { PdfDocument, measurePdfText, type PdfPage, wrapText } from "./pdf.ts";
 import { measureText } from "./fontMetrics.ts";
 
 /* ──────────────────────────────────────────────
@@ -163,11 +164,155 @@ function cellMoney(value: number | null | undefined): string {
   return `${negative ? "-" : ""}${grouped}.${frac}`;
 }
 
+/**
+ * The rate to print beside a tax row.
+ *
+ * A STORED rate wins over a derived one, and the reason is specific rather than
+ * general: IGST is 0.00 on every intra-state invoice, so a rate derived from the
+ * amount (`igst / base`) is absent exactly on the invoices where the 18% IGST rate
+ * is most worth showing. The workbook prints that rate in its own cell and the
+ * editor can change it, so it is printed from the stored value.
+ *
+ * The derived form is still the fallback, for a row written before migration 0008
+ * or by a client that sends no rate at all.
+ */
+function taxRateLabel(stored: number | null | undefined, tax: number | null, base: number | null): string | null {
+  if (stored !== null && stored !== undefined && Number.isFinite(stored)) {
+    // The stored value is already a percentage (9 means 9%). This only trims
+    // float noise; it does not rescale, because a rescale here is how 9% becomes
+    // 900% on a printed invoice.
+    const r = Math.round(stored * 100) / 100;
+    return `${Number.isInteger(r) ? r : r.toFixed(2)}%`;
+  }
+  return impliedRate(tax, base);
+}
+
 /** A tax rate implied by the charge actually levied, for the totals block. */
 function impliedRate(tax: number | null, base: number | null): string | null {
   if (tax === null || base === null || base === 0 || tax <= 0) return null;
   const rate = (tax / base) * 100;
   return `${Number.isInteger(rate) ? rate : rate.toFixed(2)}%`;
+}
+
+/* ──────────────────────────────────────────────
+   Emphasised spans
+   ────────────────────────────────────────────── */
+
+/**
+ * The phrases in the Terms block that are drawn in the emphasised style.
+ *
+ * This is a PATTERN, not the literal text "40 DAYS", because the number is a
+ * business decision that changes: 15 DAYS on one client, 40 on another, 30 on the
+ * next. Matching the shape rather than the value means a newly typed term is
+ * emphasised the moment it is saved, with no change to the renderer and no styling
+ * markup travelling through the editor.
+ *
+ * Deliberately narrow: a payment window is the one term a reader must not
+ * misread, and emphasising every number would leave nothing emphasised.
+ */
+const EMPHASIS_RE = /\b\d+(?:\.\d+)?\s*(?:DAYS?|WEEKS?|MONTHS?)\b/gi;
+
+const EMPH_SIZE_DELTA = 1;
+
+/** One run of a line, in one style. */
+interface Run {
+  text: string;
+  emph: boolean;
+}
+
+/** Split a line into normal and emphasised runs, keeping every character. */
+function splitEmphasis(text: string): Run[] {
+  const runs: Run[] = [];
+  let last = 0;
+  EMPHASIS_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = EMPHASIS_RE.exec(text)) !== null) {
+    if (m.index > last) runs.push({ text: text.slice(last, m.index), emph: false });
+    runs.push({ text: m[0], emph: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) runs.push({ text: text.slice(last), emph: false });
+  return runs.length > 0 ? runs : [{ text, emph: false }];
+}
+
+/**
+ * Greedy word wrap over a mixed-style line.
+ *
+ * Returns visual lines, each a list of runs. An EMPHASISED run is ATOMIC: it is
+ * placed whole or moved whole to the next line, never broken. "40" at the end of
+ * one line and "DAYS" at the start of the next reads as two unrelated tokens and
+ * is exactly the misreading the emphasis exists to prevent — so the only case where
+ * one is split is when it is wider than the entire column, where splitting is
+ * better than overflowing the page.
+ *
+ * An emphasised run shares the BASELINE with the rest of the line (see
+ * `renderColumns`), so a line's height is its normal size: the larger glyphs sit on
+ * the same line rather than inflating the row. That is what keeps the terms block
+ * the same height as before despite the styling.
+ */
+function layoutRuns(runs: Run[], maxWidth: number, size: number): Run[][] {
+  const widthOf = (t: string, emph: boolean): number =>
+    measurePdfText(t, { font: emph ? "bold" : "regular", size: emph ? size + EMPH_SIZE_DELTA : size });
+
+  const out: Run[][] = [];
+  let line: Run[] = [];
+  let used = 0;
+
+  const pushLine = (): void => {
+    out.push(line);
+    line = [];
+    used = 0;
+  };
+
+  /** Place `text` as one unit, breaking first if it does not fit. */
+  const placeWhole = (text: string, emph: boolean): void => {
+    if (text === "") return;
+    const w = widthOf(text, emph);
+    if (used + w > maxWidth && line.length > 0) pushLine();
+    line.push({ text, emph });
+    used += w;
+  };
+
+  /** A single unit wider than the column: split it by characters or overflow. */
+  const placeSplit = (text: string, emph: boolean): void => {
+    let piece = "";
+    for (const ch of text) {
+      if (used + widthOf(piece + ch, emph) > maxWidth && piece !== "") {
+        line.push({ text: piece, emph });
+        pushLine();
+        piece = ch;
+      } else {
+        piece += ch;
+      }
+    }
+    placeWhole(piece, emph);
+  };
+
+  for (const run of runs) {
+    if (run.emph) {
+      /* Atomic. `EMPHASIS_RE` never captures surrounding spaces, so the phrase
+         arrives with its gaps already owned by the neighbouring normal run; the
+         defensive split below only matters if the pattern is ever widened to
+         include whitespace, and it emits the gaps in normal style rather than
+         bold, because a bold space is not what anyone means by emphasising a
+         phrase. */
+      const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(run.text)!;
+      if (match[1]) placeWhole(match[1], false);
+      if (widthOf(match[2], true) > maxWidth) placeSplit(match[2], true);
+      else placeWhole(match[2], true);
+      if (match[3]) placeWhole(match[3], false);
+      continue;
+    }
+    /* `\S+\s*` keeps each word's trailing space attached to it. Emitting spaces as
+       their own units put a lone " " at the end of a line, hanging past the last
+       glyph and, on the next line, an indent before the first word. */
+    for (const word of run.text.match(/\S+\s*/g) ?? []) {
+      if (widthOf(word, false) > maxWidth) placeSplit(word, false);
+      else placeWhole(word, false);
+    }
+  }
+  if (line.length > 0) out.push(line);
+  return out;
 }
 
 /* ──────────────────────────────────────────────
@@ -350,10 +495,27 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   const leftW = CONTENT_W - gridW - 12;
   const gridX = R - gridW;
 
-  /* ---- left column: who is being billed ---------------------------------- */
+  /* ---- left column: who is being billed ----------------------------------
+   *
+   * The company name and each ADDRESS LINE are separate entries, so the invoice
+   * shows the address with the line breaks the workbook gave it:
+   *
+   *     M/s. Hawkins Cookers Ltd.,
+   *     C-21,22 "U" Road,
+   *     Wagle Industrial Estate,
+   *     Thane - 400 604.
+   *
+   * Joining them into one string and letting it wrap would be a different
+   * document — it would break in the middle of "Wagle Industrial Estate," and
+   * would silently re-flow if the box were ever resized. A long line still wraps,
+   * which is what the wrap pass below is for; it just prefers the source's breaks.
+   */
   const leftLines: LeftLine[] = [];
   if (bill.recipientHeading) leftLines.push({ text: bill.recipientHeading, bold: true, size: T.metaLabel + 0.4 });
   if (bill.partyName) leftLines.push({ text: bill.partyName, bold: true, size: 9.6 });
+  for (const line of bill.partyAddress) {
+    if (line.trim() !== "") leftLines.push({ text: line, bold: false, size: T.metaValue });
+  }
   if (bill.partyGstNo) {
     leftLines.push({ text: `Party's GST No. ${bill.partyGstNo}`, bold: false, size: T.metaValue });
   }
@@ -364,11 +526,6 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
       bill.stateCode ? `State Code: ${bill.stateCode}` : null,
     ].filter((b): b is string => b !== null);
     leftLines.push({ text: bits.join("    "), bold: false, size: T.metaValue });
-  }
-  if (bill.vehicleNumber) {
-    const parts = [bill.transporterMode ? `Transporter: ${bill.transporterMode}` : null];
-    parts.push(`Vehicle No.: ${bill.vehicleNumber}`);
-    leftLines.push({ text: parts.filter(Boolean).join("    "), bold: false, size: T.metaValue });
   }
 
   // Wrap first, then draw, so the box is exactly as tall as its contents.
@@ -400,7 +557,27 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
 
   const rowH = 14.5;
   const gridH = pairs.length * rowH;
-  const sectionH = Math.max(leftHeight, gridH);
+
+  /* Transport sits BELOW the reference grid, inside the right-hand column, because
+   * that is where the invoice's metadata lives and that is where the template
+   * prints it (column D, under "Eway Bill No."). It used to be drawn in the
+   * recipient block on the left, which put "Transporter: VEHICLE" inside the
+   * Details of Recipient box — a different document from the one the workbook is.
+
+     The block is emitted whenever EITHER field is present, so a workbook with a
+     transporter but no vehicle, or the reverse, still shows the row. An empty value
+     draws nothing and keeps its label, which is the same rule the reference grid
+     follows and for the same reason. */
+  const transportLines: { label: string; value: string | null }[] = [];
+  if (bill.transporterMode !== null || bill.vehicleNumber !== null) {
+    transportLines.push({ label: "Transporter:", value: bill.transporterMode });
+    transportLines.push({ label: "Vehicle No.:", value: bill.vehicleNumber });
+  }
+  const transportGap = transportLines.length > 0 ? 6 : 0;
+  const transportH = transportLines.length * rowH;
+  const rightH = gridH + transportGap + transportH;
+
+  const sectionH = Math.max(leftHeight, rightH);
 
   sheet.reserve(sectionH + 12);
 
@@ -420,8 +597,10 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
     ly += 1.8;
   });
 
-  // Reference grid
-  const gridTop = top + (sectionH - gridH) / 2;
+  // Reference grid. Top-aligned with the recipient box rather than vertically
+  // centred against it, because the transport block now hangs below it and a
+  // centred grid would leave the two blocks' internal rules unaligned.
+  const gridTop = top;
   sheet.page.rect(gridX, gridTop, gridW, gridH, { lineWidth: 0.6, stroke: true });
   /* The label column is measured from the longest label rather than fixed, so a
      long one ("Purchase Order No.") cannot run into the value column — which is
@@ -446,6 +625,22 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
       });
     }
   });
+
+  /* Transport, directly under the grid, in the same column and the same row
+     rhythm. Boxed as one small block rather than ruled row by row, so it reads as
+     a caption pair attached to the metadata above it instead of as two more
+     numbered rows of the reference grid. */
+  if (transportLines.length > 0) {
+    const tTop = gridTop + gridH + transportGap;
+    sheet.page.rect(gridX, tTop, gridW, transportH, { lineWidth: 0.5, stroke: true });
+    transportLines.forEach((line, i) => {
+      const rowY = tTop + i * rowH;
+      sheet.page.text(line.label, gridX + CELL_PAD, rowY + 10, { font: "bold", size: T.metaLabel });
+      if (line.value !== null && line.value !== "") {
+        sheet.page.text(line.value, gridX + CELL_PAD + 78, rowY + 10, { size: T.metaValue });
+      }
+    });
+  }
 
   sheet.y = top + sectionH + 14;
 }
@@ -612,13 +807,23 @@ function wordsHeight(bill: BillCopy): number {
 
 function columnsHeight(bill: BillCopy): number {
   const blocks = [
-    bill.bankLines,
-    bill.termsLines,
+    { lines: bill.bankLines, emphasise: false },
+    { lines: bill.termsLines, emphasise: true },
   ];
-  if (blocks.every((b) => b.length === 0)) return 0;
+  if (blocks.every((b) => b.lines.length === 0)) return 0;
   const colW = (CONTENT_W - COL_GAP) / 2;
-  const body = blocks.map((lines) =>
-    lines.reduce((sum, line) => sum + wrapText(line, colW, "regular", T.columnBody).length * COLUMN_LEADING, 0)
+  /* The terms column is measured through `layoutRuns`, the same function the
+     renderer draws it with, so the emphasized "40 DAYS" — which is measured in a
+     LARGER font than the rest of the line — is accounted for in the height. A
+     plain `wrapText` here would under-measure that line and the block below it
+     would be drawn on top of the terms. */
+  const body = blocks.map((block) =>
+    block.lines.reduce((sum, line) => {
+      const visual = block.emphasise
+        ? layoutRuns(splitEmphasis(line), colW, T.columnBody).length
+        : wrapText(line, colW, "regular", T.columnBody).length;
+      return sum + visual * COLUMN_LEADING;
+    }, 0)
   );
   return Math.max(...body) + 6 + 12;
 }
@@ -723,9 +928,21 @@ interface TotalRow {
 function totalRows(bill: BillCopy): TotalRow[] {
   return [
     { label: "Total Amount Before Tax", value: money(bill.amountBeforeTax) },
-    { label: "ADD:  CGST", value: money(bill.cgst), rate: impliedRate(bill.cgst, bill.amountBeforeTax) },
-    { label: "ADD:  SGST", value: money(bill.sgst), rate: impliedRate(bill.sgst, bill.amountBeforeTax) },
-    { label: "ADD:  IGST", value: money(bill.igst), rate: impliedRate(bill.igst, bill.amountBeforeTax) },
+    {
+      label: "ADD:  CGST",
+      value: money(bill.cgst),
+      rate: taxRateLabel(bill.cgstRate, bill.cgst, bill.amountBeforeTax),
+    },
+    {
+      label: "ADD:  SGST",
+      value: money(bill.sgst),
+      rate: taxRateLabel(bill.sgstRate, bill.sgst, bill.amountBeforeTax),
+    },
+    {
+      label: "ADD:  IGST",
+      value: money(bill.igst),
+      rate: taxRateLabel(bill.igstRate, bill.igst, bill.amountBeforeTax),
+    },
     { label: "Total Amount :GST", value: money(bill.totalGst) },
     { label: "Total Amount After Tax", value: money(bill.amountAfterTax), bold: true, boxed: true },
     {
@@ -810,8 +1027,13 @@ function renderColumns(sheet: Sheet, bill: BillCopy): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
   const blocks = [
-    { x: sheet.left, heading: "Bank Details", lines: bill.bankLines },
-    { x: sheet.left + (CONTENT_W + COL_GAP) / 2, heading: "Terms & Conditions", lines: bill.termsLines },
+    { x: sheet.left, heading: "Bank Details", lines: bill.bankLines, emphasise: false },
+    {
+      x: sheet.left + (CONTENT_W + COL_GAP) / 2,
+      heading: "Terms & Conditions",
+      lines: bill.termsLines,
+      emphasise: true,
+    },
   ];
   if (blocks.every((b) => b.lines.length === 0)) return;
 
@@ -820,26 +1042,42 @@ function renderColumns(sheet: Sheet, bill: BillCopy): void {
   const gap = COLUMN_LEADING;
   const headingH = 14;
 
-  // Measure both columns, then draw both at the taller height so the two
-  // headings sit on one line.
-  const measured = blocks.map((b) => {
-    const body = b.lines.map((line) => wrapText(line, colW, "regular", size));
-    return { block: b, body, h: headingH + body.reduce((sum, l) => sum + l.length * gap, 0) };
-  });
-  // `columnsHeight` measures the same thing, so the reserved space and the drawn
+  sheet.reserve(columnsHeight(bill));
+  const top = sheet.y;
+  // `columnsHeight` measured the same thing, so the reserved space and the drawn
   // height are the same number by construction.
   const height = columnsHeight(bill) - 12;
 
-  sheet.reserve(height + 12);
-  const top = sheet.y;
-
-  for (const { block, body } of measured) {
+  for (const block of blocks) {
+    if (block.lines.length === 0) continue;
     sheet.page.text(block.heading, block.x, top + 9.5, { font: "bold", size: T.columnHead });
     sheet.page.line(block.x, top + 13, block.x + colW, top + 13, 0.5);
     let y = top + headingH;
-    for (const lines of body) {
-      for (const line of lines) {
-        sheet.page.text(line, block.x, y + size, { size });
+    for (const line of block.lines) {
+      if (!block.emphasise) {
+        for (const wrapped of wrapText(line, colW, "regular", size)) {
+          sheet.page.text(wrapped, block.x, y + size, { size });
+          y += gap;
+        }
+        continue;
+      }
+      /* Mixed-style line. Every run of a visual line shares ONE baseline, so the
+         larger bold "40 DAYS" sits in the sentence rather than above or below it,
+         and the row keeps the height of the surrounding text. */
+      for (const visual of layoutRuns(splitEmphasis(line), colW, size)) {
+        let x = block.x;
+        for (const run of visual) {
+          if (run.text !== "") {
+            sheet.page.text(run.text, x, y + size, {
+              font: run.emph ? "bold" : "regular",
+              size: run.emph ? size + EMPH_SIZE_DELTA : size,
+            });
+            x += measurePdfText(run.text, {
+              font: run.emph ? "bold" : "regular",
+              size: run.emph ? size + EMPH_SIZE_DELTA : size,
+            });
+          }
+        }
         y += gap;
       }
     }
@@ -944,6 +1182,9 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
    Public API
    ────────────────────────────────────────────── */
 
+/** `COPY_LABEL` keyed by kind, for recovering a designation back to its kind. */
+const COPY_KIND_BY_LABEL = COPY_LABEL;
+
 /**
  * Render every bill in a workbook as ONE print-ready PDF for a single copy.
  *
@@ -957,18 +1198,37 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
 export function renderBillDocument(bills: BillCopy[], copyLabel: string): Uint8Array {
   if (bills.length === 0) throw new Error("A bill document needs at least one bill");
 
-  const firstBill = bills[0];
+  /* `copyLabel` is the designation of the document being produced, so it is
+     authoritative for the corner marker and the footer, and it OVERRIDES whatever
+     the bill carries.
+
+     That override matters because all three print copies of a bill are rendered from
+     the same parsed block, so `bill.label` is that block's own label. Without the
+     override the DUPLICATE document printed "ORIGINAL" in the corner while its
+     footer said DUPLICATE - the same invoice, self-contradicting on one page.
+
+     The `kind` is recovered from the label so the two can never disagree either. */
+  const labelled: BillCopy[] = bills.map((bill) => ({
+    ...bill,
+    label: copyLabel,
+    kind:
+      (Object.keys(COPY_KIND_BY_LABEL) as CopyKind[]).find(
+        (k) => COPY_KIND_BY_LABEL[k].toUpperCase() === copyLabel.trim().toUpperCase()
+      ) ?? bill.kind,
+  }));
+
+  const firstBill = labelled[0];
   const sheet = new Sheet(
-    bills.length === 1
+    labelled.length === 1
       ? `${copyLabel} - ${firstBill.invoiceNo ?? "Bill"}`
-      : `${copyLabel} - ${bills.length} bills`,
+      : `${copyLabel} - ${labelled.length} bills`,
     `${firstBill.sellerName ?? "Tax Invoice"} - ${copyLabel}`
   );
 
   // Track which bill owns each page, because one bill may spill onto more than
   // one page and every page still needs its own invoice number in the footer.
   const pageOwner: string[] = [];
-  for (const [i, bill] of bills.entries()) {
+  for (const [i, bill] of labelled.entries()) {
     if (i > 0) sheet.newPage();
     const firstPage = sheet.doc.pageCount - 1;
     renderHeader(sheet, bill);

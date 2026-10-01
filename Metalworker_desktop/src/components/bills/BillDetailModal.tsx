@@ -7,12 +7,12 @@
 // figures, so they are listed as documents to open, never added together.
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 
 import Modal from "../ui/Modal";
 import { ErrorState } from "../ui/LoadingState";
 import { BillCopyActions } from "./BillCopyActions";
-import { fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity, formatJobKind } from "../../services/bills";
+import { bankLinesOf, fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity, formatJobKind } from "../../services/bills";
 import type { Bill, BillLineItem } from "../../types/bill";
 
 /** A labelled value that hides itself entirely when there is nothing to show. */
@@ -60,10 +60,12 @@ export function BillDetailModal({
   billId,
   onClose,
   onOpenFolderPicker,
+  onEdit,
 }: {
   billId: string | null;
   onClose: () => void;
   onOpenFolderPicker: (bill: Bill) => void;
+  onEdit: (bill: Bill) => void;
 }) {
   const [bill, setBill] = useState<Bill | null>(null);
   const [lines, setLines] = useState<BillLineItem[]>([]);
@@ -124,6 +126,36 @@ export function BillDetailModal({
               .filter(Boolean)
               .join(" · ")
           : "Loading the invoice…"
+      }
+      footer={
+        /* Edit lives in the footer rather than the body because it acts on the whole
+           bill, and the body's first screen is the printed figures — which is what
+           someone opening a bill almost always came to check. */
+        <div className="flex items-center justify-between gap-3 w-full">
+          <p className="text-xs text-text-muted">
+            {bill?.updated_at
+              ? `Last edited ${formatBillDate(bill.updated_at.slice(0, 10))}`
+              : "Imported from the workbook and not edited since."}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg border border-border text-sm font-semibold text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+            {bill && (
+              <button
+                type="button"
+                onClick={() => onEdit(bill)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-sm font-bold text-[var(--theme-primary-text)] hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                <Pencil size={15} /> Edit bill
+              </button>
+            )}
+          </div>
+        </div>
       }
     >
       {loading && (
@@ -244,13 +276,13 @@ export function BillDetailModal({
           {/* ── Bank / seller / terms ───────────────────────── */}
           {(bill.bank_details || bill.seller_address || bill.terms) && (
             <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {bill.bank_details && (
+              {bankLinesOf(bill.bank_details).length > 0 && (
                 <div>
                   <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1.5">
                     Bank details
                   </h3>
                   <ul className="text-sm text-text space-y-0.5">
-                    {bill.bank_details.map((line, i) => (
+                    {bankLinesOf(bill.bank_details).map((line, i) => (
                       <li key={i} className="break-words">{line}</li>
                     ))}
                   </ul>

@@ -24,9 +24,12 @@ import { supabase } from "./supabase";
 import { logAudit } from "./auditLog";
 import type {
   Bill,
+  BillBankDetails,
   BillColumns,
   BillCopy,
   BillLineItem,
+  BillPatch,
+  BillUpdateResult,
   BillUpload,
   BillUploadResult,
   BillUploadStage,
@@ -826,6 +829,216 @@ export async function printBillPdf(
     document.querySelectorAll("iframe[data-bill-print]").forEach((el) => el.remove());
     if (objectUrl) URL.revokeObjectURL(objectUrl);
   }
+}
+/* ──────────────────────────────────────────────
+   Editing
+   ────────────────────────────────────────────── */
+
+/**
+ * The bank block as an editable object, whatever shape it is stored in.
+ *
+ * 0005 wrote an array of printed lines; the editing migration writes label/value
+ * parts. Both are accepted so the editor opens on a row imported before the
+ * migration as well as after it.
+ */
+export function bankPartsOf(details: BillBankDetails | string[] | null | undefined): BillBankDetails {
+  if (!details) return {};
+  if (Array.isArray(details)) return parseBankLines(details);
+  return details;
+}
+
+/**
+ * The bank block as the printed lines, for display.
+ *
+ * The display form is the printed form, so a screen shows the user what the invoice
+ * says rather than four bare values with invented punctuation.
+ */
+export function bankLinesOf(details: BillBankDetails | string[] | null | undefined): string[] {
+  if (!details) return [];
+  if (Array.isArray(details)) return details;
+  return Object.values(details)
+    .filter((p) => !!p && typeof p === "object")
+    .map((p) => `${p.label ?? ""}${p.value ?? ""}`.trim())
+    .filter((l) => l !== "");
+}
+
+/**
+ * Split a printed bank line into its label and value.
+ *
+ * The label keeps the whitespace up to the first character of the value, so
+ * `label + value` rebuilds the line byte for byte. Mirrors `parseBankLines` in the
+ * edge function's `_shared/billDocument.ts`, which does the same split on import; if
+ * the two ever disagreed, saving an untouched bank block would reformat it.
+ */
+function parseBankLines(lines: string[]): BillBankDetails {
+  const specs: { key: string; re: RegExp }[] = [
+    { key: "bank_name", re: /bank\s*name/i },
+    { key: "account_number", re: /account\s*(no|number)/i },
+    { key: "branch", re: /branch/i },
+    { key: "ifsc_code", re: /ifsc/i },
+  ];
+  const out: BillBankDetails = {};
+  for (const line of lines) {
+    const spec = specs.find((s2) => s2.re.test(line));
+    if (!spec) continue;
+    const hit = spec.re.exec(line)!;
+    const after = line.slice(hit.index + hit[0].length);
+    const colon = after.indexOf(":");
+    const gapStart = colon >= 0 ? colon + 1 : 0;
+    const valueStart = after.slice(gapStart).search(/\S/);
+    if (valueStart < 0) continue;
+    out[spec.key] = {
+      label: line.slice(0, hit.index + hit[0].length + gapStart + valueStart),
+      value: after.slice(gapStart + valueStart).trim(),
+    };
+  }
+  return out;
+}
+
+/**
+ * The calculated figures, recomputed locally as the user types.
+ *
+ * A PREVIEW ONLY. The server recomputes every one of these on save and the saved
+ * values are what the PDF prints, so a disagreement here cannot produce a wrong
+ * invoice - it can only show a number that the save then corrects. The rules are
+ * deliberately kept identical to `_shared/billEdit.ts`:
+ *
+ *     line amount  = quantity x rate
+ *     base         = SUM(line amount)
+ *     tax          = base x rate / 100, for the taxes the bill already charges
+ *     after tax    = base + total gst + round off
+ *
+ * and `round_off` is a source value, never recomputed: 8 of the 20 production
+ * invoices round, and the rounded figure is the one that was billed.
+ *
+ * "The taxes the bill already charges" is the part that is easy to get wrong. Every
+ * production invoice prints all three slab rates (9 / 9 / 18) as a reference table
+ * while charging only two of them, so a bill that charges CGST and SGST must not
+ * also be charged 18% IGST - that would turn 77,290.00 into 89,080.00.
+ */
+export interface TotalsPreview {
+  totalQuantity: number | null;
+  amountBeforeTax: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  totalGst: number;
+  amountAfterTax: number;
+}
+
+export function previewTotals(input: {
+  lineItems: { quantity: number | null; rate: number | null; amount?: number | null }[];
+  cgstRate: number | null;
+  sgstRate: number | null;
+  igstRate: number | null;
+  roundOff: number | null;
+  charged: { cgst: number | null; sgst: number | null; igst: number | null };
+}): TotalsPreview {
+  const r2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+  const amounts = input.lineItems.map((i) =>
+    i.quantity !== null && i.rate !== null ? r2(i.quantity * i.rate) : (i.amount ?? null)
+  );
+  const base = r2(
+    amounts.filter((a): a is number => a !== null).reduce((sum, a) => sum + a, 0)
+  );
+  const quantities = input.lineItems
+    .map((i) => i.quantity)
+    .filter((q): q is number => q !== null);
+
+  const anyCharged =
+    (input.charged.cgst ?? 0) !== 0 ||
+    (input.charged.sgst ?? 0) !== 0 ||
+    (input.charged.igst ?? 0) !== 0;
+  const applies = anyCharged
+    ? {
+        cgst: (input.charged.cgst ?? 0) !== 0,
+        sgst: (input.charged.sgst ?? 0) !== 0,
+        igst: (input.charged.igst ?? 0) !== 0,
+      }
+    : { cgst: true, sgst: true, igst: true };
+
+  const tax = (rate: number | null, applicable: boolean): number =>
+    !applicable || !rate ? 0 : r2((base * rate) / 100);
+
+  const cgst = tax(input.cgstRate, applies.cgst);
+  const sgst = tax(input.sgstRate, applies.sgst);
+  const igst = tax(input.igstRate, applies.igst);
+  const totalGst = r2(cgst + sgst + igst);
+
+  return {
+    totalQuantity:
+      quantities.length > 0
+        ? Math.round(quantities.reduce((a, b) => a + b, 0) * 1000) / 1000
+        : null,
+    amountBeforeTax: base,
+    cgst,
+    sgst,
+    igst,
+    totalGst,
+    amountAfterTax: r2(base + totalGst + (input.roundOff ?? 0)),
+  };
+}
+
+/**
+ * Save an edited bill.
+ *
+ * The server is the only thing that writes: it merges the patch onto the stored row,
+ * validates it, replaces the line items, regenerates all three PDFs from the saved
+ * values and only then points the row at them. A save that fails leaves the bill
+ * exactly as it was, which is why the caller's `catch` can say so truthfully.
+ *
+ * `onStage` lets the editor show what is actually happening. The request is one
+ * round trip that validates, writes, renders and uploads, and "Saving..." alone does
+ * not tell a user whether it is stuck - and on a phone, where the connection is
+ * slower, that difference matters.
+ */
+export async function updateBill(
+  billId: string,
+  patch: BillPatch,
+  onStage?: (stage: "saving" | "generating" | "done") => void
+): Promise<BillUpdateResult> {
+  onStage?.("saving");
+
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    error?: string;
+    reason?: string;
+    field?: string;
+    bill_id?: string;
+    pdf_version?: number;
+    amount_after_tax?: number | null;
+    amount_in_words?: string | null;
+    pdfs?: BillUpdateResult["pdfs"];
+  }>("update-bill", { body: { bill_id: billId, patch } });
+
+  onStage?.("generating");
+
+  if (error) {
+    // A non-2xx response carries a JSON body, which supabase-js puts in
+    // `error.context` rather than throwing the message away, and that body is the
+    // only place the server's specific explanation lives: which field was rejected,
+    // or that the PDFs could not be produced and nothing was changed.
+    const body = await readErrorBody(error);
+    throw new BillUploadError(
+      body?.error ?? error.message ?? "The bill could not be saved.",
+      body?.reason ?? "network"
+    );
+  }
+  if (!data?.ok) {
+    throw new BillUploadError(
+      data?.error ?? "The bill could not be saved.",
+      data?.reason ?? null
+    );
+  }
+
+  onStage?.("done");
+  return {
+    bill_id: data.bill_id ?? billId,
+    pdf_version: data.pdf_version ?? 1,
+    amount_after_tax: data.amount_after_tax ?? null,
+    amount_in_words: data.amount_in_words ?? null,
+    pdfs: data.pdfs ?? [],
+  };
 }
 
 /* ──────────────────────────────────────────────

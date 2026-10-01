@@ -41,6 +41,7 @@ import {
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill } from "../types/bill";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
 import { BillDetailModal } from "../components/bills/BillDetailModal";
+import { BillEditScreen } from "../components/bills/BillEditScreen";
 import { BillFolderPickerModal } from "../components/bills/BillFolderPickerModal";
 import { BillUploadPanel } from "../components/bills/BillUploadPanel";
 import { Button } from "../components/ui/Button";
@@ -77,6 +78,8 @@ export default function BillsScreen() {
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
+  /** The bill open in the editor, or null. Separate from the read-only detail view. */
+  const [editId, setEditId] = useState<string | null>(null);
   const [pickerBillIds, setPickerBillIds] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<Bill | null>(null);
@@ -691,6 +694,21 @@ export default function BillsScreen() {
                       <Text style={styles.actionText}>Add to folder</Text>
                     </Pressable>
                     <Pressable
+                      onPress={() => setEditId(bill.id)}
+                      disabled={rowBusy}
+                      style={({ pressed }) => [
+                        styles.actionBtn,
+                        rowBusy && styles.actionBtnDisabled,
+                        pressed && !rowBusy && styles.pressed,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit bill ${
+                        bill.invoice_no || bill.sheet_name
+                      }`}
+                    >
+                      <Text style={styles.actionText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
                       onPress={() => setDeleteTarget(bill)}
                       disabled={rowBusy}
                       style={({ pressed }) => [
@@ -699,7 +717,9 @@ export default function BillsScreen() {
                         pressed && !rowBusy && styles.pressed,
                       ]}
                       accessibilityRole="button"
-                      accessibilityLabel={`Delete ${bill.original_filename}`}
+                      accessibilityLabel={`Delete bill ${
+                        bill.invoice_no || bill.sheet_name
+                      }`}
                       accessibilityState={{ busy: rowBusy }}
                     >
                       <Text style={styles.actionTextDanger}>
@@ -811,7 +831,24 @@ export default function BillsScreen() {
         billId={detailId}
         onClose={() => setDetailId(null)}
         onOpenFolderPicker={(bill) => openPicker([bill.id])}
+        onEdit={(bill) => {
+          /* Close the read-only view first: the editor loads the same row, and two
+             stacked sheets on one bill is confusing to leave open. */
+          setDetailId(null);
+          setEditId(bill.id);
+        }}
       />
+
+      {/* Editing re-prints this bill's three documents from the saved values, so the
+          list reloads afterwards: the amount, the copy row and the download links
+          all have to show the new version. */}
+      {editId && (
+        <BillEditScreen
+          billId={editId}
+          onClose={() => setEditId(null)}
+          onSaved={() => void load(true)}
+        />
+      )}
 
       {pickerBillIds && (
         <BillFolderPickerModal
