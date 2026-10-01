@@ -26,6 +26,9 @@ import {
 } from "lucide-react";
 
 import {
+  deleteBillsInBulk,
+  fetchBillIds,
+  fetchBillLabels,
   deleteBill,
   fetchBillJobFacets,
   fetchBillUploads,
@@ -37,7 +40,11 @@ import {
   type BillJobGroup,
   formatQuantity,
 } from "../services/bills";
-import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillUpload } from "../types/bill";
+import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillUpload, type BulkProgress } from "../types/bill";
+import BillingFolderSheet from "../components/bills/BillingFolderSheet";
+import BulkOperationOverlay, {
+  type BulkOperation,
+} from "../components/bills/BulkOperationOverlay";
 import { usePageMeta } from "../contexts/PageMetaContext";
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../components/ui/Toast";
@@ -47,7 +54,7 @@ import EmptyState from "../components/ui/EmptyState";
 import Modal from "../components/ui/Modal";
 import IconButton from "../components/ui/IconButton";
 import Pagination from "../components/ui/Pagination";
-import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
+import SelectAllCheckbox, { selectionStats } from "../components/ui/SelectAllCheckbox";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -93,6 +100,20 @@ export default function BillsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [bulk, setBulk] = useState<BulkOperation | null>(null);
+  const [billingFoldersOpen, setBillingFoldersOpen] = useState(false);
+  const [folderPendingIds, setFolderPendingIds] = useState<string[] | null>(null);
+  const [selectingAll, setSelectingAll] = useState(false);
+  /**
+   * How many bills the current selection holds BECAUSE it is the whole matching set.
+   *
+   * `null` for a selection made by ticking rows, which may be any number and may span
+   * pages by accident. The number is what lets the bar say "412 bills selected (every
+   * bill matching these filters)" instead of a bare 412 that reads as "412 on this
+   * page" — and the user is about to delete or file all of them.
+   */
+  const [allMatchingCount, setAllMatchingCount] = useState<number | null>(null);
+  const allMatchingSelected = allMatchingCount !== null && allMatchingCount === selection.count;
 
   const hasFilters = !!uploadFilter || !!from || !!to || jobGroup !== null;
 
@@ -176,12 +197,52 @@ export default function BillsPage() {
   );
 
   const visibleIds = useMemo(() => bills.map((b) => b.id), [bills]);
-  const selectedBills = useMemo(
-    () => bills.filter((b) => selection.isSelected(b.id)),
-    [bills, selection]
-  );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  /** True while any bulk operation owns the screen. */
+  const busy = bulk !== null;
+
+  /**
+   * Select every bill matching the current filters, across every page.
+   *
+   * The list is paginated, so "select all" over one page of 20 is not what the
+   * user means when there are 400 bills and they want them in one folder. The ids
+   * are fetched on demand rather than held permanently, because carrying 1000+
+   * uuids on every render to support a button most sessions never press is the
+   * wrong trade.
+   */
+  async function handleSelectAllMatching() {
+    if (busy || selectingAll) return;
+    setSelectingAll(true);
+    try {
+      const ids = await fetchBillIds({
+        search: search.trim() || undefined,
+        uploadId: uploadFilter || null,
+        from: from || null,
+        to: to || null,
+        jobKindValues: jobKindValuesForGroup,
+      });
+      selection.replace(ids);
+      /* Recorded so the bar can say WHICH bills, not just how many. "412 bills
+         selected" reads as 412 on this page, and the user is about to delete or file
+         all of them. Cleared by anything that changes the selection. */
+      setAllMatchingCount(ids.length);
+      toast.success({
+        title: `${ids.length} ${ids.length === 1 ? "bill" : "bills"} selected`,
+        description:
+          "Every bill matching the current filters is now selected, on any page.",
+      });
+    } catch (err) {
+      toast.error({
+        title: "The bills could not be selected",
+        description:
+          err instanceof Error ? err.message : "Please try again.",
+      });
+    } finally {
+      setSelectingAll(false);
+    }
+  }
 
   function clearFilters() {
     setUploadFilter("");
@@ -237,6 +298,9 @@ export default function BillsPage() {
             : `${gone} was the last invoice in ${bill.original_filename}, so the workbook was removed too.`,
       });
       selection.prune([bill.id]);
+      /* Deleting one of them means the "every matching bill" set no longer describes
+         the selection, whatever is left of it. */
+      setAllMatchingCount(null);
       await load(true);
     } finally {
       setDeleting(null);
@@ -252,20 +316,49 @@ export default function BillsPage() {
    * eight invoices from three different workbooks and asked for all eight.
    */
   async function handleBulkDelete() {
-    if (selectedBills.length === 0) return;
-    const ids = selectedBills.map((b) => b.id);
-    const names = selectedBills.map((b) => b.invoice_no || b.sheet_name);
+    /* busy as well as an empty selection: a second click must not start a second
+       deletion while the first is still working through the list. */
+    if (selection.count === 0 || busy) return;
+
+    /* The whole SELECTION, not just this page's rows.
+     *
+     * `selected` spans pages by design — "Select all N matching" holds every matching
+     * id while `bills` holds one page. Deleting `selectedBills` would offer to destroy
+     * 20 while the bar says 412 are ticked. */
+    const ids = [...selection.selected];
+    const onThisPage = new Map(bills.map((b) => [b.id, b.invoice_no || b.sheet_name]));
+    const missing = ids.filter((id) => !onThisPage.has(id));
+    const labels = new Map(onThisPage);
+    if (missing.length > 0) {
+      try {
+        for (const row of await fetchBillLabels(missing)) labels.set(row.id, row.label);
+      } catch {
+        /* Fall through: the delete proceeds and reports ids for anything unnamed. A
+           missing label is cosmetic; a missing delete would not be. */
+      }
+    }
+
     const ok = await confirm({
       title: ids.length === 1 ? "Delete this bill?" : `Delete ${ids.length} bills?`,
       message: (
         <>
           {ids.length === 1 ? (
-            <>Invoice <strong className="text-text">{names[0]}</strong> and its three print
-            copies will be deleted.</>
+            <>
+              Invoice{" "}
+              <strong className="text-text">{labels.get(ids[0]) ?? "selected"}</strong> and its
+              three print copies will be deleted.
+            </>
           ) : (
             <>
               These {ids.length} invoices and their print copies will be deleted:{" "}
-              <strong className="text-text">{names.join(", ")}</strong>.
+              {/* Three names is enough to recognise the pattern. Listing 412 is
+                  unreadable, but listing none makes a mis-selection indistinguishable
+                  from the intended one. */}
+              <strong className="text-text">
+                {[...labels.values()].slice(0, 3).join(", ")}
+                {labels.size > 3 ? ` and ${labels.size - 3} more` : ""}
+              </strong>
+              .
             </>
           )}{" "}
           <strong className="text-text">Any other invoice, including the rest of their
@@ -278,28 +371,77 @@ export default function BillsPage() {
     if (!ok) return;
 
     setDeleting(null);
-    const failed: string[] = [];
-    for (const bill of selectedBills) {
-      const res = await deleteBill(bill.id);
-      if (!res.ok) failed.push(`${bill.invoice_no || bill.sheet_name}: ${res.error ?? "failed"}`);
-    }
 
-    selection.prune(ids);
-    if (failed.length === 0) {
-      toast.success({
-        title: ids.length === 1 ? "Bill deleted" : `${ids.length} bills deleted`,
-        description: "The selected invoices and their print copies are gone.",
-      });
-    } else {
+    /* Snapshot the ids and their labels. `selection` is derived state and the page
+       reloads underneath the operation — reading it again per bill would silently
+       shrink the job as rows disappear. */
+    const targets = ids.map((id) => ({ id, label: labels.get(id) ?? id.slice(0, 8) }));
+
+    setBulk({
+      title: "Deleting bills",
+      subtitle: `${targets.length} ${targets.length === 1 ? "bill" : "bills"} selected`,
+      progressLabel: "Deleting",
+      progress: { done: 0, total: targets.length },
+    });
+
+    try {
+      /* Progress is real: deleteBill is a multi-statement cascade and these run
+         one at a time, so done counts invoices genuinely finished. Nothing here
+         is a timer, which is why the bar can read 18 / 37 and be right. */
+      const result = await deleteBillsInBulk(targets, (progress: BulkProgress) =>
+        setBulk((prev) => (prev ? { ...prev, progress } : prev))
+      );
+
+      /* Only bills that really went are dropped from the selection, so anything
+         that failed stays ticked and can be retried without being hunted for
+         again. The failures carry ids precisely so this can be exact. */
+      const failedIds = new Set(result.failures.map((f) => f.id));
+      selection.prune(ids.filter((id) => !failedIds.has(id)));
+      /* Whatever survived the delete is, by definition, no longer the whole matching
+         set, so the "every matching bill" claim has to stop being made. */
+      setAllMatchingCount(null);
+
+      if (result.failed === 0) {
+        toast.success({
+          title: ids.length === 1 ? "Bill deleted" : `${ids.length} bills deleted`,
+          description: "The selected invoices and their print copies are gone.",
+        });
+      } else {
+        /* Named, not summarised. "2 of 37 failed" without saying which 2 leaves
+           the user unable to tell what is still on their books. */
+        toast.error({
+          title: `${result.deleted} of ${ids.length} deleted, ${result.failed} failed`,
+          description: result.failures.map((f) => `${f.label}: ${f.error}`).join(" · "),
+        });
+      }
+    } catch (err) {
+      /* The service loop reports per-bill failures itself and returns rather than
+         throwing, so reaching here means something unexpected. Either way the
+         list is reloaded below, so the screen shows the database's real state. */
       toast.error({
-        title: `${failed.length} of ${ids.length} could not be deleted`,
-        description: failed.join(" · "),
+        title: "The deletion did not finish",
+        description: err instanceof Error ? err.message : "Please try again.",
       });
+    } finally {
+      setBulk(null);
+      setFolderPendingIds(null);
+      await load(true);
     }
-    await load(true);
   }
 
-  const openBulkFolderPicker = () => setPickerOpen(true);
+  /*
+   * The Billing section's own folders, armed with the selected bills.
+   *
+   * This is where the list's "Add to folder" goes rather than the generic
+   * picker: filing 50 invoices should land in a Billing folder, not in a Labour
+   * job folder that happens to exist.
+   */
+  function openBillingFolders() {
+    if (busy) return;
+    setDetailId(null);
+    setFolderPendingIds([...selection.selected]);
+    setBillingFoldersOpen(true);
+  }
 
   /* ── Render ───────────────────────────────────────────── */
 
@@ -502,6 +644,30 @@ export default function BillsPage() {
         <div className="bg-surface border border-border rounded-2xl overflow-hidden">
           <InlineRefreshBar show={refreshing} />
 
+          {/* Select-all across EVERY page, offered only when there is more than this
+              page to take.
+              The header checkbox inside the table takes this page's 20; this takes all
+              of them. Both mean different things, and with 400 bills only this one gets
+              them all into a folder in a single operation — which is the reason the
+              Billing section exists. Inert while a bulk operation runs. */}
+          {bills.length > 0 &&
+            !selectionStats(visibleIds, selection.selected).all &&
+            total > visibleIds.length && (
+              <div className="flex items-center gap-3 border-b border-border px-5 py-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSelectAllMatching()}
+                  disabled={busy || selectingAll}
+                  className="text-[11px] font-bold text-primary hover:underline disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline cursor-pointer"
+                >
+                  {selectingAll ? "Finding all bills…" : `Select all ${total} matching bills`}
+                </button>
+                <span className="text-[11px] text-text-muted">
+                  across every page, not just this one
+                </span>
+              </div>
+            )}
+
           {bills.length === 0 ? (
             <EmptyState
               icon={filtered ? <SearchX size={24} /> : <FileSpreadsheet size={24} />}
@@ -589,9 +755,22 @@ export default function BillsPage() {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => selection.toggle(bill.id)}
+                              onChange={() => {
+                                /* Unticking one bill out of an across-everything
+                                   selection breaks it, so the record of it goes too.
+                                   Left in place it would go on reporting "all 412
+                                   matching" for a selection that is now 411 and
+                                   deliberately so. */
+                                setAllMatchingCount(null);
+                                selection.toggle(bill.id);
+                              }}
+                              /* Locked while a bulk operation owns the screen: the
+                                 overlay swallows the click, and refusing here too means
+                                 a fast click cannot slip through a gap in the event
+                                 handling and change the selection mid-delete. */
+                              disabled={busy}
                               aria-label={`Select bill ${bill.invoice_no ?? bill.sheet_name}`}
-                              className="w-4 h-4 rounded accent-primary cursor-pointer"
+                              className="w-4 h-4 rounded accent-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
 
@@ -695,23 +874,33 @@ export default function BillsPage() {
         </div>
       )}
 
-      {/* Bulk actions */}
+      {/* Bulk actions. `context` says WHICH bills, not just how many — a bare "412
+          bills selected" reads as 412 on this page, and the next click files or
+          deletes all of them. */}
       <BulkActionBar
         count={selection.count}
         itemLabel={selection.count === 1 ? "bill" : "bills"}
-        onClear={selection.clear}
+        context={allMatchingSelected ? "every bill matching these filters" : undefined}
+        onClear={() => {
+          setAllMatchingCount(null);
+          selection.clear();
+        }}
       >
         <button
           type="button"
-          onClick={openBulkFolderPicker}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer"
+          onClick={openBillingFolders}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Add to folder
+          {/* Files into a BILLING folder, not a job folder — see
+              openBillingFolders for why these are two separate doors. */}
         </button>
         <button
           type="button"
           onClick={handleBulkDelete}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors cursor-pointer"
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Trash2 size={13} />
           {selection.count === 1 ? "Delete bill" : `Delete ${selection.count} bills`}
@@ -764,6 +953,27 @@ export default function BillsPage() {
           }}
         />
       )}
+
+      {/* The Billing section's own folder workspace. 
+          folderPendingIds is the armed selection; it is cleared when the sheet
+          closes so a stale set of ids cannot be filed by the next visit. */}
+      <BillingFolderSheet
+        open={billingFoldersOpen}
+        pendingBillIds={folderPendingIds}
+        onClose={() => {
+          setBillingFoldersOpen(false);
+          setFolderPendingIds(null);
+        }}
+        onChanged={() => void load(true)}
+        onOpenBill={(billId) => setDetailId(billId)}
+        onError={(title, message) => toast.error({ title, description: message })}
+        onNotice={(title, message) => toast.success({ title, description: message })}
+      />
+
+      {/* The loading state for the whole page. Rendered last so it paints over
+          everything else, and it swallows pointer events — which is what makes a
+          second Delete impossible while the first is running. */}
+      <BulkOperationOverlay operation={bulk} />
 
       <BillFolderPickerModal
         open={pickerOpen}

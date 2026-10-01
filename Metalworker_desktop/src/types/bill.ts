@@ -352,9 +352,13 @@ export interface BillUploadResult {
 }
 
 /**
- * `get_folder_bill_summary` (migration 0006). Every figure is over UNIQUE bill
- * records, never over print copies, so a folder holding both sample bills
+ * `get_folder_bill_summary` (migrations 0006 + 0009). Every figure is over UNIQUE
+ * bill records, never over print copies, so a folder holding both sample bills
  * reports 2 bills and not 6.
+ *
+ * Every `average_*` is `total_* / total_bills` — a plain per-bill mean over the
+ * bills in the folder, computed server-side. Nothing here is a second opinion:
+ * the RPC is the only place these numbers exist, and this type only describes it.
  */
 export interface FolderBillSummary {
   total_bills: number;
@@ -369,6 +373,34 @@ export interface FolderBillSummary {
   average_bill_value: number;
   average_quantity: number;
   average_amount_before_tax: number;
+  /** Added in 0009: the per-bill means for each remaining tax component. */
+  average_cgst: number;
+  average_sgst: number;
+  average_igst: number;
+  average_gst: number;
+  average_round_off: number;
+  /** Added in 0009: the cheapest and dearest bill in the folder. */
+  min_amount_after_tax: number;
+  max_amount_after_tax: number;
+  min_amount_before_tax: number;
+  max_amount_before_tax: number;
+  /**
+   * Bills linked to this folder whose `amount_after_tax` was never imported.
+   *
+   * Reported rather than silently treated as zero, because a folder where every
+   * total is null would otherwise read as "total after tax ₹0.00" — a real
+   * financial figure that is not the truth.
+   */
+  bills_without_total: number;
+  /** Added in 0009. Counts always sum to `total_bills`. */
+  job_kind_breakdown: BillJobKindCount[];
+}
+
+/** One `job_kind` bucket in a folder's breakdown. */
+export interface BillJobKindCount {
+  /** The RAW stored value, verbatim from `bills.job_kind`. `null` = unclassified. */
+  job_kind: string | null;
+  count: number;
 }
 
 export const EMPTY_FOLDER_BILL_SUMMARY: FolderBillSummary = {
@@ -384,4 +416,42 @@ export const EMPTY_FOLDER_BILL_SUMMARY: FolderBillSummary = {
   average_bill_value: 0,
   average_quantity: 0,
   average_amount_before_tax: 0,
+  average_cgst: 0,
+  average_sgst: 0,
+  average_igst: 0,
+  average_gst: 0,
+  average_round_off: 0,
+  min_amount_after_tax: 0,
+  max_amount_after_tax: 0,
+  min_amount_before_tax: 0,
+  max_amount_before_tax: 0,
+  bills_without_total: 0,
+  job_kind_breakdown: [],
 };
+
+/**
+ * One row of `get_billing_folder_bill_counts()` (migration 0009): how many bills
+ * a Billing folder holds.
+ *
+ * `bill_count` counts DISTINCT bill ids, so it is 1 per physical invoice and
+ * never 3 — the same rule the folder summary follows.
+ */
+export interface BillingFolderBillCount {
+  folder_id: string;
+  folder_name: string;
+  bill_count: number;
+}
+
+/**
+ * Progress of a bulk operation the client drives itself.
+ *
+ * `done` counts FINISHED items, so `done / total` is a real fraction of real work
+ * rather than an animation timer. `total` is the full known size, so the ratio
+ * never exceeds 1 and never needs a guess.
+ */
+export interface BulkProgress {
+  /** Items fully finished, successful or not. */
+  done: number;
+  /** Items in the whole operation. */
+  total: number;
+}

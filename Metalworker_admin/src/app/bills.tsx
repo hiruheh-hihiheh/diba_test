@@ -28,6 +28,9 @@ import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
 import {
   deleteBill,
+  deleteBillsInBulk,
+  fetchBillIds,
+  fetchBillLabels,
   fetchBillJobFacets,
   fetchBillUploads,
   fetchBills,
@@ -38,7 +41,9 @@ import {
   type BillJobFacet,
   type BillJobGroup,
 } from "../services/bills";
-import { BILL_COPIES, BILL_COPY_LABEL, type Bill } from "../types/bill";
+import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BulkProgress } from "../types/bill";
+import { BillingFolderSheet } from "../components/bills/BillingFolderSheet";
+import { BulkOperationOverlay, type BulkOperation } from "../components/bills/BulkOperationOverlay";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
 import { BillDetailModal } from "../components/bills/BillDetailModal";
 import { BillEditScreen } from "../components/bills/BillEditScreen";
@@ -82,8 +87,40 @@ export default function BillsScreen() {
   const [editId, setEditId] = useState<string | null>(null);
   const [pickerBillIds, setPickerBillIds] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  /**
+   * A bill awaiting confirmation of a SINGLE delete.
+   *
+   * Held as the target rather than a boolean so the dialog can name the invoice, and
+   * so the row that opened it can show as busy while the dialog is up.
+   */
   const [deleteTarget, setDeleteTarget] = useState<Bill | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  /**
+   * A bulk delete awaiting confirmation.
+   *
+   * Separate from `deleteTarget` on purpose: the two dialogs say different things. One
+   * names an invoice; the other has to make clear that N invoices across several
+   * workbooks are going and that the other invoices in those workbooks are not.
+   *
+   * Confirmation is not optional here. With "Select all 412 matching" available, one
+   * stray tap on Delete would otherwise destroy 412 invoices irrecoverably.
+   */
+  const [bulkDeleteTarget, setBulkDeleteTarget] = useState<string[] | null>(null);
+  /**
+   * The bulk operation currently running, if any.
+   *
+   * Non-null is the single signal the whole screen uses to lock itself: the Delete
+   * button, Select All, the selection checkboxes and the folder bar all read it, so
+   * there is exactly one definition of "a bulk operation is in flight" and no way for
+   * one control to be re-enabled while another is still working.
+   */
+  const [bulk, setBulk] = useState<BulkOperation | null>(null);
+  const [billingFoldersOpen, setBillingFoldersOpen] = useState(false);
+  /** Bills armed to be filed into a billing folder when the sheet opens. */
+  const [folderPendingIds, setFolderPendingIds] = useState<string[] | null>(null);
+  /** Ids of every bill matching the filters, fetched only when asked for. */
+  const [allMatchingIds, setAllMatchingIds] = useState<string[] | null>(null);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
@@ -172,8 +209,81 @@ export default function BillsScreen() {
 
   const totalPages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
   const allVisibleSelected = bills.length > 0 && selectedBills.length === bills.length;
+  /** True while any bulk operation owns the screen. See `bulk`. */
+  const busy = bulk !== null;
+
+  /**
+   * Is the current selection exactly "every bill matching the filters"?
+   *
+   * Recorded so the select-all strip can say so, and so the one control that can undo
+   * it is a single tap. Without this, a 412-bill selection spread over 21 pages looks
+   * identical to a 20-bill selection on page 1 until the user scrolls — and "Clear"
+   * reads as clearing 20 when it will clear 412.
+   *
+   * Compared by LENGTH as well as contents, so a selection that happens to be the same
+   * size as the matching set is not mistaken for one, and vice versa.
+   */
+  const allMatchingSelected =
+    allMatchingIds !== null && allMatchingIds.length > 0 && allMatchingIds.length === selected.length;
+
+  /**
+   * Select every bill matching the current filters, across every page.
+   *
+   * The list is paginated, so "select all" over one page of 20 is not what the user
+   * means when there are 400 bills and they want them in one folder. The ids are
+   * fetched on demand rather than kept loaded, because carrying 1000+ uuids on every
+   * render to support a button most sessions never press is the wrong trade.
+   */
+  async function handleSelectAllMatching() {
+    if (busy || selectingAll) return;
+    setSelectingAll(true);
+    try {
+      const ids = await fetchBillIds({
+        search: search.trim() || undefined,
+        uploadId: uploadFilter || null,
+        from: from || null,
+        to: to || null,
+        jobKindValues: jobKindValuesForGroup,
+      });
+      setAllMatchingIds(ids);
+      setSelected(ids);
+      notify(
+        `${ids.length} ${ids.length === 1 ? "bill" : "bills"} selected`,
+        "Every bill matching the current filters is now selected, on any page.",
+      );
+    } catch (err) {
+      notify(
+        "The bills could not be selected",
+        err instanceof Error ? err.message : "Please try again.",
+      );
+    } finally {
+      setSelectingAll(false);
+    }
+  }
+
+  /**
+   * Select or clear just this page.
+   *
+   * Any across-everything selection is dropped, because the two are different things
+   * and this control means the narrow one. That matters when every matching bill is
+   * ticked: the page rows are all checked, so this reads as "Clear selection", and
+   * tapping it must clear all 412 rather than replace them with 20.
+   */
+  function handleSelectAllOnPage() {
+    if (busy) return;
+    setAllMatchingIds(null);
+    setSelected(allVisibleSelected ? [] : bills.map((b) => b.id));
+  }
 
   function toggle(id: string) {
+    /* Refused while a bulk operation runs. The overlay swallows these touches
+       anyway; refusing here as well means a fast tap cannot slip through a gap
+       in the UI's own event handling and change the selection mid-delete. */
+    if (busy) return;
+    /* Unticking one bill out of an across-everything selection breaks it, so the
+       record of it goes too. Left in place it would go on reporting "all 412
+       matching selected" for a selection that is now 411 and deliberately so. */
+    setAllMatchingIds(null);
     setSelected((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
@@ -187,10 +297,25 @@ export default function BillsScreen() {
     setPage(1);
   }
 
+  /** The generic folder picker: any folder, used from one bill's own detail view. */
   function openPicker(ids: string[]) {
-    if (ids.length === 0) return;
+    if (ids.length === 0 || busy) return;
     setDetailId(null);
     setPickerBillIds(ids);
+  }
+
+  /**
+   * The Billing section's own folders, armed with the bills to file.
+   *
+   * This is where "Add to folder" on the list goes, rather than the generic
+   * picker: filing 50 invoices should land in a Billing folder, not in a Labour
+   * job folder that happens to exist.
+   */
+  function openBillingFolders(ids: string[]) {
+    if (busy) return;
+    setDetailId(null);
+    setFolderPendingIds(ids);
+    setBillingFoldersOpen(true);
   }
 
   /**
@@ -217,11 +342,30 @@ export default function BillsScreen() {
           : `${gone} was the last invoice in ${bill.original_filename}, so the workbook was removed too.`
       );
       setSelected((prev) => prev.filter((id) => id !== bill.id));
+      /* Deleting one of them means the "every matching bill" set no longer describes
+         the selection, whatever is left of it. */
+      setAllMatchingIds(null);
       await load(true);
     } finally {
       setDeleting(null);
       setDeleteTarget(null);
     }
+  }
+
+  /**
+   * Arm the bulk delete. This does NOT delete anything.
+   *
+   * Split from the work itself so a confirmation sits in between. With "Select all N
+   * matching" one tap away, a delete that runs on the tap is a delete of 412 invoices
+   * with no way back.
+   *
+   * The whole SELECTION is armed, not just the rows on this page. `selected` spans
+   * pages by design, so arming `selectedBills` — which is the current page — would
+   * offer to delete 20 while the bar says 412 are selected.
+   */
+  function requestBulkDelete() {
+    if (selected.length === 0 || busy) return;
+    setBulkDeleteTarget([...selected]);
   }
 
   /**
@@ -233,29 +377,91 @@ export default function BillsScreen() {
    * eight invoices from three different workbooks and asked for all eight.
    */
   async function handleBulkDelete() {
-    if (selectedBills.length === 0) return;
-    const ids = selectedBills.map((b) => b.id);
+    /* `busy` and not just an empty selection: a second tap must not start a second
+       deletion while the first is still working through the list. */
+    if (bulkDeleteTarget === null || busy) return;
+
+    /* Snapshot the ids. `selected` is derived state and the page reloads underneath
+       the operation — reading it again per bill would silently shrink the job as rows
+       disappear. */
+    const ids = [...bulkDeleteTarget];
     setDeleteTarget(null);
-    const failed: string[] = [];
-    for (const bill of selectedBills) {
-      const res = await deleteBill(bill.id);
-      if (!res.ok) {
-        failed.push(`${bill.invoice_no || bill.sheet_name}: ${res.error ?? "failed"}`);
+    setBulkDeleteTarget(null);
+
+    /* Labels for the dialog and for any failure report.
+     *
+     * A bill selected on another page is not in `bills`, so the page cannot name it.
+     * The service is asked for the ones it is missing rather than the list dropping
+     * them from the delete: a selection the user can see must be a selection the
+     * delete applies to. Anything that cannot be labelled is still deleted and is
+     * reported by id, because a missing label is a cosmetic problem and a missing
+     * delete is not. */
+    const onThisPage = new Map(bills.map((b) => [b.id, b.invoice_no || b.sheet_name]));
+    const missing = ids.filter((id) => !onThisPage.has(id));
+    const labels = new Map(onThisPage);
+    if (missing.length > 0) {
+      try {
+        const found = await fetchBillLabels(missing);
+        for (const row of found) labels.set(row.id, row.label);
+      } catch {
+        /* Fall through: the delete proceeds and reports ids for anything unnamed. */
       }
     }
-    setSelected((prev) => prev.filter((id) => !ids.includes(id)));
-    if (failed.length === 0) {
-      notify(
-        ids.length === 1 ? "Bill deleted" : `${ids.length} bills deleted`,
-        "The selected invoices and their print copies are gone."
+    const targets = ids.map((id) => ({ id, label: labels.get(id) ?? id.slice(0, 8) }));
+
+    setBulk({
+      title: "Deleting bills",
+      subtitle: `${targets.length} ${targets.length === 1 ? "bill" : "bills"} selected`,
+      progressLabel: "Deleting",
+      progress: { done: 0, total: targets.length },
+    });
+
+    try {
+      /* Progress is real: `deleteBill` is a multi-statement cascade and these run one
+         at a time, so `done` counts invoices genuinely finished. Nothing here is a
+         timer or an estimate, which is why the bar can say 18 / 37 and be right. */
+      const result = await deleteBillsInBulk(targets, (progress: BulkProgress) =>
+        setBulk((prev) => (prev ? { ...prev, progress } : prev))
       );
-    } else {
+
+      /* Only bills that really went are dropped from the selection, so anything that
+         failed stays ticked and can be retried without being hunted for again. The
+         failures carry their ids precisely so this can be exact rather than
+         "clear everything and hope". */
+      const failedIds = new Set(result.failures.map((f) => f.id));
+      setSelected((prev) => prev.filter((id) => !failedIds.has(id)));
+      /* Whatever survived the delete is, by definition, no longer the whole matching
+         set, so the "every matching bill" claim has to stop being made. */
+      setAllMatchingIds(null);
+
+      if (result.failed === 0) {
+        notify(
+          ids.length === 1 ? "Bill deleted" : `${ids.length} bills deleted`,
+          "The selected invoices and their print copies are gone."
+        );
+      } else {
+        /* Named, not summarised. "2 of 37 failed" without saying which 2 leaves the
+           user unable to tell what is still on their books. */
+        notify(
+          `${result.deleted} of ${ids.length} deleted, ${result.failed} failed`,
+          result.failures
+            .map((f) => `${f.label}: ${f.error}`)
+            .join(" · ")
+        );
+      }
+    } catch (err) {
+      /* The service loop reports per-bill failures itself and returns rather than
+         throwing, so reaching here means something unexpected. Either way the list
+         is reloaded below, so the screen shows the database's real state. */
       notify(
-        `${failed.length} of ${ids.length} could not be deleted`,
-        failed.join(" · ")
+        "The deletion did not finish",
+        err instanceof Error ? err.message : "Please try again."
       );
+    } finally {
+      setBulk(null);
+      setAllMatchingIds(null);
+      await load(true);
     }
-    await load(true);
   }
 
   if (authChecking) {
@@ -541,33 +747,76 @@ export default function BillsScreen() {
           </View>
         ) : (
           <>
-            {/* Select-all */}
-            <Pressable
-              onPress={() =>
-                setSelected(allVisibleSelected ? [] : bills.map((b) => b.id))
-              }
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: allVisibleSelected }}
-              accessibilityLabel={
-                allVisibleSelected ? "Clear the selection" : "Select every bill on this page"
-              }
-              style={({ pressed }) => [styles.selectAll, pressed && styles.pressed]}
-            >
-              <View
-                style={[
-                  styles.checkbox,
-                  allVisibleSelected && {
-                    backgroundColor: theme.colors.primary,
-                    borderColor: theme.colors.primary,
-                  },
+            {/* Select-all. Two doors, because they mean different things: the
+                first covers this page, the second covers every bill the current
+                filters match. With more bills than fit on a page, only the second
+                gets 400 bills into a folder in one operation — which is the whole
+                reason this section has its own folders. Both are inert while a
+                bulk operation is running. */}
+            <View style={styles.selectAllRow}>
+              <Pressable
+                onPress={handleSelectAllOnPage}
+                disabled={busy}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: allVisibleSelected, disabled: busy }}
+                accessibilityLabel={
+                  allVisibleSelected
+                    ? "Clear the selection on this page"
+                    : "Select every bill on this page"
+                }
+                style={({ pressed }) => [
+                  styles.selectAll,
+                  pressed && styles.pressed,
+                  busy && styles.disabled,
                 ]}
               >
-                {allVisibleSelected && <Text style={styles.checkboxTick}>✓</Text>}
-              </View>
-              <Text style={styles.selectAllText}>
-                {allVisibleSelected ? "Clear selection" : "Select all on this page"}
-              </Text>
-            </Pressable>
+                <View
+                  style={[
+                    styles.checkbox,
+                    allVisibleSelected && {
+                      backgroundColor: theme.colors.primary,
+                      borderColor: theme.colors.primary,
+                    },
+                  ]}
+                >
+                  {allVisibleSelected && <Text style={styles.checkboxTick}>✓</Text>}
+                </View>
+                <Text style={styles.selectAllText}>
+                  {allVisibleSelected ? "Clear selection" : "Select all on this page"}
+                </Text>
+              </Pressable>
+
+              {/* When every matching bill is already selected there is nothing to
+                  offer, so the strip says what is selected instead — and how to get
+                  rid of it. A 412-bill selection spread over 21 pages otherwise looks
+                  identical to a 20-bill selection on page 1. */}
+              {allMatchingSelected && (
+                <Text style={styles.selectAllText}>
+                  All {selected.length} matching bills selected
+                </Text>
+              )}
+
+              {/* Only offered when there is more than this page to take, so the
+                  common case stays one button rather than two competing ones. */}
+              {!allMatchingSelected && !allVisibleSelected && total > bills.length && (
+                <Pressable
+                  onPress={() => void handleSelectAllMatching()}
+                  disabled={busy || selectingAll}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy || selectingAll }}
+                  accessibilityLabel={`Select all ${total} bills matching the current filters`}
+                  style={({ pressed }) => [
+                    styles.selectAllLink,
+                    pressed && styles.pressed,
+                    (busy || selectingAll) && styles.disabled,
+                  ]}
+                >
+                  <Text style={styles.selectAllLinkText}>
+                    {selectingAll ? "Finding all bills…" : `Select all ${total} matching`}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
 
             {bills.map((bill) => {
               const isSelected = selected.includes(bill.id);
@@ -588,13 +837,17 @@ export default function BillsScreen() {
                   <View style={styles.billCardTop}>
                     <Pressable
                       onPress={() => toggle(bill.id)}
+                      disabled={busy}
                       accessibilityRole="checkbox"
-                      accessibilityState={{ checked: isSelected }}
+                      accessibilityState={{ checked: isSelected, disabled: busy }}
                       accessibilityLabel={`Select bill ${
                         bill.invoice_no || bill.sheet_name
                       }`}
                       hitSlop={8}
-                      style={({ pressed }) => [pressed && styles.pressed]}
+                      style={({ pressed }) => [
+                        pressed && styles.pressed,
+                        busy && styles.disabled,
+                      ]}
                     >
                       <View
                         style={[
@@ -781,38 +1034,65 @@ export default function BillsScreen() {
         {/* Bulk actions */}
         {selected.length > 0 && (
           <View style={styles.bulkBar} accessibilityLiveRegion="polite">
-            <Text style={styles.bulkCount}>
+            {/* Says WHICH bills, not just how many. "412 bills selected" without the
+                word "matching" reads as 412 on this page, and the user is about to
+                delete or file all of them. */}
+                      <Text style={styles.bulkCount}>
               {selected.length} {selected.length === 1 ? "bill" : "bills"} selected
+              {allMatchingSelected ? " (every bill matching these filters)" : ""}
             </Text>
             <View style={styles.bulkActions}>
               <Pressable
-                onPress={() => setSelected([])}
-                accessibilityRole="button"
-                accessibilityLabel="Clear the selection"
-                style={({ pressed }) => [styles.bulkBtnGhost, pressed && styles.pressed]}
-              >
-                <Text style={styles.actionTextSecondary}>Clear</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => openPicker(selected)}
-                style={({ pressed }) => [styles.bulkBtn, pressed && styles.pressed]}
-                accessibilityRole="button"
-                accessibilityLabel="Add the selected bills to a folder"
-              >
-                <Text style={styles.actionText}>Add to folder</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => void handleBulkDelete()}
-                style={({ pressed }) => [styles.bulkBtnDanger, pressed && styles.pressed]}
-                accessibilityRole="button"
-                accessibilityLabel={`Delete the ${selected.length} selected ${
-                  selected.length === 1 ? "bill" : "bills"
-                }`}
-              >
-                <Text style={styles.actionTextDanger}>
-                  {selected.length === 1 ? "Delete bill" : `Delete ${selected.length} bills`}
-                </Text>
-              </Pressable>
+                  onPress={() => {
+                    setAllMatchingIds(null);
+                    setSelected([]);
+                  }}
+                  disabled={busy}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy }}
+                  accessibilityLabel="Clear the selection"
+                  style={({ pressed }) => [
+                    styles.bulkBtnGhost,
+                    pressed && styles.pressed,
+                    busy && styles.disabled,
+                  ]}
+                >
+                  <Text style={styles.actionTextSecondary}>Clear</Text>
+                </Pressable>
+                {/* Files into a BILLING folder, not a job folder — see
+                  openBillingFolders for why these are two separate doors. */}
+                <Pressable
+                  onPress={() => openBillingFolders(selected)}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    styles.bulkBtn,
+                    pressed && styles.pressed,
+                    busy && styles.disabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy }}
+                  accessibilityLabel="Add the selected bills to a billing folder"
+                >
+                  <Text style={styles.actionText}>Add to folder</Text>
+                </Pressable>
+                <Pressable
+                  onPress={requestBulkDelete}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    styles.bulkBtnDanger,
+                    pressed && styles.pressed,
+                    busy && styles.disabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy }}
+                  accessibilityLabel={`Delete the ${selected.length} selected ${
+                    selected.length === 1 ? "bill" : "bills"
+                  }`}
+                >
+                  <Text style={styles.actionTextDanger}>
+                    {selected.length === 1 ? "Delete bill" : `Delete ${selected.length} bills`}
+                  </Text>
+                </Pressable>
             </View>
           </View>
         )}
@@ -850,6 +1130,25 @@ export default function BillsScreen() {
         />
       )}
 
+      {/* The Billing section's own folder workspace. `folderPendingIds` is the armed
+          selection; it is cleared when the sheet closes so a stale set of ids
+          cannot be filed by the next visit. */}
+      <BillingFolderSheet
+        visible={billingFoldersOpen}
+        pendingBillIds={folderPendingIds}
+        onClose={() => {
+          setBillingFoldersOpen(false);
+          setFolderPendingIds(null);
+        }}
+        onChanged={() => void load(true)}
+        onOpenBill={(billId) => setDetailId(billId)}
+      />
+
+      {/* The loading state for the whole screen. Mounted last so it paints over
+          everything else, and the modal swallows every touch behind it — which is
+          what makes a second Delete impossible while the first is running. */}
+      <BulkOperationOverlay operation={bulk} />
+
       {pickerBillIds && (
         <BillFolderPickerModal
           visible
@@ -878,8 +1177,68 @@ export default function BillsScreen() {
         }}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* The bulk counterpart. Names the count, names a few of the invoices, and says
+          what survives — the single most misleading thing about a bill delete in the
+          past was implying the whole workbook went. At 400+ bills a list of every
+          invoice is unreadable, so a sample plus the count is the honest form. */}
+      <ConfirmDialog
+        visible={bulkDeleteTarget !== null}
+        title={
+          bulkDeleteTarget !== null && bulkDeleteTarget.length === 1
+            ? "Delete this bill?"
+            : `Delete ${bulkDeleteTarget?.length ?? 0} bills?`
+        }
+        message={bulkDeleteMessage(bulkDeleteTarget ?? [], bills, allMatchingSelected)}
+        confirmLabel={
+          bulkDeleteTarget !== null && bulkDeleteTarget.length === 1
+            ? "Delete this bill"
+            : `Delete ${bulkDeleteTarget?.length ?? 0} bills`
+        }
+        onConfirm={() => void handleBulkDelete()}
+        onCancel={() => setBulkDeleteTarget(null)}
+      />
     </SafeAreaView>
   );
+}
+
+/**
+ * The wording for the bulk-delete confirmation.
+ *
+ * Kept out of the component so the sentence is one auditable string rather than JSX
+ * fragments assembled inline, and so the rules it has to satisfy are readable in one
+ * place:
+ *
+ *   * names the COUNT, because that is the number that matters and the bar already
+ *     showed it;
+ *   * names a SAMPLE of the invoices, because 400 names in a dialog is 400 names
+ *     nobody reads — but no names at all means the user cannot tell a mis-selection
+ *     from the one they meant;
+ *   * says the three print copies go WITH the invoice, since those are what people
+ *     actually want back;
+ *   * says the other invoices in the same workbooks survive, because the opposite was
+ *     the single most misleading thing about deleting a bill here.
+ */
+function bulkDeleteMessage(ids: string[], pageBills: Bill[], allMatching: boolean): string {
+  if (ids.length === 0) return "";
+
+  const labels = new Map(pageBills.map((b) => [b.id, b.invoice_no || b.sheet_name]));
+  const named = ids.map((id) => labels.get(id)).filter((v): v is string => !!v);
+  /* Three is enough to recognise the pattern without turning the dialog into a list. */
+  const sample = named.slice(0, 3).join(", ");
+  const rest = named.length > 3 ? ` and ${named.length - 3} more` : "";
+
+  const which = allMatching
+    ? "every bill matching the current filters"
+    : ids.length === 1
+      ? "the selected invoice"
+      : `${ids.length} selected invoices`;
+
+  if (ids.length === 1) {
+    return `Invoice ${sample || "selected"} and its three print copies (original, duplicate, triplicate) will be deleted, along with its line items and any folder links to it. Other invoices from the same workbook are not affected. This cannot be undone.`;
+  }
+
+  return `This will delete ${which}: ${sample}${rest}. Each one's three print copies (original, duplicate, triplicate), its line items and its folder links go with it. Any other invoice, including the rest of the same workbooks, is not affected. This cannot be undone.`;
 }
 
 /**
@@ -1045,17 +1404,36 @@ const createStyles = (theme: AppTheme) =>
     },
     emptyActions: { marginTop: theme.spacing.lg, alignSelf: "stretch" },
 
+    selectAllRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.sm,
+    },
     selectAll: {
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing.sm,
       paddingVertical: theme.spacing.sm,
-      marginBottom: theme.spacing.sm,
     },
     selectAllText: {
       color: theme.colors.textSecondary,
       fontSize: theme.textSizes.sm,
       fontWeight: "600",
+    },
+    selectAllLink: {
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.sm,
+      borderRadius: theme.radius.sm,
+      borderWidth: 1,
+      borderColor: theme.colors.primary,
+    },
+    selectAllLinkText: {
+      color: theme.colors.primary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
     },
     checkbox: {
       width: 22,
@@ -1299,6 +1677,11 @@ const createStyles = (theme: AppTheme) =>
       fontSize: theme.textSizes.sm,
       marginBottom: theme.spacing.md,
     },
+    /* The one definition of "locked while a bulk operation runs". Every control
+       that reads `busy` applies this, so the screen never shows one button still
+       active while its neighbours are dimmed. */
+    disabled: { opacity: 0.4 },
+    /* Pressed feedback, shared by every Pressable on the screen. */
     pressed: { opacity: 0.7 },
   });
 /**

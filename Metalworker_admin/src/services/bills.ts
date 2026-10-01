@@ -34,6 +34,9 @@ import type {
   BillUploadResult,
   BillUploadStage,
   FolderBillSummary,
+  BillJobKindCount,
+  BillingFolderBillCount,
+  BulkProgress,
 } from "../types/bill";
 import { EMPTY_FOLDER_BILL_SUMMARY, BILL_COPY_LABEL } from "../types/bill";
 
@@ -87,6 +90,12 @@ type BillRowWithUpload = BillColumns & {
   duplicate_pdf_path: string | null;
   triplicate_pdf_path: string | null;
   bill_uploads: EmbeddedUpload | null;
+  /**
+   * Present only when the query filters by folder, because that filter is an inner
+   * join (see `BillQuery.folderId`). Stripped back off in `flattenBill`, so `Bill`
+   * stays exactly the shape it declares no matter which query produced it.
+   */
+  folder_items?: unknown;
 };
 
 /**
@@ -135,13 +144,39 @@ export interface BillJobFacet {
  * an unknown workbook rather than crashing.
  */
 function flattenBill(row: BillRowWithUpload): Bill {
-  const { bill_uploads: upload, ...own } = row;
+  /* `folder_items` is the query's join, not a bill column, so it is dropped here
+     rather than leaking onto every `Bill` object as an extra runtime key that the
+     type does not describe. */
+  const { bill_uploads: upload, folder_items: _join, ...own } = row;
   return {
     ...own,
     original_filename: upload?.original_filename ?? "",
     base_name: upload?.base_name ?? "",
     upload_status: upload?.status ?? null,
   };
+}
+
+/**
+ * One entry per bill id, keeping the first.
+ *
+ * Applied to every page, but it only ever changes anything on the folder-filtered
+ * query: the unique index on `folder_items (folder_id, item_type, item_id)` already
+ * means a bill cannot be linked to one folder twice, so this is the belt to that
+ * braces. Without it, a duplicate would be counted once in `total` (a `count` is
+ * taken over distinct rows) but appear twice in `rows` — and a folder list that
+ * shows a bill twice while the folder's own summary counts it once is exactly the
+ * disagreement the Billing section must not have.
+ */
+function dedupeBillsById(rows: Bill[]): Bill[] {
+  if (rows.length < 2) return rows;
+  const seen = new Set<string>();
+  const out: Bill[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
 }
 
 /**
@@ -195,6 +230,20 @@ export interface BillQuery {
    * `null` means no restriction, which is what "All" sends.
    */
   jobKindValues?: string[] | null;
+  /**
+   * Restrict to the bills inside one folder.
+   *
+   * Resolved as a JOIN on `folder_items` inside the database, not by reading the
+   * folder's bill ids and passing them back as an `in` list. That distinction is
+   * what makes this work at 1000+ bills: a folder's ids would have to be fetched
+   * whole, then serialized into one request URL, which PostgREST and the network
+   * will both refuse. Joining keeps pagination, ordering and the row count in the
+   * same place they already live, so there is one bill query in this file.
+   *
+   * Only `item_type = 'bill'` links are followed, and a folder is asserted to be a
+   * BILLING folder before this is used (see `fetchBillingFolders`).
+   */
+  folderId?: string | null;
   page?: number;
   pageSize?: number;
 }
@@ -230,14 +279,28 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   const page = Math.max(1, query.page ?? 1);
   const pageSize = Math.min(500, Math.max(1, query.pageSize ?? 50));
 
+  /* The folder filter is an inner join rather than an id list, because a folder can
+     hold thousands of bills and their ids cannot be serialized into a request. It
+     also means the `count` below is taken over the joined rows, so the page total
+     IS the folder's bill count — no second query to keep in step. */
+  const folderId = typeof query.folderId === "string" && query.folderId ? query.folderId : null;
+  const select = folderId ? `${BILL_WITH_UPLOAD}, folder_items!inner(folder_id)` : BILL_WITH_UPLOAD;
+
   let q = supabase
     .from(BILLS)
-    .select(BILL_WITH_UPLOAD, { count: "exact" })
+    .select(select, { count: "exact" })
     // Newest invoice first, then newest row, so the order is total and stable
     // (two bills sharing an invoice date must not swap places between pages).
     .order("invoice_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
+  if (folderId) {
+    /* `item_type` is part of the filter, not implied: `folder_items` is a
+       polymorphic link table, so a folder that somehow held a job would otherwise
+       return that job's id as if it were a bill (and the join would then simply
+       match nothing, making the folder silently look empty). */
+    q = q.eq("folder_items.folder_id", folderId).eq("folder_items.item_type", "bill");
+  }
   if (query.uploadId) q = q.eq("bill_upload_id", query.uploadId);
   if (query.from) q = q.gte("invoice_date", query.from);
   if (query.to) q = q.lte("invoice_date", query.to);
@@ -289,7 +352,9 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   if (error) throw new Error(error.message);
 
   return {
-    rows: ((data ?? []) as unknown as BillRowWithUpload[]).map(flattenBill),
+    rows: dedupeBillsById(
+      ((data ?? []) as unknown as BillRowWithUpload[]).map(flattenBill)
+    ),
     total: count ?? 0,
     page,
     pageSize,
@@ -1282,6 +1347,46 @@ interface FolderBillSummaryRpcRow {
   avg_bill_value: number | string | null;
   avg_quantity: number | string | null;
   avg_amount_before_tax: number | string | null;
+  /* Added by migration 0009. Every one of these is OPTIONAL, so a summary read
+     against a database that has only 0006 applied still yields the figures it has
+     and the missing ones fall back to 0 rather than `undefined` reaching a
+     formatter as NaN. */
+  avg_cgst?: number | string | null;
+  avg_sgst?: number | string | null;
+  avg_igst?: number | string | null;
+  avg_total_gst?: number | string | null;
+  avg_round_off?: number | string | null;
+  min_amount_after_tax?: number | string | null;
+  max_amount_after_tax?: number | string | null;
+  min_amount_before_tax?: number | string | null;
+  max_amount_before_tax?: number | string | null;
+  bills_without_total?: number | string | null;
+  job_kind_breakdown?: unknown;
+}
+
+/**
+ * The breakdown arrives as jsonb, i.e. as a parsed array of `{job_kind, count}`.
+ *
+ * Coerced rather than cast, because this is the one summary field whose SHAPE
+ * varies: a null, an object instead of an array, or an entry with a missing
+ * `count` would otherwise reach a `.map` as `undefined` and render "undefined
+ * bills". Anything unrecognised is dropped, because a broken breakdown row must
+ * not take the totals above it down with it.
+ */
+function parseJobKindBreakdown(raw: unknown): BillJobKindCount[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BillJobKindCount[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as { job_kind?: unknown; count?: unknown };
+    const count = toFiniteNumber(row.count);
+    if (count === null) continue;
+    out.push({
+      job_kind: typeof row.job_kind === "string" ? row.job_kind : null,
+      count,
+    });
+  }
+  return out;
 }
 
 export async function fetchFolderBillSummary(folderId: string): Promise<FolderBillSummary> {
@@ -1312,7 +1417,217 @@ export async function fetchFolderBillSummary(folderId: string): Promise<FolderBi
     average_bill_value: toFiniteNumber(row.avg_bill_value) ?? 0,
     average_quantity: toFiniteNumber(row.avg_quantity) ?? 0,
     average_amount_before_tax: toFiniteNumber(row.avg_amount_before_tax) ?? 0,
+    average_cgst: toFiniteNumber(row.avg_cgst) ?? 0,
+    average_sgst: toFiniteNumber(row.avg_sgst) ?? 0,
+    average_igst: toFiniteNumber(row.avg_igst) ?? 0,
+    average_gst: toFiniteNumber(row.avg_total_gst) ?? 0,
+    average_round_off: toFiniteNumber(row.avg_round_off) ?? 0,
+    min_amount_after_tax: toFiniteNumber(row.min_amount_after_tax) ?? 0,
+    max_amount_after_tax: toFiniteNumber(row.max_amount_after_tax) ?? 0,
+    min_amount_before_tax: toFiniteNumber(row.min_amount_before_tax) ?? 0,
+    max_amount_before_tax: toFiniteNumber(row.max_amount_before_tax) ?? 0,
+    bills_without_total: toFiniteNumber(row.bills_without_total) ?? 0,
+    job_kind_breakdown: parseJobKindBreakdown(row.job_kind_breakdown),
   };
+}
+
+/**
+ * Bill counts for every Billing folder, in ONE request.
+ *
+ * Migration 0009's `get_billing_folder_bill_counts()`. Counting client-side would
+ * be one COUNT query per folder (N+1); the RPC groups in the database and returns
+ * a single row per billing folder, so a workspace with dozens of folders costs the
+ * same as one with none.
+ *
+ * `bill_count` is a count of DISTINCT bill ids, so 1 physical invoice is 1 bill and
+ * never 3.
+ */
+export async function fetchBillingFolderBillCounts(): Promise<BillingFolderBillCount[]> {
+  const { data, error } = await supabase.rpc("get_billing_folder_bill_counts");
+  if (error) throw new Error(error.message);
+
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map((raw) => {
+    const row = raw as { folder_id?: unknown; folder_name?: unknown; bill_count?: unknown };
+    return {
+      folder_id: typeof row.folder_id === "string" ? row.folder_id : "",
+      folder_name: typeof row.folder_name === "string" ? row.folder_name : "",
+      bill_count: toFiniteNumber(row.bill_count) ?? 0,
+    };
+  });
+}
+
+/* ──────────────────────────────────────────────
+   SELECT-ALL AND BULK DELETE
+   ────────────────────────────────────────────── */
+
+/**
+ * EVERY bill id matching a query, not one page of them.
+ *
+ * "Select all" has to mean all of them: the list is paginated at 20-25 rows, so a
+ * workspace holding 400 bills would otherwise need twenty page visits before the
+ * user could put 50 of those bills into a folder in one operation — which is the
+ * whole workflow this section exists for.
+ *
+ * Paged through in fixed-size requests rather than one unbounded select, because a
+ * select with no range is capped by PostgREST's server row limit: silently
+ * truncated it would return a short list with no error, and the user would delete
+ * 1000 bills believing they had chosen 1400.
+ *
+ * Ids are de-duplicated as they arrive, because a bill whose sort key changes
+ * between two pages (a concurrent edit, or two rows sharing an invoice date) can
+ * otherwise land on two pages and be deleted twice.
+ */
+export async function fetchBillIds(query: BillQuery = {}): Promise<string[]> {
+  const ID_CHUNK = 500;
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (let chunk = 0; ; chunk++) {
+    const page = await fetchBills({
+      ...query,
+      page: chunk + 1,
+      pageSize: ID_CHUNK,
+    });
+    for (const row of page.rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row.id);
+    }
+    /* Two exits, both needed: the reported total is authoritative but can be
+       stale after a concurrent delete, and a short page ends the walk regardless. */
+    if (page.rows.length < ID_CHUNK) break;
+    if (out.length >= page.total) break;
+  }
+
+  return out;
+}
+
+/** What a bulk delete achieved, bill by bill. */
+export interface BulkDeleteResult {
+  /** How many of the requested bills are gone. */
+  deleted: number;
+  /** How many of the requested bills are still present. */
+  failed: number;
+  /**
+   * One entry per bill that did NOT go, naming it.
+   *
+   * Never collapsed into a single "something went wrong": a partial delete of 37
+   * bills where 2 failed has to say which 2, or the user cannot tell what to retry.
+   *
+   * The id is carried alongside the label so the caller can keep exactly the failed
+   * bills selected and drop only the ones that are really gone.
+   */
+  failures: { id: string; label: string; error: string }[];
+}
+
+/** A bill the caller wants named back: its id, and a label for humans. */
+export interface BillDeleteTarget {
+  id: string;
+  /**
+   * How to name this bill if it fails.
+   *
+   * Supplied by the caller rather than looked up here, because a bulk selection spans
+   * pages and this function only has ids. See `fetchBillLabels`.
+   */
+  label: string;
+}
+
+/**
+ * Names for bills the caller has ids for but has not loaded.
+ *
+ * Needed because a bulk selection is not confined to the page on screen: "Select all
+ * 412 matching" holds 412 ids while `bills` holds 20. The confirmation and any failure
+ * report have to be able to say WHICH invoices, so the missing names are fetched.
+ *
+ * Two columns only, and chunked. Fetching whole rows to read one label would move 412
+ * line-item-free but still wide records to print three names, and an unbounded
+ * `.in()` would be truncated by PostgREST's server row limit without saying so — so
+ * the ids are walked in chunks and de-duplicated, and a bill that has since been
+ * deleted is simply absent from the answer rather than being an error.
+ */
+export async function fetchBillLabels(ids: string[]): Promise<{ id: string; label: string }[]> {
+  const wanted = [...new Set(ids)].filter(Boolean);
+  if (wanted.length === 0) return [];
+
+  const LABEL_CHUNK = 500;
+  const out: { id: string; label: string }[] = [];
+
+  for (let at = 0; at < wanted.length; at += LABEL_CHUNK) {
+    const chunk = wanted.slice(at, at + LABEL_CHUNK);
+    const { data, error } = await supabase
+      .from(BILLS)
+      .select("id, invoice_no, sheet_name")
+      .in("id", chunk);
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as {
+      id: string;
+      invoice_no: string | null;
+      sheet_name: string | null;
+    }[]) {
+      out.push({
+        id: row.id,
+        label: row.invoice_no?.trim() || row.sheet_name?.trim() || "this bill",
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Delete many bills, reporting REAL progress as it goes.
+ *
+ * Sequential on purpose, and that is what makes the progress honest:
+ * `deleteBill` is a multi-statement cascade (unlink from folders, drop line items,
+ * drop the row, remove the three PDFs, maybe drop the upload husk) that reports a
+ * per-bill outcome. Running them one at a time means `done` counts bills
+ * genuinely finished, so the UI can show "Deleting 18 / 37" and be correct at every
+ * step. A parallel or single-request design could only ever say "please wait",
+ * which is exactly the frozen-looking screen this replaces.
+ *
+ * Each `await` yields to the event loop, so the progress the caller renders is
+ * actually painted between bills rather than queued behind the whole loop.
+ *
+ * A failure on one bill does NOT stop the rest: the user ticked N invoices and
+ * asked for N, so N-1 going and 1 staying is a partial success that must be
+ * reported as a partial success.
+ */
+export async function deleteBillsInBulk(
+  bills: BillDeleteTarget[],
+  onProgress?: (progress: BulkProgress) => void
+): Promise<BulkDeleteResult> {
+  const result: BulkDeleteResult = { deleted: 0, failed: 0, failures: [] };
+
+  /* Reported BEFORE the first request, so the loading state appears on the same
+     frame as the tap rather than one bill later. */
+  onProgress?.({ done: 0, total: bills.length });
+
+  for (const bill of bills) {
+    const label = bill.label?.trim() || "this bill";
+    try {
+      const res = await deleteBill(bill.id);
+      if (res.ok) {
+        result.deleted += 1;
+      } else {
+        result.failed += 1;
+        result.failures.push({ id: bill.id, label, error: res.error ?? "failed" });
+      }
+    } catch (err) {
+      /* deleteBill reports its own failures as {ok:false}; getting here means
+         something threw outright. Counted like any other failure so the numbers
+         and the list can never disagree, and the loop continues. */
+      result.failed += 1;
+      result.failures.push({
+        id: bill.id,
+        label,
+        error: err instanceof Error ? err.message : "failed",
+      });
+    }
+    onProgress?.({ done: result.deleted + result.failed, total: bills.length });
+  }
+
+  return result;
 }
 
 /* ──────────────────────────────────────────────
@@ -1340,7 +1655,15 @@ function groupIndianInteger(digits: string): string {
   return `${out},${tail}`;
 }
 
-function toFiniteNumber(value: number | string | null | undefined): number | null {
+/**
+ * Coerce a value that arrived over the wire into a finite number, or `null`.
+ *
+ * Takes `unknown` on purpose. `numeric` columns come back from PostgREST as strings,
+ * but the values read from a `jsonb` array (the folder's job-kind breakdown) are
+ * whatever shape that jsonb holds, and `unknown` at the signature is what forces each
+ * caller to decide. A narrow signature here only pushes a cast to the call site.
+ */
+function toFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : null;
