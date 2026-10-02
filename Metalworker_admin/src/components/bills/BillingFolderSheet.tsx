@@ -50,6 +50,7 @@ import {
   type BillingFolder,
 } from "../../services/billingFolders";
 import {
+  exportFolderSummaryPdf,
   fetchBills,
   fetchFolderBillSummary,
   formatBillDate,
@@ -59,6 +60,7 @@ import {
 } from "../../services/bills";
 import type { Bill, BulkProgress, FolderBillSummary } from "../../types/bill";
 import { notify } from "../../utils/notify";
+import { BillSummaryScopeNote } from "./BillSummaryScopeNote";
 import { BulkOperationOverlay, type BulkOperation } from "./BulkOperationOverlay";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
@@ -547,6 +549,8 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
   const [billTotal, setBillTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  /** True while the summary PDF is being produced, so the button cannot double-fire. */
+  const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [moveTarget, setMoveTarget] = useState<string | null>(null);
   const [bulk, setBulk] = useState<BulkOperation | null>(null);
@@ -722,6 +726,35 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
     }
   }
 
+  /**
+   * Export this folder's summary to a PDF.
+   *
+   * It exports the `summary` already on screen — the one the scope note above is
+   * describing — rather than re-reading the folder. That is what makes the exported
+   * figures and the displayed figures the same numbers: there is only one of them.
+   * The bill list is included when the folder is a single page, which is every
+   * folder small enough to read; a larger one would export the figures alone, and
+   * the button says so rather than quietly truncating the appendix.
+   */
+  async function handleExportSummary() {
+    if (!summary) return;
+    setExporting(true);
+    try {
+      await exportFolderSummaryPdf({
+        folderName: folder.name,
+        summary,
+        bills: bills.length < billTotal ? undefined : bills,
+      });
+    } catch (err) {
+      notify(
+        "The summary was not exported",
+        err instanceof Error ? err.message : "Please try again."
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleEmpty() {
     setConfirm(null);
     setBulk({ title: "Emptying billing folder", subtitle: folder.name });
@@ -759,12 +792,28 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
 
       <View style={styles.actionRow}>
         <Button
+          title={exporting ? "Preparing…" : "Export summary"}
+          onPress={() => void handleExportSummary()}
+          variant="ghost"
+          disabled={!summary || exporting}
+        />
+        <Button
           title="Empty folder"
           onPress={() => setConfirm({ kind: "empty" })}
           variant="ghost"
           disabled={billTotal === 0}
         />
       </View>
+
+      {/* Said up front rather than discovered in the PDF: a paged folder exports its
+          figures only, because the per-bill appendix would otherwise list just the
+          current page and read as though it were the whole folder. */}
+      {summary && bills.length < billTotal && (
+        <Text style={styles.hintText}>
+          The export will contain this folder&rsquo;s figures. Its {billTotal} bills span
+          more than one page, so the per-bill list is left out rather than truncated.
+        </Text>
+      )}
 
       {summaryError && (
         <View style={styles.errorBox}>
@@ -781,6 +830,10 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
 
       {summary && (
         <>
+          {/* Stated BEFORE the figures, not after: it is the scope of every number
+              below it, so it has to be read first. */}
+          <BillSummaryScopeNote summary={summary} />
+
           <SummarySection title="Totals" styles={styles}>
             <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
             <Figure label="Before tax" value={formatMoney(summary.total_amount_before_tax)} />
@@ -803,38 +856,13 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
           </SummarySection>
 
           <SummarySection title="Spread" styles={styles}>
-            <Figure
-              label="Lowest bill"
-              value={
-                summary.total_bills === 0
-                  ? "—"
-                  : formatMoney(summary.min_amount_after_tax)
-              }
-            />
-            <Figure
-              label="Highest bill"
-              value={
-                summary.total_bills === 0
-                  ? "—"
-                  : formatMoney(summary.max_amount_after_tax)
-              }
-            />
-            <Figure
-              label="Lowest, before tax"
-              value={
-                summary.total_bills === 0
-                  ? "—"
-                  : formatMoney(summary.min_amount_before_tax)
-              }
-            />
-            <Figure
-              label="Highest, before tax"
-              value={
-                summary.total_bills === 0
-                  ? "—"
-                  : formatMoney(summary.max_amount_before_tax)
-              }
-            />
+            {/* No `total_bills === 0` guard is needed: a missing figure arrives as
+                `null` and `formatMoney` already renders "—", which is both the
+                empty-folder case and the no-bill-has-a-total case. */}
+            <Figure label="Lowest bill" value={formatMoney(summary.min_amount_after_tax)} />
+            <Figure label="Highest bill" value={formatMoney(summary.max_amount_after_tax)} />
+            <Figure label="Lowest, before tax" value={formatMoney(summary.min_amount_before_tax)} />
+            <Figure label="Highest, before tax" value={formatMoney(summary.max_amount_before_tax)} />
           </SummarySection>
 
           {/* No category is invented: these are the raw `bills.job_kind` values that
@@ -853,15 +881,6 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
                 />
               ))}
             </SummarySection>
-          )}
-
-          {/* A folder whose totals were never imported reads as "no totals", not as
-              "₹0.00" — a zero is a real financial figure and this is not one. */}
-          {summary.bills_without_total > 0 && (
-            <Text style={styles.warnNote}>
-              {summary.bills_without_total} of {summary.total_bills} bills have no recorded
-              after-tax total, so the totals and averages above leave them out.
-            </Text>
           )}
         </>
       )}
@@ -1222,6 +1241,13 @@ function createStyles(theme: AppTheme) {
       fontVariant: ["tabular-nums"],
     },
     warnNote: { color: theme.colors.warning, fontSize: theme.textSizes.xs },
+    /* Not a warning: this describes what the export will contain. */
+    hintText: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      lineHeight: 16,
+      marginBottom: theme.spacing.xs,
+    },
 
     /* Bills inside the folder */
     billCard: {

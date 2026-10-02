@@ -352,13 +352,41 @@ export interface BillUploadResult {
 }
 
 /**
- * `get_folder_bill_summary` (migrations 0006 + 0009). Every figure is over UNIQUE
- * bill records, never over print copies, so a folder holding both sample bills
- * reports 2 bills and not 6.
+ * `get_folder_bill_summary` (migrations 0006 + 0009 + 0010). Every figure is over
+ * UNIQUE bill records, never over print copies, so a folder holding both sample
+ * bills reports 2 bills and not 6.
  *
- * Every `average_*` is `total_* / total_bills` — a plain per-bill mean over the
- * bills in the folder, computed server-side. Nothing here is a second opinion:
- * the RPC is the only place these numbers exist, and this type only describes it.
+ * Nothing here is a second opinion: the RPC is the only place these numbers exist,
+ * and this type only describes it. The client performs no arithmetic on them.
+ *
+ * WHICH BILLS EACH FIGURE COVERS (migration 0010, decided per aggregate)
+ * A bill's financial columns are nullable — a template may legitimately omit a
+ * field — so a bill whose grand total was never imported has
+ * `amount_after_tax = NULL`. That splits the folder into two populations:
+ *
+ *   all bills   = every distinct `bills` row linked to the folder.
+ *   valid bills = all bills whose `amount_after_tax` IS NOT NULL. A stored 0 IS a
+ *                valid total (a genuinely free invoice); a NULL is not.
+ *
+ *   total_bills ..................... all bills    (a record count, not money)
+ *   total_quantity .................. all bills    (a physical count, and not part
+ *                                                  of the tax identity below)
+ *   total_* money figures ........... valid bills
+ *   average_bill_value and every
+ *   other money average ............. valid bills  (each divides by the same
+ *                                                  population its own sum covers)
+ *   average_quantity ................ all bills
+ *   min_* / max_* ................... valid bills, `null` when none
+ *   job_kind_breakdown .............. all bills    (classification, not money)
+ *
+ * Money is taken only from valid bills because every money figure is one term in
+ * `before tax + GST + round off = after tax`: folding in a bill that contributes
+ * to one term but not another produces a number describing no invoice. Quantity is
+ * the exception — it is a count of items, and a bill that recorded "6 nos" but not
+ * the total still recorded 6.
+ *
+ * Read `bills_without_total` before trusting any money figure: it says how many of
+ * the folder's bills the money excludes.
  */
 export interface FolderBillSummary {
   total_bills: number;
@@ -370,7 +398,9 @@ export interface FolderBillSummary {
   total_gst: number;
   total_amount_after_tax: number;
   total_round_off: number;
+  /** Mean after-tax total per bill THAT HAS ONE. Never per bill in the folder. */
   average_bill_value: number;
+  /** Mean quantity per bill in the folder — all bills, unlike the money averages. */
   average_quantity: number;
   average_amount_before_tax: number;
   /** Added in 0009: the per-bill means for each remaining tax component. */
@@ -379,11 +409,17 @@ export interface FolderBillSummary {
   average_igst: number;
   average_gst: number;
   average_round_off: number;
-  /** Added in 0009: the cheapest and dearest bill in the folder. */
-  min_amount_after_tax: number;
-  max_amount_after_tax: number;
-  min_amount_before_tax: number;
-  max_amount_before_tax: number;
+  /**
+   * The cheapest and dearest bill, over bills that have the figure.
+   *
+   * `null` means NO bill in the folder has this figure, which is not the same as a
+   * bill costing nothing — so `null` is preserved rather than coalesced to 0, and
+   * the UI renders it as "not recorded". A stored 0 still returns 0.
+   */
+  min_amount_after_tax: number | null;
+  max_amount_after_tax: number | null;
+  min_amount_before_tax: number | null;
+  max_amount_before_tax: number | null;
   /**
    * Bills linked to this folder whose `amount_after_tax` was never imported.
    *
@@ -392,6 +428,15 @@ export interface FolderBillSummary {
    * financial figure that is not the truth.
    */
   bills_without_total: number;
+  /**
+   * Bills that DO have an after-tax total — the population every money figure
+   * above is computed over. Added in 0010.
+   *
+   * `total_bills - bills_without_total`, reported by the database rather than
+   * derived here, so the two counts cannot disagree. `null` only when the RPC is an
+   * older build without the column, which the UI states rather than assumes.
+   */
+  bills_with_total: number | null;
   /** Added in 0009. Counts always sum to `total_bills`. */
   job_kind_breakdown: BillJobKindCount[];
 }
@@ -421,11 +466,15 @@ export const EMPTY_FOLDER_BILL_SUMMARY: FolderBillSummary = {
   average_igst: 0,
   average_gst: 0,
   average_round_off: 0,
-  min_amount_after_tax: 0,
-  max_amount_after_tax: 0,
-  min_amount_before_tax: 0,
-  max_amount_before_tax: 0,
+  /* `null`, not 0: an empty folder has no cheapest bill. Zero here would claim the
+     cheapest bill in the folder costs nothing, which is a financial statement this
+     summary has no evidence for. */
+  min_amount_after_tax: null,
+  max_amount_after_tax: null,
+  min_amount_before_tax: null,
+  max_amount_before_tax: null,
   bills_without_total: 0,
+  bills_with_total: 0,
   job_kind_breakdown: [],
 };
 

@@ -4,11 +4,20 @@
 //
 // WHERE EVERY NUMBER COMES FROM
 // All of it comes out of the `get_folder_bill_summary` RPC (migration 0006, extended
-// by 0009). Nothing here sums, averages or divides. That is deliberate: the function
-// de-duplicates over `WITH unique_bills AS (SELECT DISTINCT ...)`, so the three print
-// copies of an invoice — three PDFs but ONE `bills` row — cannot triple a total, and
-// having exactly one implementation of the rule is what stops the admin app, the
-// desktop app and this panel from each arriving at a different number.
+// by 0009 and again by 0010). Nothing here sums, averages or divides. That is
+// deliberate: the function de-duplicates over `WITH unique_bills AS (SELECT DISTINCT
+// ...)`, so the three print copies of an invoice — three PDFs but ONE `bills` row —
+// cannot triple a total, and having exactly one implementation of the rule is what
+// stops the admin app, the desktop app and this panel from each arriving at a
+// different number.
+//
+// WHICH BILLS THE MONEY COVERS
+// Stated by `BillSummaryScopeNote`, above the figures rather than below them. A
+// bill whose grand total was never imported has a null `amount_after_tax`, and
+// migration 0010 excludes such bills from the money and from every money average
+// instead of counting them as ₹0. The scope line is what makes that visible, so the
+// numbers below are never read as "the total for every bill in this folder" when
+// they are not.
 //
 // WHY ORIGINAL + DUPLICATE + TRIPLICATE IS NOT THREE BILLS
 // The copies are three PDF paths on one bill row (`original_pdf_path`,
@@ -21,9 +30,11 @@
 // A folder page that cannot show bill totals is still a working folder page, so this
 // is a separate effect from the folder load and renders one line of text on failure.
 // If migration 0006 has not been applied the RPC is missing and the rest of the screen
-// carries on. The new 0009 columns are optional in the row type for the same reason: a
-// read against a database that only has 0006 applied still yields the figures it has,
-// and the ones it does not fall back to 0 rather than reaching a formatter as NaN.
+// carries on. The columns added by 0009 and 0010 are optional in the row type for the
+// same reason: a read against a database that has only 0006 applied still yields the
+// figures it has, and the ones it does not fall back to 0 rather than reaching a
+// formatter as NaN. Min and max fall back to `null` instead, because for those "no
+// figure" must not be drawn as "a figure of zero".
 
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
@@ -37,6 +48,7 @@ import {
   formatQuantity,
 } from "../../services/bills";
 import type { FolderBillSummary } from "../../types/bill";
+import { BillSummaryScopeNote } from "../bills/BillSummaryScopeNote";
 
 type SummaryStyles = ReturnType<typeof createStyles>;
 
@@ -133,23 +145,25 @@ export function FolderBillSummaryPanel({ folderId }: { folderId: string }) {
      not as "this folder has no bills". */
   if (!summary || summary.total_bills === 0) return null;
 
-  const hasBills = summary.total_bills > 0;
-
-  /* Min and max are shown as an em dash on an empty folder rather than as ₹0.00.
-     A zero is a real financial figure — a genuinely free invoice — and "there are no
-     bills" must not be drawn as one. */
-  const spread = (value: number) => (hasBills ? formatMoney(value) : "—");
+  /* Min and max carry no guard of their own: a figure no bill has arrives as
+     `null` and `formatMoney` already renders an em dash for it. That single path
+     covers both the empty folder and the folder where nothing has a recorded
+     total, and neither is drawn as ₹0.00 — a zero is a real financial figure
+     (a genuinely free invoice) and neither of these cases is one. */
+  const spread = (value: number | null) => formatMoney(value);
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.title}>Bill summary</Text>
         <Text style={styles.subtitle}>
-          {summary.total_bills}{" "}
-          {summary.total_bills === 1 ? "bill" : "bills"} in this folder — each invoice
-          counted once, not once per print copy
+          Each invoice is counted once, not once per print copy
         </Text>
       </View>
+
+      {/* Above the figures rather than below them: this is the scope of every
+          number that follows, so it is the first thing that should be read. */}
+      <BillSummaryScopeNote summary={summary} />
 
       <SectionHeading label="Totals" styles={styles} />
       <View style={styles.grid}>
@@ -324,16 +338,7 @@ export function FolderBillSummaryPanel({ folderId }: { folderId: string }) {
         </>
       )}
 
-      {/* Bills whose after-tax total was never imported read as "not counted", not as
-          ₹0.00. This matters because a zero here would drag every average down without
-          any visible reason why. */}
-      {summary.bills_without_total > 0 && (
-        <Text style={styles.warnNote}>
-          {summary.bills_without_total} of {summary.total_bills} bills have no recorded
-          after-tax total, so the totals and averages above leave them out.
-        </Text>
-      )}
-    </View>
+      </View>
   );
 }
 
@@ -395,11 +400,5 @@ const createStyles = (theme: AppTheme) =>
       fontSize: theme.textSizes.sm,
       fontWeight: "600",
       marginTop: 2,
-    },
-    warnNote: {
-      color: theme.colors.warning,
-      fontSize: theme.textSizes.xs,
-      lineHeight: 18,
-      marginTop: theme.spacing.sm,
     },
   });

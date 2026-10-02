@@ -541,7 +541,12 @@ Deno.serve(async (req) => {
       action: "bill.uploaded",
       target_type: "bill_upload",
       target_id: uploadId as string,
-      metadata: {
+      /* `detail` is the column's name (migration 0003). It was briefly `metadata`,
+         which does not exist on the table: PostgREST rejects the whole INSERT with
+         "column admin_audit_log.metadata does not exist", and because the failure was
+         only logged, every bill upload went unrecorded with nothing on screen to say
+         so. `test-audit-log.ts` now fails if that spelling comes back. */
+      detail: {
         filename,
         invoice_count: insertedIds.length,
         invoice_nos: parsed.map((p) => p.original.invoiceNo),

@@ -2,6 +2,12 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // Lets a source file import another with an explicit `./x.ts` specifier. Node's ESM
+    // loader requires the extension, so `folderSummaryExport.ts` (which must run under
+    // plain Node so its output can be compared against the folder summary) needs it.
+    // Safe because expo/tsconfig.base already sets noEmit, and Metro resolves the
+    // literal path either way.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [
         "./src/*"

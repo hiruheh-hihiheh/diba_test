@@ -1,0 +1,225 @@
+# Continuous integration for the Metalworker Management System.
+#
+# WHAT THIS DOES, AND WHAT IT DELIBERATELY DOES NOT
+# It runs the checks that already exist, with the exact commands in each app's
+# package.json, and it fails the build when any of them fail. It does not deploy
+# anything, does not publish anything, and does not need a secret — there is no
+# Supabase, no Cloudinary and no registry credential in this file, and adding one
+# would be a way to accidentally leak it in a public repository.
+#
+# NO `|| true`, NO `continue-on-error`, NO `|| echo`
+# Every step here is a gate. A workflow that reports success while a check failed is
+# worse than no workflow, because it is trusted. If a check is genuinely flaky or
+# genuinely not applicable to CI, the fix is to make it deterministic or to remove it
+# from this file on purpose — never to append a way to ignore its exit code.
+#
+# A `--frozen-lockfile` install is deliberately NOT used: neither app commits a
+# lockfile, so that flag would fail immediately. `npm install` is what the repo
+# actually uses locally.
+#
+# WHY THE THREE APPS ARE SEPARATE JOBS
+# MetalWorkerApp is the worker-facing app and is NOT built here. It has its own
+# toolchain, its own dependencies and its own release cadence, and pulling it in would
+# make the admin and desktop gates depend on something they do not use. It is
+# untouched by this workflow.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Lets a maintainer re-run a merge result without pushing a new commit.
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # Read-only. Nothing in CI writes to the repository.
+  contents: read
+
+jobs:
+  admin:
+    name: Admin app (Expo) — typecheck, lint, edge lint, web export, bills tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Metalworker_admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Metalworker_admin/package.json
+
+      # `--no-audit --no-fund` only silences network chatter in the log. It does not
+      # change what is installed, and it does not mask an install failure: a failed
+      # install still fails this step.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The Expo web export and `expo lint` read EXPO_PUBLIC_* values at build time.
+      # These are placeholders: the anon key is a public, row-level-security-limited
+      # credential by design and this one is not a key to anything. The point is only
+      # that the build has the variables it reads to exist, so a missing-var crash here
+      # is reported as a build break rather than as a green run on a developer laptop.
+      - name: Provide placeholder public build vars
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co" >> "$GITHUB_ENV"
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key" >> "$GITHUB_ENV"
+          echo "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=placeholder" >> "$GITHUB_ENV"
+          echo "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=placeholder" >> "$GITHUB_ENV"
+
+      # `tsc --noEmit` is the project's own tsconfig.json, run the way the README
+      # documents it. NoEmit is not optional here: this step must not write a build
+      # output that a later step could mistake for a passing check.
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+
+      # `expo lint` is the project's `lint` script. It is run through `npm run` so the
+      # command in this file and the command a developer types are the same command.
+      - name: Lint
+        run: npm run lint
+
+      # `lint:edge` typechecks the Supabase Edge Functions under the Deno-flavoured
+      # tsconfig, which the app tsconfig does not cover.
+      - name: Lint edge functions
+        run: npm run lint:edge
+
+      # The real proof the web bundle builds. A type error that only appears during
+      # bundling — a bad platform-specific import, a missing asset — is invisible to
+      # `tsc --noEmit`.
+      - name: Export web bundle
+        run: npx expo export --platform web
+
+      # The bills test suite: copy flexibility, parsing, PDF, per-bill, billing
+      # folders, editing, job kinds, structure, and the audit check. Nine suites, run
+      # in the order package.json fixes, which is not alphabetical and is not
+      # interchangeable: `test-per-bill` establishes the one-invoice-one-bill contract
+      # that the billing-folder aggregation then assumes.
+      #
+      # These read the sample workbooks from the repository root and write their PDFs
+      # to supabase/functions/_selftest/out/, which is git-ignored.
+      - name: Bills self-tests
+        run: npm run bills:selftest
+
+  desktop:
+    name: Desktop app (Vite) — typecheck, build, lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Metalworker_desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Metalworker_desktop/package.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The desktop build reads its config at build time. All four names below are the
+      # ones this app actually reads — VITE_SUPABASE_* in src/lib/supabase.ts and
+      # VITE_CLOUDINARY_* in src/services/cloudinary.ts — so the bundle compiles the
+      # real code path rather than a `undefined` fallback. Placeholders, never real
+      # values: the anon key is public by design (row-level security does the
+      # protecting) and the Cloudinary preset is likewise a public upload preset.
+      - name: Provide placeholder public build vars
+        run: |
+          echo "VITE_SUPABASE_URL=https://placeholder.supabase.co" >> "$GITHUB_ENV"
+          echo "VITE_SUPABASE_ANON_KEY=placeholder-anon-key" >> "$GITHUB_ENV"
+          echo "VITE_CLOUDINARY_CLOUD_NAME=placeholder" >> "$GITHUB_ENV"
+          echo "VITE_CLOUDINARY_UPLOAD_PRESET=placeholder" >> "$GITHUB_ENV"
+
+      # `tsc -b` on its own, before the build, so a type error is reported as a type
+      # error and not as a bundler failure with a confusing message.
+      - name: Typecheck
+        run: npx tsc -b
+
+      # The project's `build` script, which is `tsc -b && vite build`. Run again
+      # because it is the command that must actually work, and `tsc -b` is incremental
+      # so the second run is close to free.
+      - name: Build
+        run: npm run build
+
+      # The project's `lint` script, and a hard gate: no `--quiet`, no
+      # `--max-warnings`, no rule turned off for CI only.
+      #
+      # THIS STEP CURRENTLY FAILS. `npx eslint .` reports 54 findings (50 errors,
+      # 4 warnings) across 26 files that predate this workflow — verified locally,
+      # not guessed at. The bulk are `react-hooks/set-state-in-effect` (15), which
+      # need a read/commit split rather than a config change, plus `no-explicit-any`
+      # (11) and `react-refresh/only-export-components` (11).
+      #
+      # It is left failing on purpose. Suppressing the exit code would make this
+      # workflow green while the app carries known defects, which is the exact thing
+      # CI is for. The honest state of the repository is red here, and the fix is to
+      # resolve the findings in the app, not to reword this step.
+      - name: Lint
+        run: npm run lint
+
+  repository:
+    name: Repository hygiene — nothing generated is committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Generated build output, dependency trees, local Supabase link state and
+      # self-test PDFs must never be in Git. This is the one check in this workflow
+      # that is about the repository rather than about either app, and it exists
+      # because those directories are the ones that get committed by accident.
+      #
+      # `git ls-files` lists what is TRACKED, which is the question that matters: a
+      # .gitignore entry does not un-track a file that is already in the index.
+      #
+      # The pattern is a whole alternation rather than a list of greps, so it is one
+      # pass and one message. It is extended with -E, not matched with a basic
+      # regex, because `|` needs ERE.
+      - name: No generated output is tracked
+        run: |
+          tracked=$(git ls-files)
+          if printf '%s\n' "$tracked" | grep -Eq '(^|/)node_modules/|(^|/)dist/|(^|/)\.expo/|tsbuildinfo$|(^|/)supabase/\.temp/|_selftest/out/'; then
+            echo "Generated files are tracked in Git:"
+            printf '%s\n' "$tracked" | grep -E '(^|/)node_modules/|(^|/)dist/|(^|/)\.expo/|tsbuildinfo$|(^|/)supabase/\.temp/|_selftest/out/'
+            exit 1
+          fi
+          echo "No generated output is tracked."
+
+      # The three workbooks are intentionally committed: the bills tests read them as
+      # fixtures. This asserts they are present, because a missing fixture would fail
+      # the self-tests with a confusing ENOENT rather than saying what is wrong.
+      - name: The bills test fixtures are present
+        run: |
+          missing=0
+          for f in "BILL 301 TO.xlsx" "SAMPLE.xlsx" "test-bills-sanitized.xlsx"; do
+            if [ ! -f "$f" ]; then
+              echo "Missing bills test fixture: $f"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # A credential committed to the repository is not removed by deleting it later,
+      # so the check is here rather than in a review checklist. Deliberately narrow:
+      # it looks for the shapes that are unambiguously secrets — the literal
+      # service_role key name and a JWT header — not for the word "key", which
+      # appears in ordinary code.
+      - name: No committed credentials
+        run: |
+          found=1
+          if git grep -IqE '(service_role_key|eyJhbGciOi[A-Za-z0-9_-]{10,}\.)' -- ':!*.md'; then
+            echo "A credential-shaped string is committed:"
+            git grep -InE '(service_role_key|eyJhbGciOi[A-Za-z0-9_-]{10,}\.)' -- ':!*.md'
+            found=0
+          fi
+          if [ "$found" -eq 0 ]; then exit 1; fi
+          echo "No service-role keys or JWTs are committed."

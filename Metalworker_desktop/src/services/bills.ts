@@ -13,6 +13,8 @@
 // ONE bill. They are stored as three separate PDFs but only ONE `bills` row, so
 // nothing here ever multiplies a financial figure by three.
 
+// Also needed INSIDE this module: by the summary mapping and the facet labels.
+import { toFiniteNumber, formatJobKind } from "./billFormat";
 import { supabase } from "../lib/supabase";
 import { logAudit } from "./auditLog";
 import type {
@@ -1248,6 +1250,9 @@ interface FolderBillSummaryRpcRow {
   min_amount_before_tax?: number | string | null;
   max_amount_before_tax?: number | string | null;
   bills_without_total?: number | string | null;
+  /* Added by migration 0010. Optional for the same reason as the rest of 0009's
+     columns: a read against a database that has only 0009 applied still works. */
+  bills_with_total?: number | string | null;
   job_kind_breakdown?: unknown;
 }
 
@@ -1291,8 +1296,24 @@ export async function fetchFolderBillSummary(folderId: string): Promise<FolderBi
 
   /* The RPC already guards division by zero; the `?? 0` is so a null average can
      never reach a formatter as NaN on an empty folder. */
+  const totalBills = toFiniteNumber(row.total_bills) ?? 0;
+  const withoutTotal = toFiniteNumber(row.bills_without_total);
+
+  /* How many bills the money figures above actually cover (migration 0010).
+   *
+   * The RPC reports it. The difference is used ONLY as a fallback for a database
+   * that has 0009 but not 0010 — and when even that count is missing the result is
+   * `null`, meaning "unknown", because guessing is the one thing a financial
+   * summary must not do. Under a 0009 database the money figures were computed over
+   * ALL bills, so assuming they covered all bills would be right there and wrong
+   * everywhere else, which is not a trade worth making.
+   */
+  const withTotal =
+    toFiniteNumber(row.bills_with_total) ??
+    (withoutTotal === null ? null : Math.max(totalBills - withoutTotal, 0));
+
   return {
-    total_bills: toFiniteNumber(row.total_bills) ?? 0,
+    total_bills: totalBills,
     total_quantity: toFiniteNumber(row.total_quantity) ?? 0,
     total_amount_before_tax: toFiniteNumber(row.amount_before_tax) ?? 0,
     total_cgst: toFiniteNumber(row.cgst) ?? 0,
@@ -1309,11 +1330,15 @@ export async function fetchFolderBillSummary(folderId: string): Promise<FolderBi
     average_igst: toFiniteNumber(row.avg_igst) ?? 0,
     average_gst: toFiniteNumber(row.avg_total_gst) ?? 0,
     average_round_off: toFiniteNumber(row.avg_round_off) ?? 0,
-    min_amount_after_tax: toFiniteNumber(row.min_amount_after_tax) ?? 0,
-    max_amount_after_tax: toFiniteNumber(row.max_amount_after_tax) ?? 0,
-    min_amount_before_tax: toFiniteNumber(row.min_amount_before_tax) ?? 0,
-    max_amount_before_tax: toFiniteNumber(row.max_amount_before_tax) ?? 0,
-    bills_without_total: toFiniteNumber(row.bills_without_total) ?? 0,
+    /* Left `null` when absent rather than `?? 0`. NULL means no bill in the folder
+       has the figure; 0 would mean a bill in the folder was free. `formatMoney`
+       already renders null as "—", which is the truthful display. */
+    min_amount_after_tax: toFiniteNumber(row.min_amount_after_tax),
+    max_amount_after_tax: toFiniteNumber(row.max_amount_after_tax),
+    min_amount_before_tax: toFiniteNumber(row.min_amount_before_tax),
+    max_amount_before_tax: toFiniteNumber(row.max_amount_before_tax),
+    bills_without_total: withoutTotal ?? 0,
+    bills_with_total: withTotal,
     job_kind_breakdown: parseJobKindBreakdown(row.job_kind_breakdown),
   };
 }
@@ -1521,131 +1546,38 @@ export async function deleteBillsInBulk(
    Formatting
    ────────────────────────────────────────────── */
 
-/**
- * Indian digit grouping without `Intl`.
- *
- * `Number.prototype.toLocaleString("en-IN", …)` is correct but not dependable on
- * every JS engine: a reduced ICU silently falls back to `en-US` grouping, so
- * 15,635 would render as 15.635 on one device and 15,635 on another. Grouping
- * the last three digits and then pairs is a few lines and always identical —
- * which the admin app also needs, since it runs the same figures through Hermes.
- */
-function groupIndianInteger(digits: string): string {
-  if (digits.length <= 3) return digits;
-  const head = digits.slice(0, digits.length - 3);
-  const tail = digits.slice(digits.length - 3);
-  let out = "";
-  for (let i = head.length; i > 0; i -= 2) {
-    out = head.slice(Math.max(0, i - 2), i) + out;
-    if (i - 2 > 0) out = "," + out;
-  }
-  return `${out},${tail}`;
-}
+/* The formatters live in ./billFormat so they can be used — and tested — without
+   pulling in react-native and the Supabase client. They are re-exported here
+   because that is where every caller already imports them from, so no call site
+   changes: this is a reorganisation, not a move. */
+export {
+  formatMoney,
+  formatQuantity,
+  formatBillDate,
+  formatJobKind,
+} from "./billFormat";
+
+/* ──────────────────────────────────────────────
+   Folder summary export
+   ────────────────────────────────────────────── */
 
 /**
- * Coerce a value that arrived over the wire into a finite number, or `null`.
+ * Open a billing folder's summary in the browser's print dialog.
  *
- * Takes `unknown` on purpose. `numeric` columns come back from PostgREST as strings,
- * but the values read from a `jsonb` array (the folder's job-kind breakdown) are
- * whatever shape that jsonb holds, and `unknown` at the signature is what forces each
- * caller to decide. A narrow signature here only pushes a cast to the call site.
+ * The figures are assembled by `folderSummaryExport.ts`, which imports neither
+ * react-native nor Supabase, and which is compared against a real `FolderBillSummary`
+ * by `test-folder-summary-export.ts`. This function deliberately formats nothing: the
+ * export must be the same strings the folder screen shows, and the only way to be sure
+ * of that is for there to be one formatter, used once.
  */
-function toFiniteNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : null;
-}
+export async function exportFolderSummaryPdf(input: {
+  folderName: string;
+  summary: FolderBillSummary;
+  /** Optional per-bill appendix; omit it to export just the figures. */
+  bills?: Bill[];
+}): Promise<void> {
+  const { buildFolderSummaryHtml, printFolderSummaryHtml } =
+    await import("./folderSummaryExport");
 
-/**
- * Money with Indian digit grouping and two decimals, and never "₹NaN".
- *
- * `numeric` columns arrive as strings over PostgREST, so every value is coerced
- * first. A non-finite value is an em dash, which is what "not recorded" looks
- * like everywhere else in the app.
- */
-export function formatMoney(value: number | string | null | undefined): string {
-  const n = toFiniteNumber(value);
-  if (n === null) return "—";
-  const negative = n < 0;
-  const abs = Math.abs(n).toFixed(2);
-  const [whole, frac] = abs.split(".");
-  return `${negative ? "-" : ""}₹${groupIndianInteger(whole)}.${frac}`;
-}
-
-/** Quantity: up to 3 decimals, trailing zeros dropped (1 stays "1", not "1.000"). */
-export function formatQuantity(value: number | string | null | undefined): string {
-  const n = toFiniteNumber(value);
-  if (n === null) return "—";
-  const abs = Math.abs(n);
-  const whole = Math.floor(abs).toString();
-  const frac = (abs - Math.floor(abs)).toFixed(3).slice(2).replace(/0+$/, "");
-  const sign = n < 0 ? "-" : "";
-  return frac ? `${sign}${groupIndianInteger(whole)}.${frac}` : `${sign}${groupIndianInteger(whole)}`;
-}
-
-const MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-/** `2026-09-06` -> `06 Sep 2026`, built without `Intl` for the same reason. */
-export function formatBillDate(value: string | null | undefined): string {
-  if (!value) return "—";
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (match) {
-    const [, y, m, d] = match;
-    return `${d} ${MONTHS[Number(m) - 1] ?? m} ${y}`;
-  }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${dd} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-/**
- * The job classification, as a label a person can read.
- *
- * WHY THIS EXISTS
- * `bills.job_kind` stores what the source workbook actually said, verbatim, so
- * the database never loses the original. But the workbook is hand-written and the
- * same classification arrives spelled several ways — "LABOUR JOB", "LABOUR",
- * "WITHMETAL", "WITH METAL", "with  material", and once "WITH_METAL" — and
- * "WITHMETAL" is not something to show an operator or print on an invoice. So the
- * stored value stays raw and only the DISPLAY is normalized, here, once, for both
- * the list and the detail view. The PDF renderer has its own copy in
- * `supabase/functions/process-bill-upload/_shared/formatJobKind.ts` because that
- * module is a separate Deno compilation target; the two implementations are
- * identical and deliberately so.
- *
- * This is NOT a second job-type system. It maps a string to a presentable string
- * and nothing else. It never infers the classification from the invoice number,
- * the sheet name, an amount or a description — an invoice that never declared a
- * job type shows nothing, because guessing "LABOUR JOB" onto it would be a
- * fabricated financial classification.
- *
- * Returns `null` when there is nothing to show, so callers can omit the element
- * instead of printing an empty pill.
- */
-export function formatJobKind(jobKind: string | null | undefined): string | null {
-  if (jobKind === null || jobKind === undefined) return null;
-
-  // Collapse whitespace runs (some templates use tabs) and trim.
-  const cleaned = String(jobKind).replace(/\s+/g, " ").trim();
-  if (cleaned === "") return null;
-
-  /* Match on a "squashed" key — uppercase, alphanumerics only — so case, spacing,
-     hyphens and underscores cannot change the answer. Same trick the field parser
-     uses for labels. */
-  const key = cleaned.toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-  if (key === "LABOURJOB" || key === "LABOUR") return "LABOUR JOB";
-  if (key === "WITHMETAL" || key === "WITHMATERIAL") return "WITH METAL";
-
-  /* Unrecognised but non-empty: clean separators and title-case, so an unknown
-     classification is visible and readable rather than silently discarded. */
-  return cleaned
-    .replace(/[_-]+/g, " ")
-    .split(" ")
-    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase()))
-    .join(" ");
+  printFolderSummaryHtml(buildFolderSummaryHtml(input));
 }

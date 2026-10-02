@@ -333,7 +333,12 @@ Deno.serve(async (req) => {
     action: "bill.updated",
     target_type: "bill",
     target_id: billId,
-    metadata: {
+    /* `detail` is the column's name (migration 0003). It was briefly `metadata`,
+       which does not exist on the table: PostgREST rejects the whole INSERT with
+       "column admin_audit_log.metadata does not exist", and because the failure was
+       only logged, every bill edit went unrecorded with nothing on screen to say so.
+       `test-audit-log.ts` now fails if that spelling comes back. */
+    detail: {
       invoice_no: values.invoice_no ?? existing.invoice_no ?? null,
       sheet_name: existing.sheet_name ?? null,
       fields_changed: changed,

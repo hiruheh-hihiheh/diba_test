@@ -43,6 +43,7 @@ import IconButton from "../components/ui/IconButton";
 import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
+import { BillSummaryScopeNote } from "../components/bills/BillSummaryScopeNote";
 import { BillDetailModal } from "../components/bills/BillDetailModal";
 import BillEditModal from "../components/bills/BillEditModal";
 import {
@@ -954,12 +955,14 @@ export default function FolderDetail() {
             <div>
               <h2 className="text-base font-bold text-text">Bill summary</h2>
               <p className="text-xs text-text-muted">
-                {billSummary.total_bills}{" "}
-                {billSummary.total_bills === 1 ? "bill" : "bills"} in this folder · each
-                invoice counted once, not once per print copy
+                Each invoice counted once, not once per print copy
               </p>
             </div>
           </div>
+
+          {/* Above the figures rather than below them: this is the scope of every
+              number that follows, so it is the first thing that should be read. */}
+          <BillSummaryScopeNote summary={billSummary} />
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             <SummaryFigure label="Total quantity" value={formatQuantity(billSummary.total_quantity)} />

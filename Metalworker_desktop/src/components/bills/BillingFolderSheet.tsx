@@ -27,7 +27,7 @@
 // row. They are not folder items and are never counted, listed or totalled separately.
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, FolderPlus, Loader2, Trash2 } from "lucide-react";
+import { Download, FolderPlus, Loader2, Trash2 } from "lucide-react";
 
 import {
   addBillsToBillingFolder,
@@ -41,6 +41,7 @@ import {
   type BillingFolder,
 } from "../../services/billingFolders";
 import {
+  exportFolderSummaryPdf,
   fetchBills,
   fetchFolderBillSummary,
   formatBillDate,
@@ -53,6 +54,7 @@ import { useSelection } from "../../hooks/useSelection";
 import Modal from "../ui/Modal";
 import Pagination from "../ui/Pagination";
 import SelectAllCheckbox from "../ui/SelectAllCheckbox";
+import { BillSummaryScopeNote } from "./BillSummaryScopeNote";
 import BulkOperationOverlay, { type BulkOperation } from "./BulkOperationOverlay";
 
 /** Bills per page inside an opened folder. Matches the Bills list's own page size. */
@@ -545,6 +547,8 @@ function BillingFolderDetail({
   const [billTotal, setBillTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  /** True while the summary is being prepared, so the button cannot double-fire. */
+  const [exporting, setExporting] = useState(false);
   const [moveTarget, setMoveTarget] = useState<string | null>(null);
   const [bulk, setBulk] = useState<BulkOperation | null>(null);
   const [destinations, setDestinations] = useState<BillingFolder[]>([]);
@@ -718,6 +722,34 @@ function BillingFolderDetail({
     }
   }
 
+  /**
+   * Export this folder's summary.
+   *
+   * It exports the `summary` already on screen — the one the scope note above
+   * describes — rather than re-reading the folder, which is what makes the exported
+   * figures and the displayed figures the same numbers. The per-bill list is included
+   * only when the whole folder fits on one page, and the button area says so in
+   * advance rather than quietly shipping a partial appendix.
+   */
+  async function handleExportSummary() {
+    if (!summary) return;
+    setExporting(true);
+    try {
+      await exportFolderSummaryPdf({
+        folderName: folder.name,
+        summary,
+        bills: bills.length < billTotal ? undefined : bills,
+      });
+    } catch (err) {
+      onError(
+        "The summary was not exported",
+        err instanceof Error ? err.message : "Please try again."
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleEmpty() {
     const ok = window.confirm(
       `Empty "${folder.name}"?\n\n` +
@@ -763,6 +795,15 @@ function BillingFolderDetail({
       <div className="flex items-center gap-2">
         <button
           type="button"
+          onClick={() => void handleExportSummary()}
+          disabled={!summary || exporting}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-text-secondary hover:bg-surface-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          <Download size={13} />
+          {exporting ? "Preparing…" : "Export summary"}
+        </button>
+        <button
+          type="button"
           onClick={() => void handleEmpty()}
           disabled={billTotal === 0}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-text-secondary hover:bg-surface-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
@@ -771,6 +812,16 @@ function BillingFolderDetail({
           Empty folder
         </button>
       </div>
+
+      {/* Said up front rather than discovered in the PDF: a paged folder exports its
+          figures only, because the per-bill appendix would otherwise list just the
+          current page and read as though it were the whole folder. */}
+      {summary && bills.length < billTotal && (
+        <p className="text-[11px] text-text-muted leading-4 -mt-1 mb-1">
+          The export will contain this folder&rsquo;s figures. Its {billTotal} bills span
+          more than one page, so the per-bill list is left out rather than truncated.
+        </p>
+      )}
 
       {summaryError && (
         <div className="rounded-lg border border-danger/50 bg-surface px-4 py-3 flex flex-col items-start gap-1.5">
@@ -794,6 +845,10 @@ function BillingFolderDetail({
 
       {summary && (
         <>
+          {/* Stated BEFORE the figures, not after: it is the scope of every number
+              below it, so it has to be read first. */}
+          <BillSummaryScopeNote summary={summary} />
+
           <SummarySection title="Totals">
             <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
             <Figure label="Before tax" value={formatMoney(summary.total_amount_before_tax)} />
@@ -816,26 +871,13 @@ function BillingFolderDetail({
           </SummarySection>
 
           <SummarySection title="Spread">
-            <Figure
-              label="Lowest bill"
-              value={summary.total_bills === 0 ? "—" : formatMoney(summary.min_amount_after_tax)}
-            />
-            <Figure
-              label="Highest bill"
-              value={summary.total_bills === 0 ? "—" : formatMoney(summary.max_amount_after_tax)}
-            />
-            <Figure
-              label="Lowest, before tax"
-              value={
-                summary.total_bills === 0 ? "—" : formatMoney(summary.min_amount_before_tax)
-              }
-            />
-            <Figure
-              label="Highest, before tax"
-              value={
-                summary.total_bills === 0 ? "—" : formatMoney(summary.max_amount_before_tax)
-              }
-            />
+            {/* No `total_bills === 0` guard is needed: a missing figure arrives as
+                `null` and `formatMoney` already renders "—", which is both the
+                empty-folder case and the no-bill-has-a-total case. */}
+            <Figure label="Lowest bill" value={formatMoney(summary.min_amount_after_tax)} />
+            <Figure label="Highest bill" value={formatMoney(summary.max_amount_after_tax)} />
+            <Figure label="Lowest, before tax" value={formatMoney(summary.min_amount_before_tax)} />
+            <Figure label="Highest, before tax" value={formatMoney(summary.max_amount_before_tax)} />
           </SummarySection>
 
           {/* Only real stored `job_kind` values, cleaned up for display. No category is
@@ -852,16 +894,6 @@ function BillingFolderDetail({
                 />
               ))}
             </SummarySection>
-          )}
-
-          {/* A folder whose totals were never imported reads as "no totals", not as
-              "₹0.00". A zero is a real financial figure and this is not one. */}
-          {summary.bills_without_total > 0 && (
-            <p className="flex items-start gap-1.5 text-[11px] text-warning">
-              <AlertTriangle size={13} className="shrink-0 mt-px" aria-hidden="true" />
-              {summary.bills_without_total} of {summary.total_bills} bills have no recorded
-              after-tax total, so the totals and averages above leave them out.
-            </p>
           )}
         </>
       )}
