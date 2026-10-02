@@ -70,15 +70,6 @@ CREATE TABLE IF NOT EXISTS public.invoice_logos (
 COMMENT ON TABLE public.invoice_logos IS
     'Reusable letterhead logos. Referenced by bills.logo_id; the image bytes live in the private `invoice-logos` bucket at storage_path.';
 
--- "used on N bills" is shown for every logo on the library screen and for every
--- row of a picker, so it is a lookup by id rather than a scan. Partial: the
--- library is small, but the bills index would be the expensive side otherwise.
-CREATE INDEX IF NOT EXISTS invoice_logos_name_idx
-    ON public.invoice_logos (lower(name));
-CREATE INDEX IF NOT EXISTS bills_logo_id_idx
-    ON public.bills (logo_id)
-    WHERE logo_id IS NOT NULL;
-
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2) bills.logo_id — which logo prints, if any
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +110,29 @@ COMMENT ON COLUMN public.bills.logo_rendered_logo_id IS
     'The logo actually burned into this bill''s stored PDFs. Behind logo_id when they differ, which is the whole meaning of a bill being queued for re-print. Set by the renderer after it writes all three copies, never by the assignment.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3) RLS — the same active-admin gate as the rest of billing
+-- 3) Indexes
+-- ─────────────────────────────────────────────────────────────────────────────
+-- These come last on purpose. `bills_logo_id_idx` indexes a column on `bills`,
+-- and `bills.logo_id` does not exist until the ALTERs above have run — creating
+-- the index any earlier fails outright with "column logo_id does not exist",
+-- which is not a warning Postgres lets you defer past. An index is derived from
+-- the table it describes, so it belongs after the table is in its indexed shape,
+-- not before.
+
+-- "used on N bills" is shown for every logo on the library screen and for every
+-- row of a picker, so it is a lookup by id rather than a scan.
+CREATE INDEX IF NOT EXISTS invoice_logos_name_idx
+    ON public.invoice_logos (lower(name));
+
+-- The library is small, but the bills side would be the expensive one otherwise.
+-- Partial, so the index holds only the bills that actually carry a logo — which
+-- on a freshly migrated database is none of them.
+CREATE INDEX IF NOT EXISTS bills_logo_id_idx
+    ON public.bills (logo_id)
+    WHERE logo_id IS NOT NULL;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4) RLS — the same active-admin gate as the rest of billing
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE public.invoice_logos ENABLE ROW LEVEL SECURITY;
 
@@ -156,7 +169,7 @@ CREATE POLICY "invoice_logos_admin_all"
                         WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4) Private storage bucket for the logo images
+-- 5) Private storage bucket for the logo images
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Private, like `bills`. A logo is part of a financial document's letterhead, so
 -- it is not something to put on a public CDN: a client's masthead is their
@@ -206,7 +219,7 @@ CREATE POLICY "invoice_logos_storage_delete"
     );
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 5) Usage counts — "used on 24 bills"
+-- 6) Usage counts — "used on 24 bills"
 -- ─────────────────────────────────────────────────────────────────────────────
 -- The library screen lists every logo with how many bills carry it, and a picker
 -- shows the same figure so an admin can tell a heavily-used logo from an unused
@@ -245,7 +258,7 @@ REVOKE ALL ON FUNCTION public.get_invoice_logo_usage() FROM public;
 GRANT EXECUTE ON FUNCTION public.get_invoice_logo_usage() TO authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 6) Assigning a logo to many bills, in one statement
+-- 7) Assigning a logo to many bills, in one statement
 -- ─────────────────────────────────────────────────────────────────────────────
 -- "Select 400 bills and assign a logo" has to be ONE round trip. Doing it from
 -- the client would mean either 400 UPDATEs or one `.update().in(...)` — and the
@@ -354,7 +367,7 @@ REVOKE ALL ON FUNCTION public.set_bill_logo(uuid[], uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.set_bill_logo(uuid[], uuid) TO authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 7) The re-print work queue
+-- 8) The re-print work queue
 -- ─────────────────────────────────────────────────────────────────────────────
 -- The other half of that split. An assignment is written immediately and in one
 -- statement whatever the size of the selection; the PDFs are re-printed

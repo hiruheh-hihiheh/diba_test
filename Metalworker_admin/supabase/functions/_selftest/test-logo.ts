@@ -686,5 +686,62 @@ check(
   "no loop was introduced, so the call is still one statement",
 );
 
+console.log("\n7b. the migration's statements run in an order Postgres accepts");
+/* This one earned its place the hard way. `bills_logo_id_idx` was created while
+   it sat with the other indexes, above the ALTER that adds `bills.logo_id`, so
+   applying the migration failed outright with "column logo_id does not exist".
+   Nothing here could have caught it — the SQL is not executed by this suite, and
+   the file is not valid to run until the migration it tests has been applied.
+   So what is checked is the only thing checkable offline: that the order in the
+   file is one Postgres will accept. */
+{
+  const at = (needle: string): number => mig.indexOf(needle);
+  const createLogos = at("CREATE TABLE IF NOT EXISTS public.invoice_logos");
+  const addLogo = at("ADD COLUMN IF NOT EXISTS logo_id uuid");
+  const addRendered = at("ADD COLUMN IF NOT EXISTS logo_rendered_logo_id");
+  const nameIdx = at("CREATE INDEX IF NOT EXISTS invoice_logos_name_idx");
+  const billsIdx = at("CREATE INDEX IF NOT EXISTS bills_logo_id_idx");
+
+  check(
+    createLogos !== -1 && addLogo !== -1 && nameIdx !== -1 && billsIdx !== -1,
+    "every statement this ordering depends on is present",
+    `table=${createLogos} logo=${addLogo} rendered=${addRendered} name_idx=${nameIdx} bills_idx=${billsIdx}`,
+  );
+
+  /* The regression itself: an index on a column that does not exist yet. */
+  check(
+    addLogo !== -1 && billsIdx !== -1 && addLogo < billsIdx,
+    "bills_logo_id_idx is created after bills.logo_id exists",
+    `ADD COLUMN at ${addLogo}, index at ${billsIdx}`,
+  );
+  check(
+    createLogos !== -1 && nameIdx !== -1 && createLogos < nameIdx,
+    "invoice_logos_name_idx is created after its table exists",
+  );
+  check(
+    addLogo !== -1 && addRendered !== -1 && addLogo < addRendered,
+    "both ALTERs precede every index",
+  );
+  check(
+    nameIdx !== -1 && billsIdx !== -1 && nameIdx < billsIdx,
+    "both indexes come after the ALTERs, as the migration states",
+  );
+
+  /* `set_bill_logo`'s own doc comment says nothing about ordering, but the
+     functions read both new columns, so they must come after both ALTERs too. */
+  const firstFn = at("CREATE OR REPLACE FUNCTION public.get_invoice_logo_usage");
+  check(
+    addRendered !== -1 && firstFn !== -1 && addRendered < firstFn,
+    "no function is defined before the columns it reads exist",
+  );
+
+  /* And nothing may have crept in that would need the column earlier. */
+  const earlyIdx = mig.slice(0, addLogo);
+  check(
+    !/ON\s+(public\.)?bills\s*\(/i.test(earlyIdx),
+    "nothing indexes bills on a logo column before the ALTER adds it",
+  );
+}
+
 console.log(failures === 0 ? "\ntest-logo: all checks passed" : `\ntest-logo: ${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);
