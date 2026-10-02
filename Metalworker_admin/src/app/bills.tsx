@@ -42,6 +42,12 @@ import {
   type BillJobGroup,
 } from "../services/bills";
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BulkProgress } from "../types/bill";
+import { logoReprintFailureReason, type BillLogoRef } from "../types/invoiceLogo";
+import {
+  applyLogoToBills,
+  describeBillLogo,
+  fetchLogosByIds,
+} from "../services/invoiceLogos";
 import { BillingFolderSheet } from "../components/bills/BillingFolderSheet";
 import { BulkOperationOverlay, type BulkOperation } from "../components/bills/BulkOperationOverlay";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -49,6 +55,8 @@ import { BillDetailModal } from "../components/bills/BillDetailModal";
 import { BillEditScreen } from "../components/bills/BillEditScreen";
 import { BillFolderPickerModal } from "../components/bills/BillFolderPickerModal";
 import { BillUploadPanel } from "../components/bills/BillUploadPanel";
+import { LogoPickerModal } from "../components/bills/LogoPickerModal";
+import { LogoThumbnail } from "../components/bills/LogoThumbnail";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Input } from "../components/ui/Input";
@@ -212,6 +220,45 @@ export default function BillsScreen() {
   /** True while any bulk operation owns the screen. See `bulk`. */
   const busy = bulk !== null;
 
+  /** True while the bulk assign/remove is running, so the bar can lock. */
+  const [logoBusy, setLogoBusy] = useState(false);
+  /** The logo names behind the visible rows, by logo id. */
+  const [logoNames, setLogoNames] = useState<Map<string, BillLogoRef>>(() => new Map());
+  /** The bulk-assign picker. Opening it is the whole of "Assign Logo". */
+  const [assignLogoOpen, setAssignLogoOpen] = useState(false);
+  /** The confirmation before removing a logo from the whole selection. */
+  const [bulkLogoConfirm, setBulkLogoConfirm] = useState(false);
+
+  /* The logo line prints a NAME, and names live in `invoice_logos` — a different
+     table. Asking per row would be one request per bill on the page, so the distinct
+     ids are collected and asked about once. The key is the sorted set of ids rather
+     than the array identity, so a refetch returning the same bills does not
+     re-request, and a page change to different bills does. */
+  const visibleLogoKey = useMemo(
+    () =>
+      [...new Set(bills.map((b) => b.logo_id).filter((v): v is string => !!v))].sort().join(","),
+    [bills]
+  );
+
+  useEffect(() => {
+    const wanted = visibleLogoKey ? visibleLogoKey.split(",") : [];
+    if (wanted.length === 0) return;
+    let cancelled = false;
+    fetchLogosByIds(wanted)
+      .then((next) => {
+        if (!cancelled) setLogoNames(next);
+      })
+      .catch(() => {
+        /* A missing name degrades one line to "Logo assigned", which is still
+           truthful. Failing the whole list over a caption would be a worse trade
+           than a line that is slightly less specific. */
+        if (!cancelled) setLogoNames(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleLogoKey]);
+
   /**
    * Is the current selection exactly "every bill matching the filters"?
    *
@@ -295,6 +342,91 @@ export default function BillsScreen() {
     setTo("");
     setJobGroup(null);
     setPage(1);
+  }
+
+  /**
+   * Apply a logo (or its absence) to every selected bill.
+   *
+   * `selected` is already the exact set of ids — the "every bill matching these
+   * filters" case is resolved by `handleSelectAllMatching`, which fetches the ids
+   * before it sets them — so there is nothing to gather here and nothing to guess.
+   * That is why this can say which bills it is about to change before it does: the
+   * answer is known, not estimated.
+   *
+   * The work underneath is one statement for the assignment and a bounded batch of
+   * re-prints, both server-side, so four hundred bills cost the admin the same two
+   * seconds as four. Progress is reported as it happens rather than faked, because
+   * a bar that fills on a timer is a lie told to someone about their own tax
+   * documents.
+   */
+  async function runBulkLogo(logoId: string | null) {
+    const ids = [...selected];
+    if (ids.length === 0 || logoBusy) return;
+
+    if (logoId === null) {
+      /* Removing is a real change to a financial document, so it asks first. It
+         is the same operation as assigning and needs the same re-prints; the only
+         difference is that the admin cannot preview the result, because the result
+         is the absence of something. */
+      setBulkLogoConfirm(true);
+      return;
+    }
+    await applyLogoToSelection(ids, logoId);
+  }
+
+  async function applyLogoToSelection(ids: string[], logoId: string | null) {
+    setLogoBusy(true);
+    try {
+      const result = await applyLogoToBills(ids, logoId);
+      if (!result.ok) {
+        notify(
+          logoId ? "The logo could not be assigned" : "The logo could not be removed",
+          result.error ?? "Please try again."
+        );
+        return;
+      }
+
+      /* Only the bills that really went are unticked. A bill that failed to
+         re-print is still assigned and still selected, so a retry finds it without
+         the admin having to hunt for it again. */
+      if (result.failures.length > 0) {
+        setSelected((prev) => prev.filter((id) => !result.failures.some((f) => f.bill_id === id)));
+      } else {
+        setAllMatchingIds(null);
+        setSelected([]);
+      }
+
+      void load(true);
+
+      if (result.failures.length > 0) {
+        notify(
+          `Logo ${logoId ? "assigned" : "removed"} on ${result.assigned} ${
+            result.assigned === 1 ? "bill" : "bills"
+          }, ${result.failures.length} could not be re-printed`,
+          result.failures
+            .slice(0, 3)
+            .map((f) => `${f.invoice_no ?? "A bill"} — ${logoReprintFailureReason(f.reason)}`)
+            .join("; ")
+        );
+        return;
+      }
+
+      notify(
+        logoId === null
+          ? `Logo removed from ${result.assigned} ${result.assigned === 1 ? "bill" : "bills"}`
+          : `Logo assigned to ${result.assigned} ${result.assigned === 1 ? "bill" : "bills"}`,
+        result.unchanged > 0
+          ? `${result.unchanged} already had it and were left alone.`
+          : "All three print copies were re-printed."
+      );
+    } catch (err) {
+      notify(
+        logoId ? "The logo could not be assigned" : "The logo could not be removed",
+        err instanceof Error ? err.message : "Please try again."
+      );
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   /** The generic folder picker: any folder, used from one bill's own detail view. */
@@ -919,6 +1051,29 @@ export default function BillsScreen() {
                     <BillCopyActions bill={bill} layout="compact" />
                   </View>
 
+                  {/* The logo line answers "will this print with a letterhead?" at a
+                      glance, which is the question an admin has when checking a list
+                      before sending invoices out. It deliberately says "No Logo
+                      Assigned" rather than showing nothing: the absence is the state
+                      most bills are in, and silence would read as "not applicable"
+                      rather than "chosen, deliberately none". */}
+                  <View style={styles.logoRow}>
+                    <Text style={styles.copyLabel}>Logo</Text>
+                    {bill.logo_id ? (
+                      <View style={styles.logoInner}>
+                        <LogoThumbnail logoId={bill.logo_id} size={24} />
+                        <Text style={styles.logoName} numberOfLines={1}>
+                          {describeBillLogo(bill.logo_id, logoNames)}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.logoNone}>No Logo Assigned</Text>
+                    )}
+                    {bill.logo_rendered_logo_id !== bill.logo_id ? (
+                      <Text style={styles.logoStale}>Re-printing PDF…</Text>
+                    ) : null}
+                  </View>
+
                   <View style={styles.billActions}>
                     <Pressable
                       onPress={() => setDetailId(bill.id)}
@@ -1075,6 +1230,44 @@ export default function BillsScreen() {
                 >
                   <Text style={styles.actionText}>Add to folder</Text>
                 </Pressable>
+                {/* Bulk assign. The SAME picker the bill editor and the Logo Library
+                    use, so there is one list of logos and one set of accepted formats
+                    in the whole app. "No logo" is deliberately absent here: this is the
+                    Assign action, and removal has its own button below — offering both
+                    from one list would mean an admin could remove 400 letterheads by
+                    clicking what reads as an assign control. */}
+                <Pressable
+                  onPress={() => setAssignLogoOpen(true)}
+                  disabled={busy || logoBusy}
+                  style={({ pressed }) => [
+                    styles.bulkBtn,
+                    pressed && styles.pressed,
+                    (busy || logoBusy) && styles.disabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy || logoBusy }}
+                  accessibilityLabel={`Assign a logo to the ${selected.length} selected ${
+                    selected.length === 1 ? "bill" : "bills"
+                  }`}
+                >
+                  <Text style={styles.actionText}>Assign Logo</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void runBulkLogo(null)}
+                  disabled={busy || logoBusy}
+                  style={({ pressed }) => [
+                    styles.bulkBtnGhost,
+                    pressed && styles.pressed,
+                    (busy || logoBusy) && styles.disabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy || logoBusy }}
+                  accessibilityLabel={`Remove the logo from the ${selected.length} selected ${
+                    selected.length === 1 ? "bill" : "bills"
+                  }`}
+                >
+                  <Text style={styles.actionTextSecondary}>Remove Logo</Text>
+                </Pressable>
                 <Pressable
                   onPress={requestBulkDelete}
                   disabled={busy}
@@ -1106,6 +1299,38 @@ export default function BillsScreen() {
           onUploaded={() => void load(true)}
         />
       )}
+
+      {/* ── The bulk-assign picker ───────────────────────────────────── */}
+      <LogoPickerModal
+        visible={assignLogoOpen}
+        onClose={() => setAssignLogoOpen(false)}
+        onSelect={(logoId) => {
+          if (logoId !== null) void applyLogoToSelection([...selected], logoId);
+        }}
+        allowNone={false}
+        title={`Assign a logo to ${selected.length} ${
+          selected.length === 1 ? "bill" : "bills"
+        }`}
+        subtitle="All three print copies of each bill are re-printed with the logo."
+      />
+
+      {/* Removing is the same operation as assigning and needs the same re-prints;
+          the only difference is that the result cannot be previewed, because the
+          result is the absence of something. So it asks. */}
+      <ConfirmDialog
+        visible={bulkLogoConfirm}
+        title="Remove the logo from these bills?"
+        message={`The logo will be removed from ${selected.length} ${
+          selected.length === 1 ? "bill" : "bills"
+        } and all three print copies of each will be re-printed without it. The logo itself stays in the Logo Library, so it can be put back at any time.`}
+        confirmLabel="Remove logo"
+        busy={logoBusy}
+        onCancel={() => setBulkLogoConfirm(false)}
+        onConfirm={() => {
+          setBulkLogoConfirm(false);
+          void applyLogoToSelection([...selected], null);
+        }}
+      />
 
       <BillDetailModal
         billId={detailId}
@@ -1532,6 +1757,35 @@ const createStyles = (theme: AppTheme) =>
       fontWeight: "700",
       letterSpacing: 0.4,
       textTransform: "uppercase",
+    },
+    logoRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.sm,
+    },
+    logoInner: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+      minWidth: 0,
+    },
+    logoName: {
+      flex: 1,
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "600",
+    },
+    logoNone: {
+      flex: 1,
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.sm,
+    },
+    logoStale: {
+      color: theme.colors.warning,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
     },
 
     billActions: {

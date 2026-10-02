@@ -32,8 +32,15 @@
     "paths": {
       "npm:@supabase/supabase-js@2": [
         "./supabase/functions/_selftest/shims/supabase-js.d.ts"
+      ],
+      // The deployed functions import the SDK from the CDN specifier, which the
+      // npm: mapping above does not cover. Both spellings resolve to the same
+      // shim so a new function is not blocked from using whichever the rest of
+      // its neighbours happen to use.
+      "https://esm.sh/@supabase/supabase-js@2": [
+        "./supabase/functions/_selftest/shims/supabase-js.d.ts"
       ]
     }
   },
-  "include": ["supabase/functions/process-bill-upload/**/*.ts"]
+  "include": ["supabase/functions/process-bill-upload/**/*.ts", "supabase/functions/update-bill/**/*.ts", "supabase/functions/set-bill-logos/**/*.ts"]
 }

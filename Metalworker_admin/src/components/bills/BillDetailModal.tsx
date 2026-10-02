@@ -29,6 +29,7 @@ import {
 } from "../../services/bills";
 import type { Bill, BillLineItem } from "../../types/bill";
 import { BillCopyActions } from "./BillCopyActions";
+import { BillLogoControl } from "./BillLogoControl";
 import { Button } from "../ui/Button";
 import { notify } from "../../utils/notify";
 
@@ -350,6 +351,30 @@ export function BillDetailModal({
                   ) : null}
                 </View>
               ) : null}
+
+              {/* ── The letterhead, and what will actually print ── */}
+              <Text style={styles.sectionTitle}>Invoice logo</Text>
+              <Text style={[styles.muted, { marginBottom: theme.spacing.sm }]}>
+                This is the logo that prints in the header of all three print copies.
+              </Text>
+              <BillLogoControl
+                billId={bill.id}
+                initialState={{
+                  logo_id: bill.logo_id,
+                  logo_rendered_logo_id: bill.logo_rendered_logo_id,
+                  logo: null,
+                }}
+                onChanged={() => {
+                  /* The copy buttons resolve against the PDF paths, which this control
+                     does not change — but the header the admin is about to print DOES
+                     change, and this modal's own data is now out of date. Re-reading
+                     the row is one request on a screen they are looking at, and it is
+                     what makes the logo line here and on the list agree. */
+                  void fetchBill(bill.id).then((fresh) => {
+                    if (bill.id === billId) setBill(fresh);
+                  });
+                }}
+              />
 
               {/* ── The three copies ────────────────────────────── */}
               <Text style={styles.sectionTitle}>Print copies</Text>

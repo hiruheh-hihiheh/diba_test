@@ -12,6 +12,7 @@ import { Loader2, Pencil } from "lucide-react";
 import Modal from "../ui/Modal";
 import { ErrorState } from "../ui/LoadingState";
 import { BillCopyActions } from "./BillCopyActions";
+import { BillLogoControl } from "./BillLogoControl";
 import { bankLinesOf, fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity, formatJobKind } from "../../services/bills";
 import type { Bill, BillLineItem } from "../../types/bill";
 
@@ -306,6 +307,31 @@ export function BillDetailModal({
               )}
             </section>
           )}
+
+          {/* ── The letterhead, and what will actually print ── */}
+          <section>
+            <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-2">
+              Invoice logo
+            </h3>
+            <BillLogoControl
+              billId={bill.id}
+              initialState={{
+                logo_id: bill.logo_id,
+                logo_rendered_logo_id: bill.logo_rendered_logo_id,
+                logo: null,
+              }}
+              onChanged={() => {
+                /* The copy buttons below resolve against the PDF paths, which this
+                   control does not change — but the header the admin is about to
+                   print DOES change, and this modal's own data is now out of date.
+                   Re-reading the row is one request on a screen they are looking
+                   at, and it is what makes the logo column above and here agree. */
+                void fetchBill(bill.id).then((fresh) => {
+                  if (bill.id === billId) setBill(fresh);
+                });
+              }}
+            />
+          </section>
 
           {/* ── The three copies ────────────────────────────── */}
           <section>

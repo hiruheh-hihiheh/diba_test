@@ -59,6 +59,7 @@ import {
   TextArea,
   TextInput,
 } from "./BillEditFields";
+import { BillLogoControl } from "./BillLogoControl";
 
 /** One editable line, held as text so a half-typed number is not thrown away. */
 interface DraftLine {
@@ -637,6 +638,27 @@ export default function BillEditModal({
               <TextInput value={draft.vehicleNumber} onChange={(v) => set("vehicleNumber", v)} />
             </Field>
           </SectionCard>
+
+          {/* The logo is set here, but NOT saved with the form.
+              This screen's save writes every field the invoice prints, re-renders
+              the three PDFs from those values and repoints the row at them. A logo
+              is a reference to a stored image, not a field of the invoice, and
+              bundling it into the same save would mean one failed render could
+              leave the logo changed and the values not. It applies on its own
+              through the same picker the library and the bills list use, so there
+              is exactly one way to set a logo in this app. */}
+          <section className="rounded-xl border border-border bg-surface overflow-hidden">
+            <header className="px-4 py-3 border-b border-border bg-bg-secondary">
+              <h3 className="text-sm font-bold text-text">Invoice logo</h3>
+              <p className="text-xs text-text-muted mt-0.5 leading-snug">
+                Prints in the header, above the invoice number. Saved on its own, so a failed
+                re-print here never affects the values above.
+              </p>
+            </header>
+            <div className="px-4 py-4">
+              <BillLogoControl billId={billId} />
+            </div>
+          </section>
 
           {/* ── Line items ── */}
           <section className="rounded-xl border border-border bg-surface overflow-hidden">

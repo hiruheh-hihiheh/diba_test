@@ -11,6 +11,7 @@ import {
   Building2,
   FileText,
   Receipt,
+  ImagePlus,
   PenTool,
   FolderOpen,
   ClipboardList,
@@ -86,6 +87,10 @@ const navSections: NavSection[] = [
     title: "DOCUMENTS",
     items: [
       { label: "Bills", icon: <Receipt size={20} />, path: "/bills" },
+      // The reusable letterheads invoices print. Nested under Bills because a logo
+      // is only ever used through an invoice — on its own it is an asset, and the
+      // "used on N bills" count on that screen only makes sense next to the bills.
+      { label: "Logo Library", icon: <ImagePlus size={20} />, path: "/bills/logos" },
       { label: "Group Bills", icon: <FileText size={20} />, path: "/group-bills" },
       { label: "Group Drawings", icon: <PenTool size={20} />, path: "/group-drawings" },
     ],

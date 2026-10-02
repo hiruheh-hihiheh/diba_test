@@ -149,6 +149,27 @@ export interface BillColumns {
   updated_at: string | null;
   /** Which re-print is stored: 1 after import, +1 per save. */
   pdf_version: number | null;
+
+  /**
+   * Which letterhead logo should print in this invoice's header.
+   *
+   * A REFERENCE, not a copy of the image: the logo itself lives once in
+   * `invoice_logos` and its bytes once in the private `invoice-logos` bucket, so
+   * one logo can serve hundreds of bills. Null means no logo, which is the state
+   * of every bill that existed before this feature — there is nothing to migrate
+   * and no existing invoice changes meaning.
+   */
+  logo_id: string | null;
+  /**
+   * Which logo is actually baked into this bill's stored PDFs.
+   *
+   * Allowed to differ from `logo_id`, and that disagreement is the whole point: a
+   * PDF already written to storage is a snapshot, so assigning a logo cannot
+   * retroactively change it. When these two differ, the documents are queued for
+   * a re-print. Equal on every pre-existing bill, because they were all printed
+   * with no logo.
+   */
+  logo_rendered_logo_id: string | null;
 }
 
 /**

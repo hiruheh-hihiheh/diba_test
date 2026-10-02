@@ -42,6 +42,7 @@ import {
   updateBill,
 } from "../../services/bills";
 import { BILL_BANK_PARTS, type Bill, type BillPatch } from "../../types/bill";
+import { BillLogoControl } from "./BillLogoControl";
 import { notify } from "../../utils/notify";
 import { Button } from "../ui/Button";
 
@@ -543,6 +544,15 @@ export function BillEditScreen({
               </Text>
               <Field label="Transporter" styles={styles} value={draft.transporterMode} onChange={(v) => set("transporterMode", v)} />
               <Field label="Vehicle number" styles={styles} value={draft.vehicleNumber} onChange={(v) => set("vehicleNumber", v)} />
+            </Section>
+
+            {/* ── Line items ── */}
+            <Section title="Invoice logo" styles={styles}>
+              <Text style={styles.note}>
+                Prints in the header, above the invoice number. Saved on its own, so a failed
+                re-print here never affects the values around it.
+              </Text>
+              <BillLogoControl billId={billId} />
             </Section>
 
             {/* ── Line items ── */}

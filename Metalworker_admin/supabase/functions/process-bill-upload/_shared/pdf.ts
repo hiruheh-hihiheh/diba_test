@@ -24,6 +24,7 @@
 //   "Rs." because the Base-14 fonts have no rupee glyph.
 
 import { type FontName, measureText } from "./fontMetrics.ts";
+import type { PdfImage } from "./pdfImage.ts";
 
 /** A4 portrait, in PostScript points. */
 export const PAGE_WIDTH = 595.28;
@@ -210,6 +211,29 @@ export class PdfPage {
   encode(): Uint8Array {
     return latin1Bytes(`${this.ops.join("\n")}\n`);
   }
+
+  /**
+   * Draw a registered image into the box (x, y, w, h). `y` is the TOP edge of
+   * that box, like every other call here.
+   *
+   * The placement is the caller's whole responsibility: this method draws the
+   * box it is given, so the aspect ratio has to have been worked out before the
+   * call. `renderBill.ts` is where that decision is made, and where it is
+   * measured against the real header geometry.
+   *
+   * The `q`/`Q` pair saves and restores the graphics state, so an image cannot
+   * leak a transform into whatever is drawn next — the same reason every other
+   * primitive here is self-contained.
+   */
+  image(resource: string, x: number, y: number, w: number, h: number): void {
+    if (w <= 0 || h <= 0) return;
+    this.ops.push(
+      "q",
+      `${num(w)} 0 0 ${num(h)} ${num(x)} ${num(this.height - y - h)} cm`,
+      `/${resource} Do`,
+      "Q"
+    );
+  }
 }
 
 /* ──────────────────────────────────────────────
@@ -224,6 +248,7 @@ export interface DocumentInfo {
 export class PdfDocument {
   private readonly pages: PdfPage[] = [];
   private readonly info: DocumentInfo;
+  private readonly images: { name: string; image: PdfImage }[] = [];
 
   constructor(info: DocumentInfo) {
     this.info = info;
@@ -233,6 +258,26 @@ export class PdfDocument {
     const page = new PdfPage();
     this.pages.push(page);
     return page;
+  }
+
+  /**
+   * Attach an image to this document and return the resource name to draw it
+   * with.
+   *
+   * Registering is separate from drawing so the object appears once in the file
+   * however many places use it: a logo repeated on three print copies is one
+   * object and three `/Im0 Do` calls, not three copies of the pixels.
+   *
+   * Registering the same `PdfImage` twice returns the same name rather than
+   * writing it twice, so a caller cannot accidentally double a file's weight by
+   * re-registering between renders.
+   */
+  registerImage(image: PdfImage): string {
+    const existing = this.images.find((entry) => entry.image === image);
+    if (existing) return existing.name;
+    const name = `Im${this.images.length}`;
+    this.images.push({ name, image });
+    return name;
   }
 
   get pageCount(): number {
@@ -269,6 +314,21 @@ export class PdfDocument {
     const boldFontId = regularFontId + 1;
     const infoId = boldFontId + 1;
 
+    /* Images are numbered after the document info dictionary, which is last in
+       the file today and therefore the one object whose id does not have to
+       move. A transparent image takes two objects: the colour plane and its soft
+       mask, and the mask is referenced from the colour plane's own dictionary,
+       so it must be numbered first for that reference to be written with a
+       known id. */
+    const firstImageId = infoId + 1;
+    let nextImageId = firstImageId;
+    const imageIds = this.images.map(({ image }) => {
+      const smaskId = image.smask ? nextImageId++ : null;
+      const colorId = nextImageId++;
+      return { colorId, smaskId };
+    });
+    const maxId = nextImageId - 1;
+
     // Content streams are built first because their /Length must be known.
     const contents = this.pages.map((p) => p.encode());
 
@@ -293,8 +353,35 @@ export class PdfDocument {
       offsets[id] = length;
       push(`${id} 0 obj\n${body}\nendobj\n`);
     };
+    /** A stream object: the dictionary, then exactly /Length bytes of payload.
+     *
+     *  `keys` is the dictionary's own entries WITHOUT a leading space, so that an
+     *  empty `keys` produces exactly `<< /Length n >>` — the same single space the
+     *  content streams have always had. Composing this with string concatenation
+     *  instead would put two spaces there and change the bytes of every document
+     *  this file has ever produced. */
+    const streamObject = (id: number, keys: string, bytes: Uint8Array): void => {
+      offsets[id] = length;
+      const entries = keys === "" ? `/Length ${bytes.length}` : `${keys} /Length ${bytes.length}`;
+      push(`${id} 0 obj\n<< ${entries} >>\nstream\n`);
+      pushBytes(bytes);
+      push("\nendstream\nendobj\n");
+    };
 
     const kids = this.pages.map((_, i) => `${firstPageId + i * 2} 0 R`).join(" ");
+
+    /* Empty unless an image was registered. An invoice with no logo must not
+       carry an empty /XObject entry: that would change the bytes of every
+       document produced before this feature existed, for no benefit, and the
+       "no logo renders exactly as it always did" guarantee is much easier to
+       keep honest when the no-logo path is byte-identical rather than merely
+       visually identical. */
+    const xobject =
+      this.images.length === 0
+        ? ""
+        : ` /XObject << ${this.images
+            .map((entry, i) => `/${entry.name} ${imageIds[i].colorId} 0 R`)
+            .join(" ")} >>`;
 
     object(catalogId, `<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
     object(pagesId, `<< /Type /Pages /Kids [${kids}] /Count ${n} >>`);
@@ -307,13 +394,10 @@ export class PdfDocument {
         pageId,
         `<< /Type /Page /Parent ${pagesId} 0 R ` +
           `/MediaBox [0 0 ${num(this.pages[i].width)} ${num(this.pages[i].height)}] ` +
-          `/Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> ` +
+          `/Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >>${xobject} >> ` +
           `/Contents ${contentId} 0 R >>`
       );
-      offsets[contentId] = length;
-      push(`${contentId} 0 obj\n<< /Length ${content.length} >>\nstream\n`);
-      pushBytes(content);
-      push("\nendstream\nendobj\n");
+      streamObject(contentId, "", content);
     }
 
     for (const [id, base] of [
@@ -330,7 +414,31 @@ export class PdfDocument {
     if (this.info.subject) infoParts.push(`/Subject (${pdfString(this.info.subject)})`);
     object(infoId, `<< ${infoParts.join(" ")} >>`);
 
-    const maxId = infoId;
+    /* Image objects. The soft mask is written before the colour plane it is
+       referenced from, because its object id has to be known when the colour
+       plane's dictionary is written. */
+    for (let i = 0; i < this.images.length; i++) {
+      const { image } = this.images[i];
+      const { colorId, smaskId } = imageIds[i];
+
+      if (image.smask && smaskId !== null) {
+        streamObject(
+          smaskId,
+          `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} ` +
+            `/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`,
+          image.smask.data
+        );
+      }
+
+      const smaskRef = image.smask && smaskId !== null ? ` /SMask ${smaskId} 0 R` : "";
+      streamObject(
+        colorId,
+        `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} ` +
+          `/ColorSpace /${image.colorSpace} /BitsPerComponent 8 /Filter /${image.filter}${smaskRef}`,
+        image.data
+      );
+    }
+
     const xrefOffset = length;
 
     let xref = `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;

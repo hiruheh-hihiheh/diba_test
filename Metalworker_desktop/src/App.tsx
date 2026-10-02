@@ -17,6 +17,7 @@ import CompanyStockPage from "./pages/CompanyStock";
 import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
 import BillsPage from "./pages/Bills";
+import InvoiceLogosPage from "./pages/InvoiceLogos";
 import FoldersPage from "./pages/Folders";
 import FolderDetailPage from "./pages/FolderDetail";
 import PlaceholderPage from "./pages/Placeholder";
@@ -59,6 +60,7 @@ export default function App() {
 
                   {/* Phase 4 — Documents */}
                   <Route path="/bills" element={<BillsPage />} />
+                  <Route path="/bills/logos" element={<InvoiceLogosPage />} />
                   <Route path="/group-bills" element={<GroupBillsPage />} />
                   <Route path="/group-drawings" element={<GroupDrawingsPage />} />
 

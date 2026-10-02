@@ -33,6 +33,7 @@ import { COPY_LABEL } from "./parseBill.ts";
 import { formatJobKind } from "./formatJobKind.ts";
 import { PdfDocument, measurePdfText, type PdfPage, wrapText } from "./pdf.ts";
 import { measureText } from "./fontMetrics.ts";
+import type { PdfImage } from "./pdfImage.ts";
 
 /* ──────────────────────────────────────────────
    Geometry
@@ -316,6 +317,89 @@ function layoutRuns(runs: Run[], maxWidth: number, size: number): Run[][] {
 }
 
 /* ──────────────────────────────────────────────
+   Invoice logo
+   ────────────────────────────────────────────── */
+
+/**
+ * The logo slot: the strip of the header the copy marker has always reserved.
+ *
+ * The header already reserves the rightmost 110pt for ORIGINAL / DUPLICATE /
+ * TRIPLICATE (`bodyWidth = CONTENT_W - HEAD_STRIP` below), and the seller block
+ * is wrapped to that width, so no seller line can ever reach past x = 455.28.
+ * That makes this strip the one place in the header where a logo can go without
+ * displacing, shortening or overlapping anything.
+ *
+ * WHY THESE NUMBERS
+ *   WIDTH      exactly the existing reservation, so introducing a logo cannot
+ *              change how the seller block wraps.
+ *   TOP_GAP    clears the copy marker's baseline, which sits at `top + 12` with an
+ *              11pt face and so reaches roughly `top + 20`.
+ *   BOTTOM_GAP clearance above the header rule.
+ *   GOOD_H     the height at or above which a logo is big enough that the header
+ *              is left exactly as it is. Below it the header is lengthened, up to
+ *              MAX_GROW. This is the threshold that decides whether anything on
+ *              the page moves, and it is deliberately well under the slot a full
+ *              seller block provides, so a normal invoice never reaches it.
+ *   MAX_GROW   the most the header may be lengthened. Growth moves every block
+ *              below it down by the same amount, so it is bounded: a seller
+ *              block with almost no detail must not be able to reflow a one-page
+ *              invoice onto two. Past this bound the logo takes the smaller slot
+ *              that is left rather than the page getting longer.
+ *   MIN_H      below this the logo is not drawn at all. A mark squeezed under an
+ *              eighth of an inch tall reads as a printing fault, and an invoice
+ *              with a legible header and no logo is a far better outcome than
+ *              one with a smear where the letterhead should be.
+ */
+const LOGO_STRIP_W = 110;
+const LOGO_TOP_GAP = 22;
+const LOGO_BOTTOM_GAP = 6;
+const LOGO_GOOD_H = 34;
+const LOGO_MAX_GROW = 30;
+const LOGO_MIN_H = 12;
+const LOGO_PAD = 4;
+
+/** Where a logo ended up, in the header's own coordinate space. */
+interface LogoPlacement {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Fit a logo into the header strip, preserving its aspect ratio.
+ *
+ * `availableH` is the vertical room between the copy marker and the header rule.
+ * The result is always a "contain" fit: the logo is scaled by whichever axis runs
+ * out first and then centred in the space that is left over, so it can never be
+ * stretched, cropped, or pushed against a margin. A logo with a very wide aspect
+ * ratio ends up narrower than the strip and a very tall one ends up shorter than
+ * the room; neither is distorted.
+ *
+ * Returns null for a logo with no usable pixels rather than emitting a
+ * zero-sized draw call.
+ */
+function fitLogo(image: PdfImage, slotX: number, slotTop: number, availableH: number): LogoPlacement | null {
+  if (image.width <= 0 || image.height <= 0) return null;
+
+  const boxW = LOGO_STRIP_W - LOGO_PAD * 2;
+  const boxH = availableH - LOGO_PAD * 2;
+  if (boxW <= 0 || boxH <= 0) return null;
+  if (availableH < LOGO_MIN_H) return null;
+
+  const scale = Math.min(boxW / image.width, boxH / image.height);
+  const w = image.width * scale;
+  const h = image.height * scale;
+
+  return {
+    x: slotX + (LOGO_STRIP_W - w) / 2,
+    y: slotTop + (availableH - h) / 2,
+    w,
+    h,
+  };
+}
+
+/* ──────────────────────────────────────────────
    Layout cursor
    ────────────────────────────────────────────── */
 
@@ -356,15 +440,32 @@ class Sheet {
    Header
    ────────────────────────────────────────────── */
 
-function renderHeader(sheet: Sheet, bill: BillCopy): void {
+/**
+ * The logo registered on this document, if any.
+ *
+ * Held on the Sheet rather than passed through eight call sites: it is needed by
+ * the header alone, and the header is called once per bill while the document is
+ * built once per call. Every page of the document shares one `/XObject`
+ * dictionary, so one registration covers all three print copies' worth of pages.
+ */
+interface HeaderLogo {
+  /** Resource name to draw, e.g. `Im0`. */
+  resource: string;
+  image: PdfImage;
+}
+
+function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
   const L = sheet.left;
   const R = sheet.right;
 
   // Reserve the right-hand strip for the copy marker so a long seller name can
-  // never run underneath it.
-  const bodyWidth = CONTENT_W - 110;
+  // never run underneath it. This is also the strip the logo occupies, which is
+  // why it is named rather than inlined: the seller block below wraps to it, and
+  // changing its value would re-wrap every seller on every invoice.
+  const HEAD_STRIP = LOGO_STRIP_W;
+  const bodyWidth = CONTENT_W - HEAD_STRIP;
   const top = sheet.y;
 
   // --- copy marker, top right ----------------------------------------------
@@ -386,6 +487,36 @@ function renderHeader(sheet: Sheet, bill: BillCopy): void {
     }
   }
 
+  // Height of the seller block, measured before anything is drawn: the header
+  // rule sits a fixed 5pt below its last line, and a logo needs to know how much
+  // room is left above that rule before it can decide whether it fits.
+  let blockHeight = 0;
+  for (const line of sellerLines) blockHeight += line.bold ? 15 : 11;
+
+  let ruleY = top + blockHeight + 5;
+
+  /* --- invoice logo, in the reserved strip ---------------------------------
+     Placed BEFORE the seller lines are drawn so the rule position it needed is
+     already known, and so the two decisions cannot disagree.
+
+     The header only ever grows, and only when the seller block is too short to
+     leave a usable slot, and then by at most LOGO_MAX_GROW. On any invoice with
+     a normal seller block — which is to say every real one — the room above the
+     rule is already larger than LOGO_GOOD_H, `ruleY` keeps exactly the value it
+     has always had, and the logo appears without a single thing below it moving
+     by a point. */
+  const slotX = R - LOGO_STRIP_W;
+  const slotTop = top + LOGO_TOP_GAP;
+  if (logo) {
+    const usable = ruleY - LOGO_BOTTOM_GAP - slotTop;
+    if (usable < LOGO_GOOD_H) ruleY += Math.min(LOGO_GOOD_H - usable, LOGO_MAX_GROW);
+  }
+
+  const placement = logo ? fitLogo(logo.image, slotX, slotTop, ruleY - LOGO_BOTTOM_GAP - slotTop) : null;
+  if (placement) {
+    sheet.page.image(logo!.resource, placement.x, placement.y, placement.w, placement.h);
+  }
+
   let y = top;
   for (const line of sellerLines) {
     sheet.page.text(line.text, L, y + line.size, {
@@ -395,7 +526,9 @@ function renderHeader(sheet: Sheet, bill: BillCopy): void {
     y += line.bold ? 15 : 11;
   }
 
-  y += 5;
+  // y and ruleY are computed from the same measurement, so this lands exactly
+  // where the reservation above decided it would.
+  y = ruleY;
   sheet.page.line(L, y, R, y, 1.1);
   y += 5;
 
@@ -1194,8 +1327,25 @@ const COPY_KIND_BY_LABEL = COPY_LABEL;
  * places and will not open. A workbook therefore becomes a single multi-page
  * document per copy: one page per bill, in worksheet order, with the table
  * header repeated if a single bill's line items run onto a second sheet.page.
+ *
+ * THE LOGO
+ * `logo` is the decoded image to print in the header, or null/omitted for none.
+ * It is a parameter rather than part of `BillCopy` because it is not part of the
+ * invoice's DATA: the same bill rendered for the logo library's preview and for
+ * its three print copies carries the identical image, and a parser can never
+ * produce one.
+ *
+ * Omitting it must leave the document byte-for-byte what it was before this
+ * feature existed. That is guaranteed at the writer (`pdf.ts` emits no
+ * /XObject dictionary for a document with no images) and verified by
+ * `test-logo.ts`, which re-renders the fixture workbooks and compares against a
+ * stored digest.
  */
-export function renderBillDocument(bills: BillCopy[], copyLabel: string): Uint8Array {
+export function renderBillDocument(
+  bills: BillCopy[],
+  copyLabel: string,
+  logo?: PdfImage | null
+): Uint8Array {
   if (bills.length === 0) throw new Error("A bill document needs at least one bill");
 
   /* `copyLabel` is the designation of the document being produced, so it is
@@ -1228,10 +1378,17 @@ export function renderBillDocument(bills: BillCopy[], copyLabel: string): Uint8A
   // Track which bill owns each page, because one bill may spill onto more than
   // one page and every page still needs its own invoice number in the footer.
   const pageOwner: string[] = [];
+
+  /* Registered once, on the document, so the pixels exist a single time in the
+     file however many pages and bills reference them. */
+  const headerLogo: HeaderLogo | null = logo
+    ? { resource: sheet.doc.registerImage(logo), image: logo }
+    : null;
+
   for (const [i, bill] of labelled.entries()) {
     if (i > 0) sheet.newPage();
     const firstPage = sheet.doc.pageCount - 1;
-    renderHeader(sheet, bill);
+    renderHeader(sheet, bill, headerLogo);
     renderParties(sheet, bill);
     renderTable(sheet, bill);
     renderTotals(sheet, bill);

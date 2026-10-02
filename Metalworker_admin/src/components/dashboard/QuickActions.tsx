@@ -205,6 +205,30 @@ export function QuickActions({
         </Pressable>
       </View>
 
+      {/* The reusable letterheads invoices print. It sits with the documents rather
+          than on its own because a logo is only ever used through an invoice — on
+          its own it is an asset, and the "used on N bills" count on that screen
+          only makes sense next to the bills. */}
+      <SectionHeader title="Invoice branding" subtitle="Reusable logos" />
+      <View style={styles.quickActionsRow}>
+        <Pressable
+          style={styles.quickActionCard}
+          onPress={() => onNavigate("/invoice-logos")}
+          accessibilityRole="button"
+          accessibilityLabel="Logo Library"
+        >
+          <View
+            style={[
+              styles.quickActionIcon,
+              { backgroundColor: "#8B5CF6" + "20" },
+            ]}
+          >
+            <Text style={styles.quickActionIconText}>🖼️</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Logo Library</Text>
+        </Pressable>
+      </View>
+
       <SectionHeader title="Folders" subtitle="Organize items" />
       <View style={styles.quickActionsRow}>
         <Pressable

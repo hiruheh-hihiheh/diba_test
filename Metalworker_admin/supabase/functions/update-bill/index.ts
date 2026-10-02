@@ -43,6 +43,7 @@ import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts
 import { billFromRecord, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
 import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import { computeBillValues, EditError, type BillPatch } from "../process-bill-upload/_shared/billEdit.ts";
+import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
 
 const BUCKET = "bills";
 const TABLE = "bills";
@@ -140,7 +141,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "That bill's line items could not be read." }, 500);
   }
 
-  const currentItems: BillLineItem[] = (existingLines ?? []).map((row) => {
+  const currentItems: BillLineItem[] = (existingLines ?? []).map((row: Record<string, unknown>) => {
     const r = row as Record<string, unknown>;
     return {
       srNo: r.sr_no === null ? null : Number(r.sr_no),
@@ -248,6 +249,31 @@ Deno.serve(async (req) => {
   };
   const rendered: Record<string, Uint8Array> = {};
 
+  /* An edit does not change WHICH letterhead the invoice is on, so the re-print has
+     to carry the same logo the previous documents had. Omitting it would mean every
+     edit silently stripped the logo off the bills that had one — the row would still
+     say `logo_id` while the new PDF showed nothing, which is precisely the mismatch
+     this feature exists to avoid.
+
+     A logo that cannot be loaded is a hard failure here, and deliberately so. It
+     would otherwise produce a document with the logo missing, repoint the row at it,
+     and report success. Restoring is the honest outcome: the edit is refused, the
+     previous three documents stay in place, and the admin is told why. */
+  const logoImage = await loadInvoiceLogoImage(admin, (stored as Record<string, unknown>).logo_id as string | null);
+  const logoWanted = ((stored as Record<string, unknown>).logo_id as string | null) ?? null;
+  if (logoWanted && !logoImage) {
+    await restore(admin, billId, existing, currentItems);
+    console.error("update-bill: logo could not be loaded for", billId, logoWanted);
+    return json(
+      {
+        ok: false,
+        error: "The bill was not saved because its logo image could not be read. Nothing has changed.",
+        reason: "logo_unreadable",
+      },
+      500
+    );
+  }
+
   try {
     for (const copy of COPY_ORDER) {
       const model = billFromRecord(
@@ -255,7 +281,7 @@ Deno.serve(async (req) => {
         lineItems,
         COPY_LABEL[copy]
       );
-      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy]);
+      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy], logoImage);
     }
   } catch (err) {
     await restore(admin, billId, existing, currentItems);
@@ -292,6 +318,12 @@ Deno.serve(async (req) => {
       duplicate_pdf_path: newPaths.duplicate,
       triplicate_pdf_path: newPaths.triplicate,
       pdf_version: nextVersion,
+      /* These three documents were just rendered WITH this logo, so that is what
+         they now contain. Recording it here is what keeps the bill out of the
+         re-print queue: without it, editing any bill that carries a logo would
+         mark it as owing a logo it already has, and it would be re-printed on
+         every subsequent queue pass, forever. */
+      logo_rendered_logo_id: logoWanted,
     })
     .eq("id", billId);
   if (pathError) {
