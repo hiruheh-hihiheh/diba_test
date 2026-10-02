@@ -146,10 +146,14 @@ export interface BillJobFacet {
  * an unknown workbook rather than crashing.
  */
 function flattenBill(row: BillRowWithUpload): Bill {
+  const { bill_uploads: upload, ...own } = row;
   /* `folder_items` is the query's join, not a bill column, so it is dropped here
      rather than leaking onto every `Bill` object as an extra runtime key that the
-     type does not describe. */
-  const { bill_uploads: upload, folder_items: _join, ...own } = row;
+     type does not describe. `own` is a fresh object built by the rest pattern, so
+     deleting from it touches nothing the caller owns. Destructuring it into a
+     deliberately-unused `_`-named binding was the obvious spelling and ESLint is
+     right that it is a value that is never read. */
+  delete own.folder_items;
   return {
     ...own,
     original_filename: upload?.original_filename ?? "",

@@ -154,11 +154,16 @@ jobs:
       # The project's `lint` script, and a hard gate: no `--quiet`, no
       # `--max-warnings`, no rule turned off for CI only.
       #
-      # THIS STEP CURRENTLY FAILS. `npx eslint .` reports 54 findings (50 errors,
-      # 4 warnings) across 26 files that predate this workflow — verified locally,
+      # THIS STEP CURRENTLY FAILS. `npx eslint .` reports 53 findings (49 errors,
+      # 4 warnings) across 25 files that predate this workflow — verified locally,
       # not guessed at. The bulk are `react-hooks/set-state-in-effect` (15), which
       # need a read/commit split rather than a config change, plus `no-explicit-any`
       # (11) and `react-refresh/only-export-components` (11).
+      #
+      # Billing adds zero findings. The one it did introduce — an unused
+      # `folder_items: _join` binding in `services/bills.ts`, used only to omit the
+      # query's join — was fixed in the code, not in the config, and now zero Billing
+      # file reports anything. What is left is the pre-existing baseline above.
       #
       # It is left failing on purpose. Suppressing the exit code would make this
       # workflow green while the app carries known defects, which is the exact thing
@@ -210,16 +215,58 @@ jobs:
 
       # A credential committed to the repository is not removed by deleting it later,
       # so the check is here rather than in a review checklist. Deliberately narrow:
-      # it looks for the shapes that are unambiguously secrets — the literal
-      # service_role key name and a JWT header — not for the word "key", which
-      # appears in ordinary code.
+      # it looks for the shapes that are unambiguously secrets — the service-role key
+      # field name, and a JWT header — not for the word "key", which appears in
+      # ordinary code.
+      #
+      # WHY THE PATTERN IS ASSEMBLED IN PIECES
+      # `git grep` searches this workflow too, so a COMPLETE pattern written here as a
+      # literal is itself a credential-shaped string in the repository. That is not
+      # hypothetical: it is exactly what happened, and the gate failed on its own
+      # source and told a maintainer to delete a security check.
+      #
+      # Assembling it from fragments fixes that without weakening anything: the pattern
+      # that RUNS is the full one, and it still matches a real key or JWT anywhere in
+      # the tree. What changes is only that no complete signature sits in tracked
+      # source. The alternative — excluding this file from the scan — would be a real
+      # hole, since it is a perfectly good place to paste a key by accident.
       - name: No committed credentials
         run: |
-          found=1
-          if git grep -IqE '(service_role_key|eyJhbGciOi[A-Za-z0-9_-]{10,}\.)' -- ':!*.md'; then
+          # Fragments. Concatenated below into the pattern that is actually searched.
+          f1='serv'
+          f2='ice_role'
+          f3='_ke'
+          f4='y'
+          j1='eyJ'
+          j2='hbGci'
+          j3='Oi'
+          pattern="(${f1}${f2}${f3}${f4}|${j1}${j2}${j3}[A-Za-z0-9_-]{10,}\.)"
+
+          if git grep -IqE "$pattern" -- ':!*.md'; then
             echo "A credential-shaped string is committed:"
-            git grep -InE '(service_role_key|eyJhbGciOi[A-Za-z0-9_-]{10,}\.)' -- ':!*.md'
-            found=0
+            git grep -InE "$pattern" -- ':!*.md'
+            exit 1
           fi
-          if [ "$found" -eq 0 ]; then exit 1; fi
           echo "No service-role keys or JWTs are committed."
+
+          # The gate is only worth anything if it still fires, so prove it does rather
+          # than assuming it. Each case below must FAIL to be found; if one is found,
+          # the detector has been broken by an edit and CI goes red on purpose.
+          selfcheck() {
+            label="$1"; expect="$2"; body="$3"
+            tmp="$(mktemp -d)/creds.txt"
+            printf '%s' "$body" > "$tmp"
+            if grep -qE "$pattern" "$tmp"; then got=1; else got=0; fi
+            rm -rf "$(dirname "$tmp")"
+            if [ "$got" -ne "$expect" ]; then
+              echo "Credential scanner self-check FAILED: $label (expected found=$expect, got found=$got)"
+              exit 1
+            fi
+            echo "  self-check ok: $label"
+          }
+          selfcheck "a real service-role key is caught" 1 \
+            "const k = { supabase_${f1}${f2}${f3}${f4}: \"abc\" };"
+          selfcheck "a JWT is caught" 1 \
+            "const t = \"${j1}${j2}${j3}abcdefghijklmnop.eyJzdWIiOiIxIn0\";"
+          selfcheck "ordinary code is not flagged" 0 \
+            "const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;"
