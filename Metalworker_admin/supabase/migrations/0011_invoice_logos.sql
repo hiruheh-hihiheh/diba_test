@@ -304,22 +304,49 @@ BEGIN
             USING ERRCODE = '23503';
     END IF;
 
-    UPDATE public.bills b
-       SET logo_id = p_logo_id
-     WHERE b.id = ANY (p_bill_ids)
-       AND b.logo_id IS DISTINCT FROM p_logo_id
-    RETURNING b.id INTO v_changed;
+    -- Collecting the updated ids needs a CTE and an aggregate, and the reason is
+    -- worth writing down because the obvious form is wrong in a way that fails
+    -- quietly. `UPDATE ... RETURNING b.id INTO v_changed` assigns through the same
+    -- machinery as `SELECT ... INTO`: with a scalar target and more than one row
+    -- returned, PL/pgSQL keeps the FIRST row and discards the rest. `v_changed` is
+    -- a uuid[], so the single surviving id becomes a one-element array.
+    --
+    -- So the first four of those ids would be missing from `changed`, and the
+    -- query below would then report them as `changed = false` — "already correct"
+    -- for bills this very statement had just updated. The caller counts
+    -- assigned + unchanged to detect missing bills, and that total would still add
+    -- up, so nothing would have looked wrong: four invoices would carry a new logo
+    -- while the response said they had not changed, and no re-print would be queued
+    -- for them.
+    --
+    -- `array_agg` over the CTE collects every row the UPDATE touched. The COALESCE
+    -- covers the no-rows case, where aggregate functions over an empty set yield
+    -- NULL rather than an empty array. ORDER BY makes the result deterministic,
+    -- which costs nothing and keeps the function's output testable.
+    WITH changed AS (
+        UPDATE public.bills b
+           SET logo_id = p_logo_id
+         WHERE b.id = ANY (p_bill_ids)
+           AND b.logo_id IS DISTINCT FROM p_logo_id
+        RETURNING b.id
+    )
+    SELECT COALESCE(array_agg(id ORDER BY id), '{}'::uuid[])
+    INTO v_changed
+    FROM changed;
 
-    RETURN QUERY SELECT u.id, true FROM unnest(coalesce(v_changed, '{}'::uuid[])) AS u(id);
+    RETURN QUERY SELECT u.id, true FROM unnest(v_changed) AS u(id);
 
     -- Everything else that was asked for and exists. Reported as unchanged so the
     -- caller can distinguish "already correct" from "no such bill" — the second
     -- is worth surfacing, and silence would hide a stale list the user clicked.
+    -- `v_changed` needs no guard here: the CTE above is the single place that
+    -- establishes it as non-null, and a second COALESCE would only suggest it
+    -- might not be.
     RETURN QUERY
     SELECT b.id, false
       FROM public.bills b
      WHERE b.id = ANY (p_bill_ids)
-       AND NOT (b.id = ANY (coalesce(v_changed, '{}'::uuid[])));
+       AND NOT (b.id = ANY (v_changed));
 END;
 $$;
 

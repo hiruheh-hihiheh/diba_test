@@ -585,5 +585,106 @@ check(
   "no UPDATE storage policy was added to make the upsert work",
 );
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   7. set_bill_logo collects EVERY updated bill
+   ─────────────────────────────────────────────────────────────────────────────
+
+   `UPDATE ... RETURNING b.id INTO v_changed` was the original form, and it was
+   wrong. PL/pgSQL assigns `RETURNING ... INTO` the same way it assigns
+   `SELECT ... INTO`: with a scalar target and several rows returned it keeps the
+   first and discards the rest, so `v_changed` ended up a one-element array. The
+   consequence was not a wrong count — it was wrong per-bill data, because the
+   follow-up query classifies anything absent from `v_changed` as "already
+   correct". Five bills updated, one reported changed, four reported unchanged,
+   and the caller's assigned + unchanged still summed correctly so nothing
+   downstream could detect it. Those four would carry a new logo that nothing
+   then re-printed.
+
+   There is no PostgreSQL in this toolchain, so the behavioural scenarios are
+   proven against a real server by scripts/set_bill_logo_regression.sql. What is
+   checked here is the shape of the function that makes those scenarios hold —
+   each assertion names the property it guarantees, so a future edit that
+   reintroduces the scalar assignment, or swaps IS DISTINCT FROM for <>, fails
+   here rather than in production. */
+
+const setLogoAt = mig.indexOf("FUNCTION public.set_bill_logo");
+const setLogoBody = mig.slice(setLogoAt, mig.indexOf("$$;", setLogoAt));
+
+/* Assertions run against the body with SQL comments removed, for the same reason
+   the upsert check strips them: the comments explaining this very fix quote the
+   rejected code verbatim, so a search over raw text finds its own explanation
+   and reports a bug that is not there. */
+const sqlCode = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+
+const setLogoCode = sqlCode(setLogoBody);
+const fn = (source: string): boolean => new RegExp(source, "s").test(setLogoCode);
+
+console.log("\nset_bill_logo collects every updated bill");
+
+/* (6) the property the bug was about: no scalar assignment of the RETURNING
+   clause, and an aggregate that sees all rows. */
+check(
+  !/RETURNING\s+b\.id\s+INTO\s+v_changed/i.test(setLogoCode),
+  "the UPDATE no longer assigns RETURNING into v_changed",
+);
+check(
+  fn(String.raw`WITH\s+changed\s+AS\s*\(\s*UPDATE\s+public\.bills`),
+  "the update is wrapped in a data-modifying CTE",
+);
+check(
+  fn(String.raw`array_agg\(\s*id\b`),
+  "array_agg collects every row the update returned",
+);
+check(
+  fn(String.raw`array_agg\([^)]*ORDER BY id`),
+  "the collected ids are ordered, so the output is deterministic",
+);
+check(
+  fn(String.raw`COALESCE\(\s*array_agg\([^)]*\),\s*'\{\}'::uuid\[\]`),
+  "the no-rows case yields an empty array, not NULL",
+);
+
+/* (1) and (2) A single-row assignment still lands in v_changed the same way a
+   multi-row one does, so the one-bill and many-bill cases share a code path. */
+check(
+  fn(String.raw`FROM\s+changed\s*;`) && fn(String.raw`INTO\s+v_changed`),
+  "the aggregate result is the value assigned to v_changed",
+);
+
+/* (3) Bills that already carry the right logo are reported, not dropped. */
+check(
+  fn(String.raw`SELECT\s+b\.id,\s*false`),
+  "unchanged bills are reported as changed = false",
+);
+check(
+  fn(String.raw`NOT\s*\(\s*b\.id\s*=\s*ANY\s*\(\s*v_changed\s*\)\s*\)`),
+  "the unchanged branch excludes exactly the bills that changed",
+);
+check(
+  fn(String.raw`FROM\s+unnest\(\s*v_changed\s*\)\s+AS\s+u\(id\)`),
+  "changed bills are emitted from the collected array",
+);
+
+/* (4) and (5) Both hinge on one predicate. `IS DISTINCT FROM` is NULL-safe;
+   `<>` is not — `logo_id <> NULL` is NULL, never true, so removing a logo would
+   match nothing and report every bill as already correct. Asserting this one
+   predicate covers removal and idempotence together, and it is the substitution
+   most likely to look harmless. */
+const distinctCount = (setLogoCode.match(/IS DISTINCT FROM/gi) ?? []).length;
+check(distinctCount >= 1, "the update uses a NULL-safe inequality", `${distinctCount} use(s)`);
+check(
+  !fn(String.raw`logo_id\s*<>`),
+  "no plain <> comparison crept in beside it",
+);
+
+/* The whole function stays a single statement's worth of change per call: no
+   loop, no per-row work, which is the property that keeps a 500-bill selection
+   to one round trip. */
+check(
+  !/\bFOR\s+\S+\s+LOOP\b|\bWHILE\b|\bFOREACH\b/i.test(setLogoCode),
+  "no loop was introduced, so the call is still one statement",
+);
+
 console.log(failures === 0 ? "\ntest-logo: all checks passed" : `\ntest-logo: ${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);
