@@ -44,11 +44,12 @@ import type {
   BillLogoRef,
   BillLogoState,
   InvoiceLogo,
+  LogoFit,
 } from "../types/invoiceLogo";
 import {
+  fitLogoWithinLimits,
   INVOICE_LOGO_MAX_BYTES,
   INVOICE_LOGO_MAX_EDGE,
-  INVOICE_LOGO_MAX_PIXELS,
   INVOICE_LOGO_MIME_TYPES,
 } from "../types/invoiceLogo";
 
@@ -80,7 +81,14 @@ const SIGNED_URL_TTL_SECONDS = 120;
 export async function fetchInvoiceLogos(): Promise<InvoiceLogo[]> {
   const { data, error } = await supabase
     .from(LOGOS)
-    .select("*, bills!bills_logo_id_idx(count)")
+    // The hint MUST be the foreign key's name. PostgREST accepts an index name
+    // here, but only an index it can read as a relationship — and
+    // `bills_logo_id_idx` is PARTIAL (`WHERE logo_id IS NOT NULL`), so no
+    // relationship can be inferred from it and the request fails with
+    // "Could not find a relationship between 'invoice_logos' and 'bills'". That
+    // failure is not stale cache; reloading the schema does not fix it. The
+    // constraint created by `ADD COLUMN ... REFERENCES` is `bills_logo_id_fkey`.
+    .select("*, bills!bills_logo_id_fkey(count)")
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
 
@@ -252,14 +260,13 @@ export async function pickInvoiceLogo(): Promise<PickedInvoiceLogo | null> {
   if (!asset.width || !asset.height) {
     throw new Error("That image's size could not be read. Please choose it again.");
   }
-  if (asset.width > INVOICE_LOGO_MAX_EDGE || asset.height > INVOICE_LOGO_MAX_EDGE) {
-    throw new Error(
-      `That image is ${asset.width} x ${asset.height}. A logo must be at most ${INVOICE_LOGO_MAX_EDGE} pixels on each side.`
-    );
-  }
-  if (asset.width * asset.height > INVOICE_LOGO_MAX_PIXELS) {
-    throw new Error("That image has too many pixels to print on an invoice. Please choose a smaller one.");
-  }
+  /* An oversized image is no longer refused here. It is resized on the way in, by
+     `addInvoiceLogo`, because the alternative is asking an admin to open
+     Photoshop for a logo the app can fix in about a second. The original pixel
+     size is still recorded on `picked` — it is what the confirmation preview
+     describes and what the normalized size is measured against. The caller can
+     ask `fitLogoWithinLimits(picked.width, picked.height)` whether a resize is
+     coming, and say so before the admin commits. */
 
   return {
     name: deriveLogoName(asset.fileName ?? null),
@@ -328,6 +335,156 @@ async function readLogoBytes(picked: PickedInvoiceLogo): Promise<Uint8Array> {
   return new File(picked.uri).bytes();
 }
 
+/** Progress text for a long upload, so a resize is never a silent pause. */
+export type LogoStatus = (message: string) => void;
+
+interface NormalisedLogo {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+}
+
+/**
+ * Resample an oversized logo down to something the PDF renderer will accept.
+ *
+ * WHY THE FIT IS NOT JUST "MAKE THE LONG EDGE 3000"
+ * `pdfImage.ts` refuses an image if EITHER side exceeds 3000px OR the total
+ * exceeds 4,000,000 pixels. Those are different constraints and the second one
+ * binds first for most shapes — 3000 x 3000 is 9,000,000 pixels, so fitting the
+ * edge alone would upload an image the renderer then refuses on somebody's
+ * invoice. `fitLogoWithinLimits` takes the smaller of the two scales.
+ *
+ * WEB: `createImageBitmap` is asked to decode AT the target size. That matters
+ * for the case this exists for: a 16667 x 16667 logo is 278 megapixels, over 1 GB
+ * decoded as RGBA, and past the 16384-pixel canvas limit every browser enforces.
+ * Resampling inside `createImageBitmap` avoids materialising the full-size bitmap
+ * at all; the canvas is only ever the small one. The resize options are ignored
+ * by older Safari, which then decodes at full size — the canvas draw below still
+ * produces the right output, it just costs more memory, and a decode failure is
+ * caught and reported rather than crashing.
+ *
+ * NATIVE: `expo-image-manipulator` is the Expo module for this, loaded lazily so
+ * the web build never pulls it in. It re-encodes, so the output format follows
+ * the input: PNG in, PNG out, so transparency survives.
+ *
+ * Returns null when the image is already inside the limits, and the caller then
+ * uploads the original bytes untouched — no re-encode, no quality loss, and no
+ * change to the path that is already working.
+ */
+async function normaliseLogoImage(
+  picked: PickedInvoiceLogo,
+  fit: LogoFit,
+  onStatus?: LogoStatus
+): Promise<NormalisedLogo | null> {
+  if (!fit.resized) return null;
+
+  onStatus?.(
+    `Image is ${picked.width} x ${picked.height}. Resizing to ${fit.width} x ${fit.height} to fit the ${INVOICE_LOGO_MAX_EDGE}px limit...`
+  );
+
+  try {
+    if (Platform.OS === "web") {
+      return await resizeInBrowser(picked, fit);
+    }
+    return await resizeOnDevice(picked, fit);
+  } catch (err) {
+    throw new Error(
+      `That image is ${picked.width} x ${picked.height} and could not be resized on this device` +
+        ` (${err instanceof Error ? err.message : "unknown error"}). ` +
+        "A logo under 3000 x 3000 pixels can still be added directly."
+    );
+  }
+}
+
+/** Decode-at-size and re-encode through a canvas. Web only. */
+async function resizeInBrowser(picked: PickedInvoiceLogo, fit: LogoFit): Promise<NormalisedLogo> {
+  const response = await fetch(picked.uri);
+  if (!response.ok) throw new Error("the image could not be read");
+  const blob = await response.blob();
+
+  let source: ImageBitmap | HTMLImageElement | null = null;
+  if (typeof createImageBitmap === "function") {
+    try {
+      // resizeWidth/resizeHeight make the browser downscale during decode. This is
+      // the two-argument overload (image + options); the six-argument form takes
+      // a source rectangle instead.
+      source = await createImageBitmap(blob, {
+        resizeWidth: fit.width,
+        resizeHeight: fit.height,
+        resizeQuality: "high",
+      });
+    } catch {
+      source = null;
+    }
+  }
+  if (!source) {
+    const url = URL.createObjectURL(blob);
+    try {
+      source = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("the image could not be decoded"));
+        image.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  const canvas = document.createElement("canvas");
+  // Exactly the fit size, never the source size: this canvas is the one that has
+  // to fit inside the browser's area limit.
+  canvas.width = fit.width;
+  canvas.height = fit.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("this browser could not provide a 2D canvas");
+  // Nothing is filled in first, so PNG alpha composites onto transparent rather
+  // than onto black. That is the whole reason a logo's background stays clear.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source as CanvasImageSource, 0, 0, fit.width, fit.height);
+  if (typeof (source as ImageBitmap).close === "function") (source as ImageBitmap).close();
+
+  const isPng = picked.contentType === "image/png";
+  const out = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (result) => (result ? resolve(result) : reject(new Error("the browser produced no image"))),
+      picked.contentType,
+      isPng ? undefined : 0.92
+    );
+  });
+
+  return {
+    bytes: new Uint8Array(await out.arrayBuffer()),
+    width: fit.width,
+    height: fit.height,
+  };
+}
+
+/** Resample through the Expo image module. Native only. */
+async function resizeOnDevice(picked: PickedInvoiceLogo, fit: LogoFit): Promise<NormalisedLogo> {
+  const { manipulateAsync, SaveFormat } = await import("expo-image-manipulator");
+  const result = await manipulateAsync(
+    picked.uri,
+    // Both dimensions given, so the ratio is preserved by construction rather than
+    // left to the module to infer from one of them.
+    [{ resize: { width: fit.width, height: fit.height } }],
+    {
+      // Format follows the input: a PNG is re-encoded as a PNG so its alpha
+      // channel is still there for the renderer to turn into a soft mask.
+      format: picked.contentType === "image/png" ? SaveFormat.PNG : SaveFormat.JPEG,
+      // For PNG this is deflate effort, not quality — PNG stays lossless at any
+      // setting. 0.7 keeps a large flat-colour logo inside the 5 MB bucket.
+      compress: picked.contentType === "image/png" ? 0.7 : 0.92,
+    }
+  );
+  if (result.width !== fit.width || result.height !== fit.height) {
+    throw new Error(`the resize produced ${result.width} x ${result.height}, expected ${fit.width} x ${fit.height}`);
+  }
+  const { File } = await import("expo-file-system");
+  return { bytes: await new File(result.uri).bytes(), width: result.width, height: result.height };
+}
+
 /**
  * The storage object name for a logo.
  *
@@ -366,14 +523,33 @@ function storagePathFor(logoId: string, contentType: PickedInvoiceLogo["contentT
  * to the same RLS as the rest of the app: a worker token is refused by the
  * database, not merely hidden in the UI.
  */
-export async function addInvoiceLogo(picked: PickedInvoiceLogo, name: string): Promise<InvoiceLogo> {
+export async function addInvoiceLogo(
+  picked: PickedInvoiceLogo,
+  name: string,
+  onStatus?: LogoStatus
+): Promise<InvoiceLogo> {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Give the logo a name so you can tell it apart later.");
 
-  const bytes = await readLogoBytes(picked);
+  /* Normalized BEFORE the row is written, because pixel_width / pixel_height on
+     that row must describe the file that is actually stored. Writing the
+     original size here would leave the library claiming a 16667 x 16667 logo
+     that no longer exists, and every layout that trusts those numbers — the
+     picker's aspect ratio, the header placement — would be wrong. */
+  const fit = fitLogoWithinLimits(picked.width, picked.height);
+  const normalised = await normaliseLogoImage(picked, fit, onStatus);
+
+  const bytes = normalised ? normalised.bytes : await readLogoBytes(picked);
+  const storedWidth = normalised ? normalised.width : picked.width;
+  const storedHeight = normalised ? normalised.height : picked.height;
+
   if (bytes.length === 0) throw new Error("That image is empty.");
   if (bytes.length > INVOICE_LOGO_MAX_BYTES) {
-    throw new Error("That image is larger than 5 MB. Please choose a smaller one.");
+    throw new Error(
+      normalised
+        ? "That image is still larger than 5 MB after resizing. Please choose a smaller one."
+        : "That image is larger than 5 MB. Please choose a smaller one."
+    );
   }
 
   const { data: userData } = await supabase.auth.getUser();
@@ -392,8 +568,8 @@ export async function addInvoiceLogo(picked: PickedInvoiceLogo, name: string): P
       // another logo's image.
       storage_path: "",
       file_name: null,
-      pixel_width: picked.width,
-      pixel_height: picked.height,
+      pixel_width: storedWidth,
+      pixel_height: storedHeight,
       content_type: picked.contentType,
       byte_size: bytes.length,
       created_by: userData.user?.id ?? null,

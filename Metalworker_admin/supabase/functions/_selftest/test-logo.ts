@@ -26,6 +26,15 @@ import { readXlsx } from "../process-bill-upload/_shared/xlsx.ts";
 import { parseBills, COPY_LABEL, COPY_ORDER, type BillCopy } from "../process-bill-upload/_shared/parseBill.ts";
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
 import { decodePdfImage, deflate } from "../process-bill-upload/_shared/pdfImage.ts";
+// The client's own fit function, imported rather than re-implemented: a test that
+// restates the geometry it is checking proves only that the restatement is
+// self-consistent. This file has no imports from `src/`, so it is safe to load
+// under bare Node.
+import {
+  fitLogoWithinLimits,
+  INVOICE_LOGO_MAX_EDGE,
+  INVOICE_LOGO_MAX_PIXELS,
+} from "../../../src/types/invoiceLogo.ts";
 
 const REPO = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../..");
 
@@ -740,6 +749,206 @@ console.log("\n7b. the migration's statements run in an order Postgres accepts")
   check(
     !/ON\s+(public\.)?bills\s*\(/i.test(earlyIdx),
     "nothing indexes bills on a logo column before the ALTER adds it",
+  );
+}
+
+console.log("\n8. the upload fit, and the embed that resolves the logo<->bills relation");
+/* Two live UI failures, and one of them was a latent trap rather than a typo.
+
+   THE EMBED. `fetchInvoiceLogos` asked for `bills!bills_logo_id_idx(count)` — an
+   INDEX name as the relationship hint. PostgREST will accept an index name there,
+   but only an index it can read as a relationship, and `bills_logo_id_idx` is
+   PARTIAL (`WHERE logo_id IS NOT NULL`). So no relationship exists to be found and
+   the request fails with "Could not find a relationship between 'invoice_logos'
+   and 'bills' in the schema cache" — a message that reads like stale metadata and
+   is not. `NOTIFY pgrst, 'reload schema'` cannot fix it. The hint has to be the
+   constraint name, `bills_logo_id_fkey`, which is what the other query in the same
+   file already uses successfully.
+
+   THE FIT. `fitLogoWithinLimits` is exercised directly below, because the
+   geometry is the part that silently produces an unprintable logo if it is wrong. */
+{
+  const adminSvc = readRepo("Metalworker_admin/src/services/invoiceLogos.ts");
+  const desktopSvc = readRepo("Metalworker_desktop/src/services/invoiceLogos.ts");
+  const types = readRepo("Metalworker_admin/src/types/invoiceLogo.ts");
+
+  for (const [label, svc] of [
+    ["Metalworker_admin", adminSvc],
+    ["Metalworker_desktop", desktopSvc],
+  ] as const) {
+    check(
+      /bills!bills_logo_id_fkey\(count\)/.test(svc),
+      `${label} embeds the count through the foreign key, not the index`,
+    );
+    check(
+      !/bills!bills_logo_id_idx\(/.test(svc),
+      `${label} no longer names the partial index as a relationship hint`,
+    );
+    check(
+      /!bills_logo_id_fkey\(/.test(svc),
+      `${label} keeps the working bills-side embed intact`,
+    );
+  }
+
+  /* The real function, not a description of it. */
+  check(typeof fitLogoWithinLimits === "function", "fitLogoWithinLimits is importable");
+
+  const within = (w: number, h: number) => w <= 3000 && h <= 3000 && w * h <= 4_000_000;
+
+  // The reported case, verbatim.
+  const sq = fitLogoWithinLimits(16667, 16667);
+  check(sq.resized, "a 16667 x 16667 logo is resized");
+  check(within(sq.width, sq.height), `16667 x 16667 fits inside both limits`, `${sq.width} x ${sq.height}`);
+  check(
+    sq.width === sq.height,
+    "a square stays square — the aspect ratio is preserved exactly",
+    `${sq.width} x ${sq.height}`,
+  );
+  // 3000 x 3000 would be 9,000,000 pixels and be refused by pdfImage.ts:385. The
+  // whole point of taking the smaller scale.
+  check(
+    !(sq.width === 3000 && sq.height === 3000),
+    "the fit does not stop at the 3000px edge and blow the pixel cap",
+  );
+
+  // Aspect ratio is preserved, not stretched, for awkward shapes.
+  for (const [w, h] of [
+    [16667, 5000],
+    [5000, 16667],
+    [4001, 2500],
+    [3001, 1],
+  ] as const) {
+    const fit = fitLogoWithinLimits(w, h);
+    const before = w / h;
+    const after = fit.width / fit.height;
+    check(
+      fit.resized && within(fit.width, fit.height),
+      `${w} x ${h} is resized inside both limits`,
+      `${fit.width} x ${fit.height}`,
+    );
+    check(
+      Math.abs(before - after) / before < 0.002,
+      `${w} x ${h} keeps its aspect ratio (not stretched)`,
+      `relative error ${(Math.abs(before - after) / before).toExponential(2)}`,
+    );
+  }
+
+  /* Aspect ratio CANNOT be preserved past MAX_EDGE:1, and the edge limit has to
+     win because it is the one the renderer enforces. A 12000 x 3 logo is 4000:1;
+     at 3000px wide its height would be 0.75px, so it floors to 1 and the ratio
+     is distorted. Asserted explicitly rather than left out, because "preserves
+     aspect ratio" is otherwise read as unconditional and is not. */
+  const thin = fitLogoWithinLimits(12000, 3);
+  check(thin.width === 3000, "a 4000:1 logo still obeys the edge limit", `${thin.width} x ${thin.height}`);
+  check(thin.height === 1, "its height floors to 1 rather than 0", `${thin.height}`);
+  check(
+    INVOICE_LOGO_MAX_EDGE / 12000 < 1 / 3,
+    "and that case is genuinely unrepresentable, not a rounding bug",
+    `3000/12000 = ${(INVOICE_LOGO_MAX_EDGE / 12000).toFixed(4)} < 1/3`,
+  );
+
+  // Never upscales.
+  for (const [w, h] of [
+    [800, 600],
+    [1, 1],
+    [3000, 1000],
+    [1999, 1999],
+  ] as const) {
+    const fit = fitLogoWithinLimits(w, h);
+    check(
+      !fit.resized && fit.width === w && fit.height === h,
+      `${w} x ${h} is passed through untouched`,
+      `${fit.width} x ${fit.height}`,
+    );
+  }
+
+  // Boundary inputs: rounding must not push a pixel back over the cap.
+  for (const [w, h] of [
+    [2001, 2000],
+    [2000, 2001],
+    [2828, 2828],
+    [3000, 1333],
+    [1, 4_000_000],
+  ] as const) {
+    const fit = fitLogoWithinLimits(w, h);
+    check(
+      within(fit.width, fit.height),
+      `${w} x ${h} cannot land back over a limit after flooring`,
+      `${fit.width} x ${fit.height} = ${fit.width * fit.height} px`,
+    );
+  }
+
+  /* The stored dimensions must describe the file, which is what the renderer and
+     every layout read. */
+  check(
+    /pixel_width: storedWidth[\s\S]{0,40}pixel_height: storedHeight/.test(adminSvc),
+    "the admin row records the normalized size, not the original",
+  );
+  check(
+    /pixel_width: storedWidth[\s\S]{0,40}pixel_height: storedHeight/.test(desktopSvc),
+    "the desktop row records the normalized size, not the original",
+  );
+
+  /* A logo already inside the limits must not be re-encoded: that would cost
+     quality and, for a PNG, is a second chance to lose the alpha channel. */
+  check(
+    /if \(!fit\.resized\) return null;/.test(adminSvc) && /if \(!fit\.resized\) return null;/.test(desktopSvc),
+    "an in-limit image skips the resize entirely in both apps",
+  );
+  check(
+    /picked\.file : |: picked\.file/.test(desktopSvc) || /normalised\.blob : picked\.file/.test(desktopSvc),
+    "the desktop uploads the original File when no resize is needed",
+  );
+  check(
+    /normalised\.bytes : await readLogoBytes\(picked\)/.test(adminSvc),
+    "the admin uploads the original bytes when no resize is needed",
+  );
+
+  /* Transparency: the canvas must not be filled before drawing. */
+  for (const [label, svc] of [
+    ["Metalworker_admin", adminSvc],
+    ["Metalworker_desktop", desktopSvc],
+  ] as const) {
+    const hasFill = /fillRect|fillStyle\s*=/.test(svc);
+    check(!hasFill, `${label} never fills the canvas, so PNG alpha survives`);
+  }
+  check(
+    /picked\.contentType === "image\/png" \? SaveFormat\.PNG : SaveFormat\.JPEG/.test(adminSvc),
+    "the native re-encode keeps a PNG as a PNG",
+  );
+  check(/canvas\.width = fit\.width/.test(adminSvc) && /canvas\.width = fit\.width/.test(desktopSvc),
+    "the canvas is only ever the small fitted size, never the source size");
+
+  /* The limits the fit obeys must be the renderer's, not a local guess. */
+  const decoder = readRepo(
+    "Metalworker_admin/supabase/functions/process-bill-upload/_shared/pdfImage.ts",
+  );
+  check(/const MAX_EDGE = 3000;/.test(decoder), "the renderer still caps an edge at 3000");
+  check(/const MAX_PIXELS = 4_000_000;/.test(decoder), "the renderer still caps at 4,000,000 pixels");
+  check(
+    /export const INVOICE_LOGO_MAX_EDGE = 3000;/.test(types) &&
+      /export const INVOICE_LOGO_MAX_PIXELS = 4_000_000;/.test(types),
+    "the client caps match the renderer's, so a fit cannot produce an unprintable logo",
+  );
+
+  /* The UI must say what happened rather than fail silently. */
+  for (const [label, file] of [
+    ["Metalworker_admin", "Metalworker_admin/src/app/invoice-logos.tsx"],
+    ["Metalworker_desktop", "Metalworker_desktop/src/pages/InvoiceLogos.tsx"],
+  ] as const) {
+    const screen = readRepo(file);
+    check(
+      /Resizing to/.test(screen) || /addInvoiceLogo\([^)]*setAddingStatus/.test(screen),
+      `${label} surfaces the resize while it happens`,
+    );
+  }
+  check(
+    /Resizing to \$\{fit\.width\} x \$\{fit\.height\}/.test(adminSvc),
+    "the admin message names the source and target sizes",
+  );
+  check(
+    /Resizing to \$\{fit\.width\} x \$\{fit\.height\}/.test(desktopSvc),
+    "the desktop message names the source and target sizes",
   );
 }
 

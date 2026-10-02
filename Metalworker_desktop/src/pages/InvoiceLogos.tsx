@@ -70,6 +70,7 @@ export default function InvoiceLogosPage() {
 
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
+  const [addingStatus, setAddingStatus] = useState<string | null>(null);
 
   /** The logo being renamed, held as the target so the dialog can name it. */
   const [renameTarget, setRenameTarget] = useState<InvoiceLogo | null>(null);
@@ -148,15 +149,25 @@ export default function InvoiceLogosPage() {
 
   async function handleAdd(file: File) {
     setAdding(true);
+    setAddingStatus(null);
     try {
       const picked: PickedInvoiceLogo = await pickInvoiceLogo(file);
-      const created = await addInvoiceLogo(picked, picked.name);
+      const created = await addInvoiceLogo(picked, picked.name, setAddingStatus);
       setLogos((prev) => [created, ...prev]);
-      toast.success(`Added "${created.name}" to the logo library.`);
+      /* A logo that had to be resized is worth saying out loud: the admin chose a
+         file at one size and the library now holds a different one. */
+      const resized = created.pixel_width !== picked.width || created.pixel_height !== picked.height;
+      toast.success({
+        title: `Added "${created.name}" to the logo library.`,
+        description: resized
+          ? `Resized from ${picked.width} x ${picked.height} to ${created.pixel_width} x ${created.pixel_height} so it can be printed.`
+          : undefined,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "That logo could not be added.");
     } finally {
       setAdding(false);
+      setAddingStatus(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -296,6 +307,11 @@ export default function InvoiceLogosPage() {
             {adding ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
             {adding ? "Adding…" : "Add logo"}
           </button>
+          {/* Resizing a large logo takes a moment and would otherwise look like a
+              hung button. The exact size is in the message, because "it got
+              smaller" without saying how much is not something an admin can
+              verify. */}
+          {addingStatus && <p className="text-xs text-secondary">{addingStatus}</p>}
         </div>
       </div>
 

@@ -62,6 +62,7 @@ export default function InvoiceLogosScreen() {
   const [search, setSearch] = useState("");
 
   const [adding, setAdding] = useState(false);
+  const [addingStatus, setAddingStatus] = useState<string | null>(null);
 
   const [renameTarget, setRenameTarget] = useState<InvoiceLogo | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -110,16 +111,25 @@ export default function InvoiceLogosScreen() {
 
   async function handleAdd() {
     setAdding(true);
+    setAddingStatus(null);
     try {
       const picked = await pickInvoiceLogo();
       /* Cancelling the system picker is not an error and gets no message —
          returning silently is what makes cancelling feel like cancelling. */
       if (!picked) return;
 
-      const created = await addInvoiceLogo(picked, picked.name);
+      const created = await addInvoiceLogo(picked, picked.name, setAddingStatus);
       setLogos((prev) => [created, ...prev]);
       setSearch("");
-      notify(`Added "${created.name}" to the logo library.`);
+      /* A logo that had to be resized is worth saying out loud: the admin chose a
+         file at one size and the library now holds a different one. */
+      const stored = `${created.pixel_width} x ${created.pixel_height}`;
+      notify(
+        `Added "${created.name}" to the logo library.`,
+        created.pixel_width === picked.width && created.pixel_height === picked.height
+          ? undefined
+          : `Resized from ${picked.width} x ${picked.height} to ${stored} so it can be printed.`
+      );
     } catch (err) {
       notify(
         "That logo could not be added.",
@@ -127,6 +137,7 @@ export default function InvoiceLogosScreen() {
       );
     } finally {
       setAdding(false);
+      setAddingStatus(null);
     }
   }
 
@@ -259,6 +270,11 @@ export default function InvoiceLogosScreen() {
           onPress={() => void handleAdd()}
           loading={adding}
         />
+
+        {/* Resizing a large logo takes a moment and would otherwise look like a
+            hung button. The exact size is in the message, because "it got smaller"
+            without saying how much is not something an admin can verify. */}
+        {addingStatus ? <Text style={styles.statusText}>{addingStatus}</Text> : null}
 
         {logos.length > 3 ? (
           <Input
@@ -497,6 +513,11 @@ const createStyles = (theme: AppTheme) =>
     dialogTitle: { color: theme.colors.text, fontSize: theme.textSizes.lg, fontWeight: "700" },
     dialogActions: { flexDirection: "row", gap: theme.spacing.sm, marginTop: theme.spacing.xs },
     flexButton: { flex: 1 },
+
+    statusText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.sm,
+    },
     grid: { gap: theme.spacing.md },
     card: {
       backgroundColor: theme.colors.surface,

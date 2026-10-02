@@ -50,11 +50,12 @@ import type {
   BillLogoRef,
   BillLogoState,
   InvoiceLogo,
+  LogoFit,
 } from "../types/invoiceLogo";
 import {
+  fitLogoWithinLimits,
   INVOICE_LOGO_MAX_BYTES,
   INVOICE_LOGO_MAX_EDGE,
-  INVOICE_LOGO_MAX_PIXELS,
   INVOICE_LOGO_MIME_TYPES,
 } from "../types/invoiceLogo";
 
@@ -86,7 +87,14 @@ const SIGNED_URL_TTL_SECONDS = 120;
 export async function fetchInvoiceLogos(): Promise<InvoiceLogo[]> {
   const { data, error } = await supabase
     .from(LOGOS)
-    .select("*, bills!bills_logo_id_idx(count)")
+    // The hint MUST be the foreign key's name. PostgREST accepts an index name
+  // here, but only an index it can read as a relationship — and
+  // `bills_logo_id_idx` is PARTIAL (`WHERE logo_id IS NOT NULL`), so no
+  // relationship can be inferred from it and the request fails with
+  // "Could not find a relationship between 'invoice_logos' and 'bills'". That
+  // failure is not stale cache; reloading the schema does not fix it. The
+  // constraint created by `ADD COLUMN ... REFERENCES` is `bills_logo_id_fkey`.
+  .select("*, bills!bills_logo_id_fkey(count)")
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
 
@@ -247,14 +255,11 @@ export async function pickInvoiceLogo(file: File): Promise<PickedInvoiceLogo> {
   }
 
   const { width, height } = await readImageSize(file);
-  if (width > INVOICE_LOGO_MAX_EDGE || height > INVOICE_LOGO_MAX_EDGE) {
-    throw new Error(
-      `That image is ${width} x ${height}. A logo must be at most ${INVOICE_LOGO_MAX_EDGE} pixels on each side.`
-    );
-  }
-  if (width * height > INVOICE_LOGO_MAX_PIXELS) {
-    throw new Error("That image has too many pixels to print on an invoice. Please choose a smaller one.");
-  }
+  /* Oversized is no longer refused. It is resized on the way in, by
+     `addInvoiceLogo` — see `fitLogoWithinLimits` for why the fit is bounded by
+     the pixel cap and not just the edge. The original size stays on `picked`,
+     because that is what the confirmation describes and what the normalized
+     size is measured against. */
 
   return {
     name: deriveLogoName(file.name),
@@ -306,6 +311,115 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
     throw new Error("That image could not be read. It may be damaged — please choose another file.");
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+/** Progress text for a long upload, so a resize is never a silent pause. */
+export type LogoStatus = (message: string) => void;
+
+interface NormalisedLogo {
+  /* A Blob rather than bytes, because this app only ever hands the result
+     straight back to `storage.upload`, which accepts a Blob. Keeping it as a Blob
+     avoids a needless round trip through a Uint8Array — and avoids the cast that
+     `new Blob([uint8])` needs, since Blob does not accept a Uint8Array that
+     might be backed by a SharedArrayBuffer. */
+  blob: Blob;
+  width: number;
+  height: number;
+}
+
+/**
+ * Resample an oversized logo down to something the PDF renderer will accept.
+ *
+ * WHY THE FIT IS NOT JUST "MAKE THE LONG EDGE 3000"
+ * `pdfImage.ts` refuses an image if EITHER side exceeds 3000px OR the total
+ * exceeds 4,000,000 pixels. Those are different constraints and the second binds
+ * first for most shapes — 3000 x 3000 is 9,000,000 pixels, so fitting the edge
+ * alone would upload an image the renderer then refuses on somebody's invoice.
+ * `fitLogoWithinLimits` takes the smaller of the two scales.
+ *
+ * `createImageBitmap` is asked to decode AT the target size, which is what makes
+ * the case this exists for survivable: a 16667 x 16667 logo is 278 megapixels,
+ * over 1 GB decoded as RGBA, and past the 16384-pixel limit every browser
+ * enforces on a canvas. Resampling inside `createImageBitmap` avoids
+ * materialising the full-size bitmap at all, and the canvas is only ever the
+ * small one. Older Safari ignores the resize options and decodes at full size —
+ * the canvas draw still produces the right output, it just costs more memory.
+ *
+ * Returns null when the image is already inside the limits, and the caller then
+ * uploads the original File untouched: no re-encode, no quality loss, and no
+ * change to the path that is already working.
+ */
+async function normaliseLogoImage(
+  picked: PickedInvoiceLogo,
+  fit: LogoFit,
+  onStatus?: LogoStatus
+): Promise<NormalisedLogo | null> {
+  if (!fit.resized) return null;
+
+  onStatus?.(
+    `Image is ${picked.width} x ${picked.height}. Resizing to ${fit.width} x ${fit.height} to fit the ${INVOICE_LOGO_MAX_EDGE}px limit...`
+  );
+
+  let source: ImageBitmap | HTMLImageElement | null = null;
+  try {
+    if (typeof createImageBitmap === "function") {
+      try {
+        // The two-argument overload (image + options). The six-argument form takes a
+        // source rectangle instead and would ignore these.
+        source = await createImageBitmap(picked.file, {
+          resizeWidth: fit.width,
+          resizeHeight: fit.height,
+          resizeQuality: "high",
+        });
+      } catch {
+        source = null;
+      }
+    }
+    if (!source) {
+      const url = URL.createObjectURL(picked.file);
+      try {
+        source = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error("the image could not be decoded"));
+          image.src = url;
+        });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    const canvas = document.createElement("canvas");
+    // Exactly the fit size, never the source size: this canvas is the one that
+    // has to fit inside the browser's area limit.
+    canvas.width = fit.width;
+    canvas.height = fit.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("this browser could not provide a 2D canvas");
+    // Nothing is filled in first, so PNG alpha composites onto transparent
+    // rather than onto black. That is the whole reason a logo keeps a clear
+    // background.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(source as CanvasImageSource, 0, 0, fit.width, fit.height);
+    if (typeof (source as ImageBitmap).close === "function") (source as ImageBitmap).close();
+
+    const out = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (result) => (result ? resolve(result) : reject(new Error("the browser produced no image"))),
+        picked.contentType,
+        picked.contentType === "image/png" ? undefined : 0.92
+      );
+    });
+
+    return { blob: out, width: fit.width, height: fit.height };
+  } catch (err) {
+    throw new Error(
+      `That image is ${picked.width} x ${picked.height} and could not be resized in this browser` +
+        ` (${err instanceof Error ? err.message : "unknown error"}). ` +
+        "A logo under 3000 x 3000 pixels can still be added directly."
+    );
   }
 }
 
@@ -380,9 +494,33 @@ function storagePathFor(logoId: string, contentType: PickedInvoiceLogo["contentT
  * to the same RLS as the rest of the app: a worker token is refused by the
  * database, not merely hidden in the UI.
  */
-export async function addInvoiceLogo(picked: PickedInvoiceLogo, name: string): Promise<InvoiceLogo> {
+export async function addInvoiceLogo(
+  picked: PickedInvoiceLogo,
+  name: string,
+  onStatus?: LogoStatus
+): Promise<InvoiceLogo> {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Give the logo a name so you can tell it apart later.");
+
+  /* Normalized BEFORE the row is written, because pixel_width / pixel_height on
+     that row must describe the file that is actually stored. Writing the original
+     size here would leave the library claiming a 16667 x 16667 logo that no longer
+     exists, and every layout that trusts those numbers — the picker's aspect
+     ratio, the header placement — would be wrong. */
+  const fit = fitLogoWithinLimits(picked.width, picked.height);
+  const normalised = await normaliseLogoImage(picked, fit, onStatus);
+  const uploadBody = normalised ? normalised.blob : picked.file;
+  const storedWidth = normalised ? normalised.width : picked.width;
+  const storedHeight = normalised ? normalised.height : picked.height;
+  const storedBytes = normalised ? normalised.blob.size : picked.file.size;
+
+  if (storedBytes > INVOICE_LOGO_MAX_BYTES) {
+    throw new Error(
+      normalised
+        ? "That image is still larger than 5 MB after resizing. Please choose a smaller one."
+        : "That image is larger than 5 MB. Please choose a smaller one."
+    );
+  }
 
   const { data: userData } = await supabase.auth.getUser();
   const now = new Date().toISOString();
@@ -400,10 +538,10 @@ export async function addInvoiceLogo(picked: PickedInvoiceLogo, name: string): P
       // another logo's image.
       storage_path: "",
       file_name: picked.file.name ?? null,
-      pixel_width: picked.width,
-      pixel_height: picked.height,
+      pixel_width: storedWidth,
+      pixel_height: storedHeight,
       content_type: picked.contentType,
-      byte_size: picked.byteSize,
+      byte_size: storedBytes,
       created_by: userData.user?.id ?? null,
       created_at: now,
       updated_at: now,
@@ -426,7 +564,7 @@ export async function addInvoiceLogo(picked: PickedInvoiceLogo, name: string): P
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
-    .upload(path, picked.file, {
+    .upload(path, uploadBody, {
       contentType: picked.contentType,
       // Not an upsert. Every logo gets a fresh database-generated id, so this path
       // has never existed before and cannot already hold an object. `upsert: true`

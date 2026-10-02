@@ -39,6 +39,67 @@ export const INVOICE_LOGO_MAX_BYTES = 5 * 1024 * 1024;
 export const INVOICE_LOGO_MAX_EDGE = 3000;
 export const INVOICE_LOGO_MAX_PIXELS = 4_000_000;
 
+/** The size a logo should be stored at, and whether it had to be changed. */
+export interface LogoFit {
+  width: number;
+  height: number;
+  /** True only when the source exceeded a limit and must be resampled. */
+  resized: boolean;
+}
+
+/**
+ * The largest size an image can be stored at without being unprintable.
+ *
+ * WHY BOTH LIMITS, AND WHY THE SMALLER ONE OFTEN WINS
+ * The PDF renderer refuses an image outright if either limit is exceeded
+ * (`pdfImage.ts`: `width > MAX_EDGE || height > MAX_EDGE` and
+ * `width * height > MAX_PIXELS`). Those are independent, and the pixel cap is the
+ * one that bites: 3000 x 3000 is 9,000,000 pixels, so a logo fitted to the EDGE
+ * limit alone would still be rejected at re-print time. For a square logo the
+ * pixel cap is the real constraint and caps it at 2000 x 2000.
+ *
+ * A resize therefore has to satisfy the smaller of the two, which is what taking
+ * the minimum of the two scales does. Checking only the edge would produce an
+ * image that uploads happily and then cannot be printed — the worst outcome,
+ * because the failure surfaces on someone's invoice rather than at upload.
+ *
+ * Never upscales: both scales are clamped to 1, so a logo already inside the
+ * limits is passed through untouched rather than being resampled for nothing.
+ *
+ * The one thing this cannot do is preserve the aspect ratio of an image more
+ * extreme than MAX_EDGE:1 — a 12000 x 3 logo is 4000:1, and at 3000px wide its
+ * height would be 0.75px. There is no integer that works, so the edge limit wins
+ * and the height floors to 1. The limit is the renderer's rule; the ratio is a
+ * preference, and it yields where they conflict.
+ *
+ * Dimensions are floored rather than rounded. Rounding can push a boundary
+ * input one pixel back over the cap — 2001 x 2000 scales to 2001 x 2000 again
+ * after rounding, which is 4,002,000 pixels — and the loop below catches that
+ * residue. Flooring costs at most one pixel of aspect accuracy, and the stored
+ * dimensions are the file's real dimensions, so the renderer places it exactly.
+ */
+export function fitLogoWithinLimits(width: number, height: number): LogoFit {
+  const w = Math.max(1, Math.floor(width));
+  const h = Math.max(1, Math.floor(height));
+
+  const byEdge = Math.min(1, INVOICE_LOGO_MAX_EDGE / Math.max(w, h));
+  const byPixels = Math.min(1, Math.sqrt(INVOICE_LOGO_MAX_PIXELS / (w * h)));
+  const scale = Math.min(byEdge, byPixels);
+
+  if (scale >= 1) return { width: w, height: h, resized: false };
+
+  let outW = Math.max(1, Math.floor(w * scale));
+  let outH = Math.max(1, Math.floor(h * scale));
+
+  // Bounded: the floor above leaves at most a pixel or two to trim.
+  while (outW * outH > INVOICE_LOGO_MAX_PIXELS && (outW > 1 || outH > 1)) {
+    if (outW >= outH) outW -= 1;
+    else outH -= 1;
+  }
+
+  return { width: outW, height: outH, resized: true };
+}
+
 /** One row of the library, as the screens consume it. */
 export interface InvoiceLogo {
   id: string;
