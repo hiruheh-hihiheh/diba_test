@@ -52,8 +52,8 @@ output and no service-role key ever reaches a client.
 | Average before tax | — | — | 24,543.50 |
 
 Copy spans derived dynamically: sheet `274 L` → original 1-48, duplicate 49-96, triplicate
-97-144. Sheet `292` → 1-50, 51-100, 101-149. Invoice numbers `SEW/274/2026-27` and
-`SEW/292/2026-27`, resolved to `Service Order No.:` and `Purchase Order No.:` respectively
+97-144. Sheet `292` → 1-50, 51-100, 101-149. Invoice numbers `FIX/274/2026-27` and
+`FIX/292/2026-27`, resolved to `Service Order No.:` and `Purchase Order No.:` respectively
 — the label in the sheet, not a hardcoded column.
 
 ---
@@ -141,7 +141,7 @@ recalculation is stale still produces the figures the accountant saw.
 "Bill", colliding with the existing photo-group `bill_group`. `bill_group` is now "Bill
 Group" and `bill` is "Bill", in both the filter chips and the badges.
 
-Folder label is `Bill • SEW/274/2026-27 • ₹15,635`. The money formatter is imported from
+Folder label is `Bill • FIX/274/2026-27 • ₹15,635`. The money formatter is imported from
 `services/bills` rather than reimplemented, so a bill looks identical in the folder list
 and on the Bills screen.
 
@@ -301,7 +301,7 @@ the deployed function is correct and is left alone.
 | `bills` rows | 274 L: 13,250.00 / 1,192.50 / 2,385.00 / 15,635.00 — 292: 35,837.00 / 3,225.33 / 6,450.66 / 42,288.00, round off 0.34 |
 | `.csv` rejected | "is not an Excel workbook", upload button disabled |
 | `reset()` (X) | picker returns, input remounts empty, no stale file |
-| Add 2 bills to a folder | folder item count 0 -> 2; labels `SEW/292/2026-27 • ₹42,288` and `SEW/274/2026-27 • ₹15,635`; badged **Bill**, distinct from the existing **Bill Group** |
+| Add 2 bills to a folder | folder item count 0 -> 2; labels `FIX/292/2026-27 • ₹42,288` and `FIX/274/2026-27 • ₹15,635`; badged **Bill**, distinct from the existing **Bill Group** |
 | `get_folder_bill_summary` via the app | 2 bills, 3, ₹49,087.00, ₹4,417.83, ₹4,417.83, ₹0.00, ₹8,835.66, ₹0.34, **₹57,923.00**, ₹28,961.50, 1.5, ₹24,543.50 — every acceptance figure |
 | Active-admin gate on the RPC | anon key rejected with `P0001 not_authenticated`; a function that does not exist returns `PGRST202`. The RPC exists and refuses non-admins. |
 | Re-verification after the fixes | admin `tsc` + `eslint` (0 problems) + `expo export` (`/bills` 21 KB) + `lint:edge`; desktop `tsc -b` + `lint` (53 = baseline, zero in bill files) + `build`; `npm run bills:selftest` all pass |
@@ -397,8 +397,8 @@ that the literal token `WITHMETAL` appears nowhere in any of the three files.
 edges, rule count, body end (`y=570.0` and `y=588.0`) and internal gaps all
 identical to before the change, which is the evidence that nothing reflowed.
 
-Rendered and inspected page by page: page 1 `SEW/274/2026-27` carries a `LABOUR
-JOB` badge, page 2 `SEW/292/2026-27` carries `WITH METAL`, both inside the heading
+Rendered and inspected page by page: page 1 `FIX/274/2026-27` carries a `LABOUR
+JOB` badge, page 2 `FIX/292/2026-27` carries `WITH METAL`, both inside the heading
 box, no overlap, no clipping, table/totals/words/bank/signatures/footer and the
 `ORIGINAL` marker unchanged, and page 2 still resolves its own `Purchase Order No`
 row.
@@ -428,8 +428,8 @@ each with its own `Date:` cell:
 
 | row | label | value | Date |
 | --- | --- | --- | --- |
-| 9 | `INVOICE NO.:` | `SEW/301/2026-27` | 23/09/2026 |
-| 10 | `Our Challan No.:` | `SEW/301/2026-27` | 23/09/2026 |
+| 9 | `INVOICE NO.:` | `FIX/301/2026-27` | 23/09/2026 |
+| 10 | `Our Challan No.:` | `FIX/301/2026-27` | 23/09/2026 |
 | 11 | `Your Challan No.:` | **blank** | **blank** |
 | 12 | `Purchase Order No.:` | `WT/PO/TRM/600317` | 22/09/2026 |
 | 13 | `Eway Bill No.:` | **blank** | **blank** |
@@ -542,7 +542,7 @@ layout audit. All five pass on **both** `SAMPLE.xlsx` and `BILL 301 TO.xlsx`.
 
 ### Verified by reading the rendered output
 
-Page 1 (`SEW/301`, WITHMETAL) shows the `WITH METAL` badge inside the heading box;
+Page 1 (`FIX/301`, WITHMETAL) shows the `WITH METAL` badge inside the heading box;
 the reference grid with all six source rows including blank `Your Challan No.`,
 `Your Challan Date`, `Eway Bill No.` and `Eway Bill Date`; the two-item table with
 HSN `82073000`, UOM `NOS` and both continuation rows wrapped onto their own
@@ -601,11 +601,11 @@ documents.
 - `bills` gains `original_pdf_path`, `duplicate_pdf_path`, `triplicate_pdf_path`
   (migration 0007), and each is a one-invoice document named
   `<upload-id>/<bill-id>_<token>_original.pdf` where `<token>` is the invoice
-  number — `SEW_301_2026-27`. The bill id is in the path, so two invoices cannot
+  number — `FIX_301_2026-27`. The bill id is in the path, so two invoices cannot
   collide whatever the token does.
 
 `token` keeps hyphens and turns separators into underscores, because a document
-called `SEW_301_2026-27_original.pdf` is one a person can recognise. Slashes get
+called `FIX_301_2026-27_original.pdf` is one a person can recognise. Slashes get
 their own pass so they can never create a nested object path.
 
 ### Write order changed, and why
@@ -690,9 +690,9 @@ New `test-per-bill.ts`, plus the existing five:
   nothing may resolve to it;
 - layout audit clean on all three aggregates.
 
-`node supabase/functions/_selftest/render-one.ts "SEW/301/2026-27"` writes one
+`node supabase/functions/_selftest/render-one.ts "FIX/301/2026-27"` writes one
 bill's three documents for inspection. The original is 10.6 KiB, **1 page**, and
-its footer reads `ORIGINAL | SEW/301/2026-27 | Page 1 of 1`.
+its footer reads `ORIGINAL | FIX/301/2026-27 | Page 1 of 1`.
 
 ### Checks
 
@@ -711,7 +711,7 @@ outstanding; tests 1-5, 9's data shape and 12 are covered above.
 
 ## P3.13 The labour invoice was losing its recipient, and a bill could not be corrected
 
-`BILL 301 TO.xlsx` and specifically `SEW/316/2026-27` exposed two separate problems:
+`BILL 301 TO.xlsx` and specifically `FIX/316/2026-27` exposed two separate problems:
 a real gap in the parser, and the absence of any way to fix a bill after import.
 Both are recorded here because the second one's design is the interesting part.
 
@@ -722,7 +722,7 @@ Both are recorded here because the second one's design is the interesting part.
     r.colCells(leftCol, recipientHit.row + 1, invoiceHit.row - 1)[0]?.text
 
 which assumes the recipient block and `INVOICE NO.:` sit on different rows. In this
-template they sit on the SAME row — "M/s. Hawkins Cookers Ltd.," is column B of the
+template they sit on the SAME row — "M/s. Example Cookers Ltd.," is column B of the
 row whose column D reads `INVOICE NO.:` — so the range was always empty and the
 company name and address were dropped from every single invoice. The comment beside
 it said the block "is optional", which was true of `SAMPLE.xlsx` and false of the
@@ -735,7 +735,7 @@ as separate entries so the invoice prints the line breaks the workbook gave it.
 
 ### 2. The transporter was in the wrong box
 
-"Transporter: VEHICLE / Vehicle No.: MH 04 JQ 4172" was drawn inside the Details of
+"Transporter: VEHICLE / Vehicle No.: MH 00 EX 0000" was drawn inside the Details of
 Recipient box on the left. The workbook prints it on the right, under the reference
 table, and that is where it now goes — as a labelled pair below the grid, in the same
 column and row rhythm, so it reads as metadata attached to the references rather than
@@ -778,7 +778,7 @@ one existed. `copyDisagreements` is it, and it is what found sheet 320.
 `_selftest/audit.ts` carried a retyped copy of the Helvetica advance widths, and the
 copy was missing `/` and `-`, so both fell through to the 556 default instead of
 their real 278 and 333. Every invoice on this template contains a slash and a hyphen
-— "SEW/316/2026-27", "28/09/2026" — so the auditor over-measured them by up to 7
+— "FIX/316/2026-27", "28/09/2026" — so the auditor over-measured them by up to 7
 points and reported phantom overlaps between adjacent runs. It now imports
 `fontMetrics.ts` rather than describing it twice, which makes that class of false
 positive impossible rather than merely unlikely.
@@ -878,7 +878,7 @@ duplicated in this codebase.
 Admin `tsc` 0, `eslint` 0, `expo export` ok, `lint:edge` 0. Desktop `tsc -b` 0,
 `lint` 53 = the pre-existing baseline with zero problems in any bill file, `build` ok.
 `MetalWorkerApp` untouched. `bills:selftest` green on both `SAMPLE.xlsx` and
-`BILL 301 TO.xlsx` — 7 suites. `SEW/316/2026-27` renders to three one-page documents,
+`BILL 301 TO.xlsx` — 7 suites. `FIX/316/2026-27` renders to three one-page documents,
 11.5 KiB each, all three layout audits clean.
 
 ### Not done here

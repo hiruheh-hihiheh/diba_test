@@ -20,8 +20,20 @@ global.FileReader = class FileReader {
   }
 };
 
+/* The workbook to parse is supplied by the developer. It is taken from the
+   command line (or WORKBOOK_PATH) so no machine-specific absolute path and no
+   customer filename is committed to the repository. */
+const WORKBOOK_PATH = process.argv[2] || process.env.WORKBOOK_PATH || "";
+
 async function runValidation() {
-  const filePath = 'E:\\\\dibesh all in one\\\\Hawkins-Jobs Status.xlsx';
+  if (!WORKBOOK_PATH) {
+    console.error(
+      'usage: npx tsx test_parser.ts <path-to-workbook.xlsx>\n' +
+      '   or: set WORKBOOK_PATH and run `npx tsx test_parser.ts`'
+    );
+    return;
+  }
+  const filePath = WORKBOOK_PATH;
   const buffer = fs.readFileSync(filePath);
   
   // Basic Sheet Inspection
@@ -73,7 +85,7 @@ async function runValidation() {
 
   // Parse Excel File (Production Parser)
   console.log("\n=== PRODUCTION PARSER RESULTS ===");
-  const file = new File([buffer], 'Hawkins-Jobs Status.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const file = new File([buffer], filePath, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   
   try {
     const result = await parseExcelFile(file);

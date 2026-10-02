@@ -155,8 +155,8 @@ export interface BillColumns {
  * One editable part of the bank block, keeping the label the invoice prints.
  *
  * The label is stored so that `label + value` reproduces the printed line exactly.
- * The template is inconsistent about the gap after the colon — "Bank Name: THE
- * FEDERAL BANK LTD" has one, "IFSC CODE:FDRL0001775" does not — and a renderer that
+ * The template is inconsistent about the gap after the colon — "Bank Name: EXAMPLE
+ * BANK LTD" has one, "IFSC CODE:EXAM0000001" does not — and a renderer that
  * reinserted its own separator would retype every bank line on every re-print.
  */
 export interface BillBankPart {

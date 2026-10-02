@@ -708,9 +708,9 @@ replaced by an obvious placeholder.
 `SAMPLE.xlsx` and `BILL 301 TO.xlsx` were originally real production workbooks
 and did carry the seller's name, both parties' GSTINs, the MSME registration, the
 bank name / branch / account number / IFSC, phone numbers, e-mail addresses, a
-postal address, vehicle registrations, and every invoice, purchase-order and
-challan number. Those values have been replaced in place; `test-fixture-hygiene.ts`
-enforces it.
+postal address, vehicle registrations, the place of supply, and every invoice,
+purchase-order, challan and e-way bill number. Those values have been replaced in
+place; `test-fixture-hygiene.ts` enforces it.
 
 **What is preserved and what is not.** Sheet names, sheet count, cell
 coordinates, every numeric value (amounts, quantities, rates, dates), the
@@ -720,20 +720,32 @@ copy blocks, the line items, the descriptions and the tax arithmetic are all
 IGST in the tax identity, so changing it would change the arithmetic under test,
 and a state name is not an identifier.
 
-**How it is enforced.** `test-fixture-hygiene.ts` inflates every member of each
-`.xlsx` — not just the cells, because the strings are deflated and a raw byte
-scan would pass vacuously — and requires every identifier-shaped value to be on
-an **allowlist** of placeholders. It also covers `docProps/core.xml`, which is
-not a cell at all and did carry the editing machine's user name. The suite
-verifies its own rules against synthetic samples, because a filter that cannot
-match is worse than no filter: it reads as protection.
+**How it is enforced, in two layers.**
 
-> ⚠️ **The real identifiers still appear in test and comment source**, as the
-> patterns the guard rejects and as worked examples in comments
-> (`_selftest/test-copies.ts`, `_selftest/test-fixture-hygiene.ts`, and doc
-> comments in `parseBill.ts`, `renderBill.ts`, `billDocument.ts`, `billEdit.ts`,
-> `types/bill.ts`, migration `0008`). The workbooks themselves are clean; the
-> source is not. See [Security notes](#security-notes).
+1. **A structural allowlist — the primary guard, and it names no real value.**
+   Every identity field of every bill in every workbook (`sellerName`,
+   `partyName`, `partyGstNo`, `vehicleNumber`, `placeOfSupply`, the address
+   lines, the bank name / branch / account number, the invoice number and every
+   reference row) must match an allowlist of placeholders. A real value pasted
+   back fails this check whether or not any substring rule exists.
+2. **A substring denylist, assembled at runtime.** Company names, bank names,
+   localities and cities have no recognisable *shape*, so they can only be
+   matched as text. Those few literals are re-joined from short fragments so no
+   complete identifier sits in the source.
+
+The suite inflates every member of each `.xlsx` — not just the cells, because the
+strings are deflated and a raw byte scan would pass vacuously — and covers
+`docProps/core.xml` and `xl/workbook.xml`, neither of which is a cell. It also
+proves its own rules fire, and asserts the character length of every
+re-joined fragment, because a fragment split that dropped a space produces a rule
+that can never match while its own probe, built from the same fragments, still
+passes. That is not hypothetical: a postal-locality rule once matched its two
+words run together, while the workbook had a space between them.
+
+> The e-way bill numbers are worth calling out, because they defeated the first
+> version of this guard. A GST e-way number is twelve digits printed as three
+> groups of four, so the spaces meant no 11-or-more-digit rule ever saw them.
+> They were found by the structural allowlist, not by a pattern.
 
 ---
 
@@ -767,21 +779,18 @@ These are real, verified limitations of the current repository.
 7. **Client parity is by convention, not enforced by tooling.** `Metalworker_desktop`
    additionally has `jobImport`, `jobImportParser` and `cloudinaryCleanup`, which
    the admin app does not.
-8. **Real customer identifiers remain in source outside the workbooks.** The
-   workbooks are clean, but the real counterparty company name, GSTINs, bank
-   details, phone numbers and e-mail addresses are still present as:
-   - guard patterns in `_selftest/test-copies.ts` and
-     `_selftest/test-fixture-hygiene.ts`;
-   - worked examples in doc comments across `parseBill.ts`, `renderBill.ts`,
-     `billDocument.ts`, `billEdit.ts`, `types/bill.ts` and migration `0008`;
-   - **a customer name in shipped desktop UI** — a download filename in
-     `src/pages/JobImport.tsx` and an input placeholder in
-     `src/pages/PhotoGroupsPage.tsx`;
-   - hardcoded local absolute paths to a real customer workbook in
-     `Metalworker_desktop/audit.js` and `Metalworker_desktop/test_parser.ts`.
+8. **The guard pattern itself is the last place real data is reconstructible.**
+   No complete real identifier now appears anywhere in the repository. Six short
+   fragment halves remain in `_selftest/test-fixture-hygiene.ts`, where they are
+   re-joined at runtime so the scanner can still catch the values it was written
+   for. That is defence against incidental disclosure — a `grep`, a code-search
+   UI, or a tool reading the tree casually — and it is **not** a secret store:
+   anyone determined can re-join four short strings.
 
-   The UI strings and hardcoded paths are the ones that matter if this repository
-   is ever published.
+   The real protection is the suite's primary check, which names no real value
+   at all: every identity field of every bill in every workbook must match an
+   allowlist of placeholders, so a pasted-back real value fails whether or not
+   any substring rule exists. See [Test fixtures](#test-fixtures).
 
 ---
 
@@ -804,11 +813,12 @@ These are real, verified limitations of the current repository.
   three committed workbooks are sanitised and `test-fixture-hygiene.ts` keeps them
   that way, so a new real workbook cannot be committed unnoticed.
 - **Sanitising a workbook is not the same as removing the data from the repository.**
-  The real counterparty name and identifiers still appear as *source text* — in the
-  guard patterns, in doc comments that use a real invoice as a worked example, and
-  in a customer name baked into desktop UI strings and a local absolute path. Those
-  are listed under [Known limitations](#known-limitations). If this repository is
-  ever made public, they need addressing too.
+  All three workbooks are sanitised and `test-fixture-hygiene.ts` keeps them that
+  way. Real identifiers that were baked into UI strings, local absolute paths and
+  doc comments have been replaced with placeholders. What remains is six fragment
+  halves inside the guard itself, described under
+  [Known limitations](#known-limitations) — enough to defeat a casual search of
+  the tree, not enough to be a secret.
 - **A committed secret is not removed by deleting it.** CI scans for
   credential-shaped strings, but rotation is the only real remedy if a key is ever
   exposed.

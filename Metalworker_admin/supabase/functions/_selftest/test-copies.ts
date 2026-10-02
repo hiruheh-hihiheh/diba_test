@@ -551,26 +551,30 @@ section("E. the fixture workbook and the real workbooks");
 
   /* No real business data may reach the repository through this fixture. This is
      asserted rather than trusted, because the generator is hand-edited and a
-     pasted-back real value would otherwise slip in unnoticed. */
+     pasted-back real value would otherwise slip in unnoticed.
+
+     These rules are SHAPE rules, so they name no real value: anything that looks
+     like a GST registration, an IFSC, a bank account number, a phone number or
+     an MSME id is rejected unless it is one of the placeholders. A pasted-back
+     real value fails even though this file has never heard of it.
+
+     The exhaustive check — which also covers the two production-layout
+     workbooks, the deflated string table and the document metadata — is
+     `test-fixture-hygiene.ts`. This is the local smoke test, not a substitute. */
   const allText = [...wb.sheets[0].cells.values()].map((c) => String(c.value)).join("\n");
-  const forbidden: [string, RegExp][] = [
-    ["seller name", /SAASTHA/i],
-    ["recipient name", /Hawkins/i],
-    ["seller GSTIN", /27AAMPE1857D2ZT/],
-    ["recipient GSTIN", /27AAACH1784M1Z9/],
-    ["MSME id", /UDYAM-MH-33-0054711/],
-    ["e-mail address", /saastha(01|enggworks2011)@/i],
-    ["phone number", /9969434432|9969142688/],
-    ["bank name", /FEDERAL BANK/i],
-    ["account number", /17750200004019/],
-    ["IFSC", /FDRL0001775/],
-    ["vehicle number", /JQ\s*4172/i],
-    ["invoice number", /SEW\/317/],
-    ["order number", /WT\/SO\/2602879/],
-    ["challan number", /WT\/OGC\/TR\/261199/],
+  const ALLOWED_GSTIN = new Set(["27AAAPE1234F1Z9", "27BBBCG5678N2Z4"]);
+  const shapeRules: [string, RegExp, Set<string> | null][] = [
+    ["GST registration", /\b\d{2}[A-Z]{5}\d{4}[A-Z]\dZ[A-Z0-9]\b/g, ALLOWED_GSTIN],
+    ["MSME id", /UDYAM[-\/][A-Z]{2}[-\/]\d+[-\/]\d+/g, new Set(["UDYAM-MH-00-0000001"])],
+    ["IFSC", /\b[A-Z]{4}0[A-Z0-9]{6}\b/g, new Set(["EXAM0000001"])],
+    ["bank account number", /\b\d{11,}\b/g, new Set(["00000000000"])],
+    ["phone number", /\b\d{10}\b/g, new Set(["9000000001", "9000000002"])],
+    ["consumer e-mail domain", /@gmail\.com/gi, null],
+    ["authoring local path", /C:\\Users\\/gi, null],
   ];
-  for (const [what, re] of forbidden) {
-    check(!re.test(allText), `fixture carries no real ${what}`);
+  for (const [what, pattern, allowed] of shapeRules) {
+    const found = (allText.match(pattern) ?? []).filter((v) => !allowed || !allowed.has(v));
+    check(found.length === 0, `fixture carries no unapproved ${what}`, [...new Set(found)].join(", "));
   }
 
   const { bills, skipped } = parseBills(wb.sheets);

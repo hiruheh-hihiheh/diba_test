@@ -500,13 +500,13 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
    * The company name and each ADDRESS LINE are separate entries, so the invoice
    * shows the address with the line breaks the workbook gave it:
    *
-   *     M/s. Hawkins Cookers Ltd.,
+   *     M/s. Example Cookers Ltd.,
    *     C-21,22 "U" Road,
-   *     Wagle Industrial Estate,
-   *     Thane - 400 604.
+   *     Example Industrial Estate,
+   *     Example City - 000 001.
    *
    * Joining them into one string and letting it wrap would be a different
-   * document — it would break in the middle of "Wagle Industrial Estate," and
+   * document — it would break in the middle of "Example Industrial Estate," and
    * would silently re-flow if the box were ever resized. A long line still wraps,
    * which is what the wrap pass below is for; it just prefers the source's breaks.
    */
@@ -1095,7 +1095,7 @@ const SUPPLIER_SIG_RE = /^\s*for\s+\S|proprietor|proprietorship|director|partner
 /**
  * Split the trailing annotations into prose and the supplier's signature block.
  *
- * The workbook carries "For SAASTHA ENGINEERING WORKS" and "(Proprietor)" as
+ * The workbook carries "For EXAMPLE ENGINEERING WORKS" and "(Proprietor)" as
  * free annotations rather than as signature lines, so without this they would be
  * printed twice: once in the notes and again under the supplier's rule.
  */

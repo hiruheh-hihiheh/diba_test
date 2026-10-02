@@ -501,7 +501,7 @@ export function BillEditScreen({
                 styles={styles}
                 value={draft.invoiceNo}
                 onChange={(v) => set("invoiceNo", v)}
-                placeholder="SEW/316/2026-27"
+                placeholder="INV-001/2026-27"
               />
               <Field label="Invoice date" styles={styles} value={draft.invoiceDate} onChange={(v) => set("invoiceDate", v)} placeholder="YYYY-MM-DD" />
               <Field label="Order number label" styles={styles} value={draft.orderNoLabel} onChange={(v) => set("orderNoLabel", v)} />

@@ -564,7 +564,7 @@ export default function BillEditModal({
               <TextInput value={draft.jobKind} onChange={(v) => set("jobKind", v)} placeholder="LABOUR JOB" />
             </Field>
             <Field label="Invoice number" hint="Required. Also names the downloaded PDF.">
-              <TextInput value={draft.invoiceNo} onChange={(v) => set("invoiceNo", v)} placeholder="SEW/316/2026-27" />
+              <TextInput value={draft.invoiceNo} onChange={(v) => set("invoiceNo", v)} placeholder="INV-001/2026-27" />
             </Field>
             <Field label="Invoice date">
               <TextInput type="date" value={isoDate(draft.invoiceDate)} onChange={(v) => set("invoiceDate", v)} />
@@ -610,7 +610,7 @@ export default function BillEditModal({
               <TextInput value={draft.recipientLabel} onChange={(v) => set("recipientLabel", v)} />
             </Field>
             <Field label="GST number">
-              <TextInput value={draft.partyGstNo} onChange={(v) => set("partyGstNo", v.toUpperCase())} placeholder="27AAACH1784M1Z9" />
+              <TextInput value={draft.partyGstNo} onChange={(v) => set("partyGstNo", v.toUpperCase())} placeholder="27AAACD5678E1Z9" />
             </Field>
             <Field label="Address" wide hint="One address line per line of this box.">
               <TextArea value={draft.partyAddress} onChange={(v) => set("partyAddress", v)} rows={4} />

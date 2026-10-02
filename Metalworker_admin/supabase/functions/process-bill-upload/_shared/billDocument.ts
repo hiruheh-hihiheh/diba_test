@@ -125,8 +125,8 @@ export interface BillRecord {
  *
  * Each part keeps the LABEL THE WORKBOOK USED, whitespace and punctuation included,
  * so `label + value` reproduces the printed line exactly. The template is not
- * consistent about the gap: "Bank Name: THE FEDERAL BANK LTD" has a space after the
- * colon and "IFSC CODE:FDRL0001775" does not. Trimming the label loses that
+ * consistent about the gap: "Bank Name: EXAMPLE BANK LTD" has a space after the
+ * colon and "IFSC CODE:EXAM0000001" does not. Trimming the label loses that
  * distinction and prints every bank line one space tighter than the original on
  * every re-print.
  *
@@ -170,7 +170,7 @@ export function defaultBankLabel(key: string): string {
  *
  * The label is everything up to the first character of the value, so
  * `label + value` rebuilds the line byte for byte. A line with no separator at all —
- * "IFSC CODE FDRL0001775" — splits at the first run of whitespace, which is the only
+ * "IFSC CODE EXAM0000001" — splits at the first run of whitespace, which is the only
  * place the value can begin. A line that is a label with no value contributes
  * nothing: there is no part to make, and inventing an empty one would add a
  * bank line that the workbook never printed.

@@ -693,7 +693,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
                 setName(e.target.value);
                 setFormError(null);
               }}
-              placeholder="e.g. Hawkins — March batch"
+              placeholder="e.g. Site visit — March batch"
               aria-invalid={formError ? true : undefined}
               aria-describedby={formError ? "group-error" : undefined}
               className={inputCls}

@@ -250,7 +250,7 @@ export default function JobImportPage() {
         setParseError(res.error);
       } else if (res.rows.length === 0) {
         setParseError(
-          `No job rows were found in sheet “${res.selectedSheet ?? "unknown"}”. Check that the file uses the expected Hawkins column layout.`
+          `No job rows were found in sheet “${res.selectedSheet ?? "unknown"}”. Check that the file uses the expected column layout.`
         );
       }
     } catch (err) {
@@ -261,7 +261,7 @@ export default function JobImportPage() {
           byKind: {
             /* A parser error usually means the columns did not line up, which is
                a data problem the user can fix, not a fault to apologise for. */
-            schema: `“${file.name}” could not be read because a column it needs is missing. Check the sheet has the expected Hawkins column layout.`,
+            schema: `“${file.name}” could not be read because a column it needs is missing. Check the sheet has the expected column layout.`,
             connection: `“${file.name}” could not be read because the server could not be reached. Check your connection and try again.`,
           },
         }).message
@@ -561,7 +561,7 @@ export default function JobImportPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "Hawkins-Jobs-Status-Mapping-Audit.txt";
+    a.download = "Job-Import-Mapping-Audit.txt";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

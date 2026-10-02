@@ -49,10 +49,10 @@ BEGIN;
 -- The billed-to company and address are a MULTILINE block and are stored that
 -- way, with the source's line breaks intact:
 --
---     M/s. Hawkins Cookers Ltd.,
+--     M/s. Example Cookers Ltd.,
 --     C-21,22 "U" Road,
---     Wagle Industrial Estate,
---     Thane - 400 604.
+--     Example Industrial Estate,
+--     Example City - 000 001.
 --
 -- A `text` column holding the block is deliberate and is not a "giant
 -- unstructured field": the invoice's address is one field with a variable number
@@ -113,7 +113,7 @@ ALTER TABLE public.bills
 -- 5. Footer wording
 -- ---------------------------------------------------------------------------
 -- "Certified that the particulars given above are true and correct",
--- "For SAASTHA ENGINEERING WORKS", "(Proprietor)" and "(Receivers Signature)" are
+-- "For EXAMPLE ENGINEERING WORKS", "(Proprietor)" and "(Receivers Signature)" are
 -- printed on the invoice and were never stored, so a re-print would have had to
 -- invent them. They are ordinary template text and are editable like any other
 -- field; the LAYOUT around them is not user-editable.

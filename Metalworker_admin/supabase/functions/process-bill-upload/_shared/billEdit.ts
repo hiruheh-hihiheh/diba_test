@@ -468,7 +468,7 @@ function cleanGst(value: unknown): string | null {
   const up = s.toUpperCase();
   if (!GST_NO.test(up)) {
     throw new EditError(
-      `A GST number is 15 letters and digits, e.g. 27AAACH1784M1Z9. "${s}" is not.`,
+      `A GST number is 15 letters and digits, e.g. 27AAACD5678E1Z9. "${s}" is not.`,
       "party_gst_no"
     );
   }

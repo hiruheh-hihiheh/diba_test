@@ -200,8 +200,20 @@ function parseRow(raw, rowIndex) {
   };
 }
 
+/* The workbook to audit is a developer-supplied local file. It is taken from the
+   command line (or WORKBOOK_PATH) so no machine-specific absolute path, and no
+   customer filename, is baked into the repository. */
+const WORKBOOK_PATH = process.argv[2] || process.env.WORKBOOK_PATH || "";
+
 async function runAudit() {
-  const fileData = fs.readFileSync("E:\\\\dibesh all in one\\\\Hawkins-Jobs Status.xlsx", "binary");
+  if (!WORKBOOK_PATH) {
+    console.error(
+      "usage: node audit.js <path-to-workbook.xlsx>\n" +
+      "   or: set WORKBOOK_PATH and run `node audit.js`"
+    );
+    return;
+  }
+  const fileData = fs.readFileSync(WORKBOOK_PATH, "binary");
   const workbook = XLSX.read(fileData, { type: "binary", cellDates: false });
   
   let bestSheet = null;
@@ -349,7 +361,7 @@ async function runAudit() {
   console.log("==================================================");
   console.log("LOCAL EXCEL WORKBOOK AUDIT REPORT");
   console.log("==================================================");
-  console.log(`Workbook: Hawkins-Jobs Status.xlsx`);
+  console.log(`Workbook: ${WORKBOOK_PATH}`);
   console.log(`Selected Sheet: ${bestSheet}`);
   console.log(`Ignored Sheets: ${ignoredSheets.join(", ")}`);
   console.log("==================================================");

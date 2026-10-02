@@ -79,7 +79,7 @@ export default function IconButton({
 
           1. `hidden` → `block`, not `opacity-0` → `opacity-100`. An absolutely
              positioned, invisible element still occupies layout, so a long
-             label ("Delete Hawkins-Jobs Status - 26 Sep 2026") pushed the whole
+             label ("Delete Site visit - 26 Sep 2026") pushed the whole
              document 70px wider than the window and gave every page a
              horizontal scrollbar that had nothing to do with its content.
              `display: none` contributes no layout at all, so the tooltip can

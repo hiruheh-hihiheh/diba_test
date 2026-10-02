@@ -280,7 +280,7 @@ carries the admin session across.
 - [x] **Tooltips widened the whole page.** `IconButton`'s tooltip was an absolutely
       positioned `whitespace-nowrap` span toggled with `opacity-0` — and an
       invisible element still occupies layout. On a 360px window, "Delete
-      Hawkins-Jobs Status - 26 Sep 2026" pushed the document 70px wider and gave
+      Site visit batch - 26 Sep 2026" pushed the document 70px wider and gave
       every page a horizontal scrollbar that had nothing to do with its content.
       Now `hidden` → `block`, which contributes no layout at all, plus a max-width
       so a long record name wraps instead of stretching.

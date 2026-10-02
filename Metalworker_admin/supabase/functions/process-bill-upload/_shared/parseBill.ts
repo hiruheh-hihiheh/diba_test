@@ -167,8 +167,8 @@ export interface BillCopy {
    * source line per entry.
    *
    * Kept as lines rather than a single joined string because the line breaks are
-   * part of the address: "C-21,22 \"U\" Road," / "Wagle Industrial Estate," /
-   * "Thane - 400 604." is three facts, and re-joining them would let a renderer
+   * part of the address: "C-21,22 \"U\" Road," / "Example Industrial Estate," /
+   * "Example City - 000 001." is three facts, and re-joining them would let a renderer
    * reflow the invoice in a way the workbook never did. Empty on a sheet whose
    * billed-to block carries no name or address, which is a real case — the
    * acceptance workbook SAMPLE.xlsx has none on either sheet.
@@ -249,7 +249,7 @@ export interface BillCopy {
    * from the database can restore it instead of inventing it.
    */
   certification: string | null;
-  /** "For SAASTHA ENGINEERING WORKS" */
+  /** "For EXAMPLE ENGINEERING WORKS" */
   onBehalfOf: string | null;
   /** "(Proprietor)" */
   signatureDesignation: string | null;
@@ -618,7 +618,7 @@ const SIGNATURE_RE = /signature|proprietor|receiver|authori[sz]ed\s*(sign|for)/i
 
 /**
  * A footer line that is ONLY a designation — "(Proprietor)", "Director" — as
- * opposed to "For SAASTHA ENGINEERING WORKS", which names a party.
+ * opposed to "For EXAMPLE ENGINEERING WORKS", which names a party.
  *
  * The two are separated because they print on different lines of the same
  * signature block and a re-print has to know which is which.
@@ -808,7 +808,7 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
 
      The previous implementation read `recipientHit.row + 1 .. invoiceHit.row - 1`,
      which is correct only if the recipient and the invoice number sit on
-     different rows. In this template they sit on the SAME row — "M/s. Hawkins
+     different rows. In this template they sit on the SAME row — "M/s. Example
      Cookers Ltd.," is in column B of the row whose column D reads "INVOICE
      NO.:" — so the range was always empty and the billed-to name and address were
      silently dropped from every invoice. Reading the column fixes that without
@@ -1262,8 +1262,8 @@ export function sanitizeBaseName(filename: string): string {
  * PDF objects.
  *
  * The invoice number is a bill's real identity, so it is preferred:
- * `SEW/301/2026-27` becomes `SEW_301_2026-27`, and the stored object is
- * `<upload-id>/<bill-id>_SEW_301_2026-27_original.pdf`. The bill's id is always
+ * `FIX/301/2026-27` becomes `FIX_301_2026-27`, and the stored object is
+ * `<upload-id>/<bill-id>_FIX_301_2026-27_original.pdf`. The bill's id is always
  * part of the path, so two invoices can never collide even if this token did.
  *
  * Falls back to the sheet name, then to a generic token, so a workbook whose
@@ -1274,7 +1274,7 @@ export function safeBillToken(invoiceNo: string | null, sheetName: string | null
   const raw = (invoiceNo ?? "").trim() || (sheetName ?? "").trim() || "bill";
   const cleaned = raw
     // Slashes get their own pass so they cannot become a nested object path, and
-    // they become "_" so `SEW/301/2026-27` reads as `SEW_301_2026-27`: the path
+    // they become "_" so `FIX/301/2026-27` reads as `FIX_301_2026-27`: the path
     // separators are replaced, the ones that are part of the number are kept.
     .replace(/[\\/]+/g, "_")
     // Hyphen is deliberately NOT in this set. It is safe in a storage object name

@@ -260,7 +260,7 @@ export interface BillPage {
 /**
  * PostgREST's `or=(...)` grammar uses commas and parentheses as separators, so a
  * search term containing them changes the FILTER rather than the needle. A user
- * pasting "SEW/274,2026" would otherwise get a confusing empty list or an error.
+ * pasting "INV-274,2026" would otherwise get a confusing empty list or an error.
  */
 function safeOrTerm(raw: string): string {
   return raw.replace(/[,()%*]/g, " ").trim();
@@ -625,7 +625,7 @@ export function isLegacyBill(source: BillDocumentSource): boolean {
 /**
  * The download filename for one copy, derived from the BILL, not the workbook.
  *
- * `SEW/301/2026-27` -> `SEW_301_2026-27_original.pdf`, so a user who downloads
+ * `FIX/301/2026-27` -> `FIX_301_2026-27_original.pdf`, so a user who downloads
  * three bills has three sensibly named files rather than three files all called
  * after the source workbook. Mirrors `safeBillToken` in the edge function's
  * `_shared/parseBill.ts`, which names the stored object; they must agree or the
