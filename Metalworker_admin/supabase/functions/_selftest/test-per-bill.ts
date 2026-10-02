@@ -101,7 +101,7 @@ check(
 );
 check(
   [...distinctTokens].slice(0, 3).join(", ") ===
-    "SEW_301_2026-27, SEW_302_2026-27, SEW_303_2026-27",
+    "FIX_301_2026-27, FIX_302_2026-27, FIX_303_2026-27",
   "tokens are the invoice number, human-readable, hyphen preserved",
   [...distinctTokens].slice(0, 3).join(", ")
 );

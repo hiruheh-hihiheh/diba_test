@@ -62,7 +62,7 @@ function audit(filePath: string, label: string): void {
      This was a duplicated copy of `_shared/fontMetrics.ts`, and the copy had
      drifted: it was missing `/` and `-`, so both fell through to the 556 default
      instead of their real 278 and 333. Every invoice on this template contains a
-     slash and a hyphen — "SEW/316/2026-27", "28/09/2026" — so the auditor
+     slash and a hyphen — "FIX/316/2026-27", "28/09/2026" — so the auditor
      systematically over-measured them and reported phantom overlaps between
      adjacent runs. Importing the table makes that class of false positive
      impossible rather than merely unlikely. */

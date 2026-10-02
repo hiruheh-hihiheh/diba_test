@@ -171,7 +171,7 @@ for (const copy of COPY_ORDER) {
   );
 
   // Which pages belong to which invoice, read from the footer run itself, which
-  // reads `ORIGINAL   |   SEW/305/2026-27   |   Page 6 of 23`.
+  // reads `ORIGINAL   |   FIX/305/2026-27   |   Page 6 of 23`.
   const ownerOf = pages.map((p) => {
     const m = /\((?:ORIGINAL|DUPLICATE|TRIPLICATE)\s*\|\s*([^|)]*?)\s*\|\s*Page\s*\d+\s*of\s*\d+\)/.exec(p);
     return m ? m[1].trim() : null;

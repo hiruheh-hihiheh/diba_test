@@ -11,9 +11,15 @@
 //
 // WHAT IS SANITIZED
 // Every value that could identify a business or an account: seller and recipient
-// names, addresses, GST and MSME numbers, e-mail addresses, phone numbers, bank
-// name / account number / branch / IFSC, the vehicle number, and the invoice,
-// challan and order numbers.
+// names, addresses, the city and the place of supply, GST and MSME numbers,
+// e-mail addresses, phone numbers, bank name / account number / branch / IFSC,
+// the vehicle number, and the invoice, challan and order numbers.
+//
+// The postal address and the place of supply used to be left as the real city
+// and the real estate name. That was not a deliberate trade-off: the list above
+// already claimed "addresses" were sanitized, and they were not.
+// `test-fixture-hygiene.ts` now scans every committed workbook for the real
+// locality and is what caught it, so the two cannot drift apart again.
 //
 // WHAT IS DELIBERATELY NOT CHANGED
 // The structure and the arithmetic, because those are what the test is for:
@@ -29,6 +35,10 @@
 //   * LABOUR JOB, the blank "Your Challan No." / "Eway Bill No." rows, the bank
 //     block, the four footer rows, and every trailing space, because the trailing
 //     spaces are part of the printed invoice
+//   * "State: Maharashtra  State Code:27" and the state code 27 itself. The state
+//     code is what selects CGST+SGST against IGST in the tax identity, so
+//     changing it would change the arithmetic under test; and a state name is not
+//     an identifier — tens of thousands of businesses operate in it.
 //
 // Rerun with:  node supabase/functions/_selftest/make-fixture.ts
 import { writeFileSync } from "node:fs";
@@ -62,7 +72,7 @@ const ROWS: Cell[] = [
   [3, 1, SELLER],
   [4, 1, "Manufacturing Traders of Machinery,Precision Job Works & Industrial Products"],
   [5, 1, "GST No.27AAAPE1234F1Z9  MSME NO.UDYAM-MH-00-0000001"],
-  [6, 1, "Office Address: Unit No.1,GalaNo.2 & 3,NearITI Circle,Road No.28,Kailash Nagar,Wagle Estate,Thane - 400 604,State- Maharashtra"],
+  [6, 1, "Office Address: Unit No.1,GalaNo.2 & 3,NearExample Circle,Road No.28,Example Nagar,Example Estate,Example City - 000 001,State- Maharashtra"],
   [7, 1, "Email (1):example1@example.com Email(2): example2@example.com Mob.9000000001 & 9000000002"],
 
   /* The copy marker row, and the sentence that must NOT be read as two more
@@ -73,8 +83,8 @@ const ROWS: Cell[] = [
   // ── recipient (Billed To) ──────────────────────────────────────────────
   [9, 1, PARTY],
   [10, 1, 'C-21,22 "U" Road,'],
-  [11, 1, "Wagle Industrial Estate,"],
-  [12, 1, "Thane - 400 604."],
+  [11, 1, "Example Industrial Estate,"],
+  [12, 1, "Example City - 000 001."],
 
   // ── right-hand reference block ─────────────────────────────────────────
   [9, 3, "INVOICE NO.:"],
@@ -106,7 +116,10 @@ const ROWS: Cell[] = [
 
   [14, 1, "State: Maharashtra       State Code:27"],
   [14, 3, "PLACE OF SUPPLY"],
-  [14, 5, "THANE                          "],
+  /* The place of supply is a real city in the original. It is padded to 31
+     characters to line the printed box up, and the replacement is padded to the
+     same width so the layout is unchanged. */
+  [14, 5, "EXAMPLE CITY" + " ".repeat(19)],
   [14, 6, "STATE CODE:27"],
 
   [15, 1, "Party's GST No.27BBBCG5678N2Z4"],

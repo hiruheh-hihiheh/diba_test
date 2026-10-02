@@ -22,7 +22,7 @@ const REPO = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../.."
 const outDir = resolve(fileURLToPath(new URL(".", import.meta.url)), "out");
 mkdirSync(outDir, { recursive: true });
 
-const needle = process.argv[2] ?? "SEW/301/2026-27";
+const needle = process.argv[2] ?? "FIX/301/2026-27";
 const only = process.argv[3] as CopyKind | undefined;
 
 const wb = await readXlsx(readFileSync(resolve(REPO, "BILL 301 TO.xlsx")));

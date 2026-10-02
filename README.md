@@ -557,7 +557,7 @@ cd Metalworker_admin
 npm run bills:selftest
 ```
 
-Runs **11 suites** against real workbooks, on Node, with no deployment required:
+Runs **12 suites** against the committed workbooks, on Node, with no deployment required:
 
 | Suite | Covers |
 | --- | --- |
@@ -571,6 +571,7 @@ Runs **11 suites** against real workbooks, on Node, with no deployment required:
 | `test-billing-folders.ts` | Billing-folder aggregation, including missing-total semantics |
 | `test-folder-summary-export.ts` | Exported figures are string-identical to the on-screen figures; cross-client parity |
 | `test-audit-log.ts` | Every `admin_audit_log` insert uses real columns; no client read policy exists |
+| `test-fixture-hygiene.ts` | No committed workbook carries real business data — see [Test fixtures](#test-fixtures) |
 | `audit.ts` | Layout audit of a generated PDF — overlaps, alignment, off-page marks |
 
 Each script writes its own `PASS` / `FAIL` lines and ends with a
@@ -586,7 +587,7 @@ npx tsc --noEmit -p tsconfig.json   # typecheck
 npm run lint                       # expo lint
 npm run lint:edge                  # typecheck the Edge Functions (Deno-flavoured)
 npx expo export --platform web     # production web build
-npm run bills:selftest             # the 11 suites above
+npm run bills:selftest             # the 12 suites above
 ```
 
 ### Desktop app checks
@@ -694,22 +695,45 @@ Notes
 ## Test fixtures
 
 Three Excel workbooks are committed at the repository root and used by the bill
-self-tests.
+self-tests. All three are **sanitised**: they preserve the real invoice layout,
+copy blocks, line items and arithmetic exactly, with every identifying value
+replaced by an obvious placeholder.
 
 | File | Purpose |
 | --- | --- |
 | `SAMPLE.xlsx` | Two invoices in the production layout. The main parser and PDF acceptance fixture. |
 | `BILL 301 TO.xlsx` | Twenty invoices in the production layout. The layout reference used to build the renderer against the real format. |
-| `test-bills-sanitized.xlsx` | A **generated, sanitised** single-copy fixture (one `ORIGINAL` marker, no duplicate/triplicate). Built by `_selftest/make-fixture.ts` from a real workbook's layout with every identifying value replaced. Used by `test-copies.ts`. |
+| `test-bills-sanitized.xlsx` | A **generated** single-copy fixture (one `ORIGINAL` marker, no duplicate/triplicate). Built by `_selftest/make-fixture.ts`. Used by `test-copies.ts`. |
 
-> ⚠️ **`SAMPLE.xlsx` and `BILL 301 TO.xlsx` contain real business data** — real
-> company name, counterparty GSTIN, bank name, bank account number, IFSC code,
-> phone numbers and e-mail addresses. They are required by the self-tests today,
-> but they should not be published. See [Security notes](#security-notes).
+`SAMPLE.xlsx` and `BILL 301 TO.xlsx` were originally real production workbooks
+and did carry the seller's name, both parties' GSTINs, the MSME registration, the
+bank name / branch / account number / IFSC, phone numbers, e-mail addresses, a
+postal address, vehicle registrations, and every invoice, purchase-order and
+challan number. Those values have been replaced in place; `test-fixture-hygiene.ts`
+enforces it.
 
-`test-bills-sanitized.xlsx` is the model to follow: a generator
-(`make-fixture.ts`) produces a structurally identical workbook with placeholder
-values, and the real file is never committed.
+**What is preserved and what is not.** Sheet names, sheet count, cell
+coordinates, every numeric value (amounts, quantities, rates, dates), the
+copy blocks, the line items, the descriptions and the tax arithmetic are all
+**unchanged**. Only identity fields differ. `State: Maharashtra` and
+`State Code:27` are kept deliberately: the state code selects CGST+SGST against
+IGST in the tax identity, so changing it would change the arithmetic under test,
+and a state name is not an identifier.
+
+**How it is enforced.** `test-fixture-hygiene.ts` inflates every member of each
+`.xlsx` — not just the cells, because the strings are deflated and a raw byte
+scan would pass vacuously — and requires every identifier-shaped value to be on
+an **allowlist** of placeholders. It also covers `docProps/core.xml`, which is
+not a cell at all and did carry the editing machine's user name. The suite
+verifies its own rules against synthetic samples, because a filter that cannot
+match is worse than no filter: it reads as protection.
+
+> ⚠️ **The real identifiers still appear in test and comment source**, as the
+> patterns the guard rejects and as worked examples in comments
+> (`_selftest/test-copies.ts`, `_selftest/test-fixture-hygiene.ts`, and doc
+> comments in `parseBill.ts`, `renderBill.ts`, `billDocument.ts`, `billEdit.ts`,
+> `types/bill.ts`, migration `0008`). The workbooks themselves are clean; the
+> source is not. See [Security notes](#security-notes).
 
 ---
 
@@ -743,6 +767,21 @@ These are real, verified limitations of the current repository.
 7. **Client parity is by convention, not enforced by tooling.** `Metalworker_desktop`
    additionally has `jobImport`, `jobImportParser` and `cloudinaryCleanup`, which
    the admin app does not.
+8. **Real customer identifiers remain in source outside the workbooks.** The
+   workbooks are clean, but the real counterparty company name, GSTINs, bank
+   details, phone numbers and e-mail addresses are still present as:
+   - guard patterns in `_selftest/test-copies.ts` and
+     `_selftest/test-fixture-hygiene.ts`;
+   - worked examples in doc comments across `parseBill.ts`, `renderBill.ts`,
+     `billDocument.ts`, `billEdit.ts`, `types/bill.ts` and migration `0008`;
+   - **a customer name in shipped desktop UI** — a download filename in
+     `src/pages/JobImport.tsx` and an input placeholder in
+     `src/pages/PhotoGroupsPage.tsx`;
+   - hardcoded local absolute paths to a real customer workbook in
+     `Metalworker_desktop/audit.js` and `Metalworker_desktop/test_parser.ts`.
+
+   The UI strings and hardcoded paths are the ones that matter if this repository
+   is ever published.
 
 ---
 
@@ -761,10 +800,15 @@ These are real, verified limitations of the current repository.
 - **Rely on the database, not the UI.** Row Level Security and the
   `SECURITY DEFINER` RPCs are the real authorization. Client-side guards are
   convenience only.
-- **Billing data is sensitive financial data.** Do not publish real workbooks. The
-  committed `SAMPLE.xlsx` and `BILL 301 TO.xlsx` should be replaced with generated,
-  sanitised fixtures before this repository is made public — follow the pattern
-  already used by `make-fixture.ts`.
+- **Billing data is sensitive financial data.** Do not publish real workbooks. All
+  three committed workbooks are sanitised and `test-fixture-hygiene.ts` keeps them
+  that way, so a new real workbook cannot be committed unnoticed.
+- **Sanitising a workbook is not the same as removing the data from the repository.**
+  The real counterparty name and identifiers still appear as *source text* — in the
+  guard patterns, in doc comments that use a real invoice as a worked example, and
+  in a customer name baked into desktop UI strings and a local absolute path. Those
+  are listed under [Known limitations](#known-limitations). If this repository is
+  ever made public, they need addressing too.
 - **A committed secret is not removed by deleting it.** CI scans for
   credential-shaped strings, but rotation is the only real remedy if a key is ever
   exposed.

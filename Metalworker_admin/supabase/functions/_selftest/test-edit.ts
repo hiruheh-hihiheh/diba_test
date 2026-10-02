@@ -240,13 +240,13 @@ check(
   "label + value reproduces every bank line, for all 20 invoices"
 );
 const sampleBank = parseBankLines([
-  "Bank Name: THE FEDERAL BANK LTD",
-  "ACCOUNT NUMBER:17750200004019",
-  "BRANCH: LOUISWADI THANE",
-  "IFSC CODE:FDRL0001775",
+  "Bank Name: EXAMPLE BANK LTD",
+  "ACCOUNT NUMBER:00000000123456",
+  "BRANCH: EXAMPLE BRANCH",
+  "IFSC CODE:EXAM0000001",
 ]);
 check(
-  sampleBank.ifsc_code?.label === "IFSC CODE:" && sampleBank.ifsc_code?.value === "FDRL0001775",
+  sampleBank.ifsc_code?.label === "IFSC CODE:" && sampleBank.ifsc_code?.value === "EXAM0000001",
   "a label with no space before its value is still split correctly",
   JSON.stringify(sampleBank.ifsc_code)
 );
@@ -259,16 +259,16 @@ check(
 /* ──────────────────────────────────────────────
    5. The required labour invoice
    ────────────────────────────────────────────── */
-section("5. SEW/316/2026-27 carries the full production data");
-const labour = bills.find((b) => b.original.invoiceNo === "SEW/316/2026-27");
+section("5. FIX/316/2026-27 carries the full production data");
+const labour = bills.find((b) => b.original.invoiceNo === "FIX/316/2026-27");
 check(!!labour, "the labour invoice under test is present");
 if (labour) {
   const o = labour.original;
   const rec = asRecord(labour);
-  check(o.partyName === "M/s. Hawkins Cookers Ltd.,", "company name", String(o.partyName));
+  check(o.partyName === "M/s. Example Cookers Ltd.,", "company name", String(o.partyName));
   check(
     o.partyAddress.join("|") ===
-      'C-21,22 "U" Road,|Wagle Industrial Estate,|Thane - 400 604.',
+      'C-21,22 "U" Road,|Example Industrial Estate,|Example City - 000 001.',
     "the address keeps all three source lines, quotes and all",
     JSON.stringify(o.partyAddress)
   );
@@ -277,8 +277,8 @@ if (labour) {
     "the address is stored with its line breaks"
   );
   check(o.transporterMode === "VEHICLE", "transporter", String(o.transporterMode));
-  check(o.vehicleNumber === "MH 04 JQ 4172", "vehicle", String(o.vehicleNumber));
-  check(o.yourChallanNo === "WT/OGC/TR/261186", "your challan", String(o.yourChallanNo));
+  check(o.vehicleNumber === "MH 00 EX 0000", "vehicle", String(o.vehicleNumber));
+  check(o.yourChallanNo === "WT/OGC/TR/9000006", "your challan", String(o.yourChallanNo));
   check(o.orderNoLabel === "Service Order No.:", "the labour order label", String(o.orderNoLabel));
   check(o.ewayBillNo === null && o.ewayBillDate === null, "e-way is genuinely blank in the source");
   check(
@@ -291,7 +291,7 @@ if (labour) {
   );
   check(
     o.certification === "Certified that the particulars given above are true and correct" &&
-      o.onBehalfOf === "For SAASTHA ENGINEERING WORKS" &&
+      o.onBehalfOf === "For EXAMPLE ENGINEERING WORKS" &&
       o.signatureDesignation === "(Proprietor)" &&
       o.receiverSignature === "(Receivers Signature)",
     "all four footer phrases are captured by name"
@@ -304,12 +304,12 @@ if (labour) {
   );
   const raw = latin1(pdf);
   const has = (s: string): boolean => raw.includes(`(${s.replace(/([()\\])/g, "\\$1")})`);
-  check(has("M/s. Hawkins Cookers Ltd.,"), "the PDF prints the company name");
+  check(has("M/s. Example Cookers Ltd.,"), "the PDF prints the company name");
   for (const line of o.partyAddress) check(has(line), "the PDF prints the address line", line);
   check(has("Transporter:"), "the transporter label is present");
   check(has("VEHICLE"), "the transporter value is present");
   check(has("Vehicle No.:"), "the vehicle label is present");
-  check(has("MH 04 JQ 4172"), "the vehicle value is present");
+  check(has("MH 00 EX 0000"), "the vehicle value is present");
   check(has("Eway Bill No.") && has("Eway Bill Date"), "the empty e-way rows are still printed");
   check(has("40 DAYS"), "the emphasized payment window is printed");
   check(pageCount(pdf) === 1, "and it all fits on one A4 page", `${pageCount(pdf)} pages`);
@@ -336,7 +336,7 @@ if (labour) {
 
   const edited = computeBillValues(record, target.original.lineItems, {
     party_address: "Unit 7, Andheri Industrial Estate\nAndheri East, Mumbai - 400 069.",
-    party_name: "M/s. Hawkins Cookers Private Limited,",
+    party_name: "M/s. Example Cookers Private Limited,",
     vehicle_number: "MH 01 AB 1234",
     your_challan_no: "WT/OGC/TR/999999",
     line_items: [
@@ -383,14 +383,14 @@ if (labour) {
   check(edited.lineItems.length === 2, "the added line survives");
   check(edited.lineItems[0].amount === 27000, "line 1 amount is 3 x 9,000", String(edited.lineItems[0].amount));
 
-  check(has("M/s. Hawkins Cookers Private Limited,"), "the new company name is printed");
+  check(has("M/s. Example Cookers Private Limited,"), "the new company name is printed");
   check(has("Unit 7, Andheri Industrial Estate"), "the new address line 1 is printed");
   check(has("Andheri East, Mumbai - 400 069."), "the new address line 2 is printed");
   check(!has('C-21,22 "U" Road,'), "the old address is gone");
   check(has("MH 01 AB 1234"), "the new vehicle is printed");
-  check(!has("MH 04 JQ 4172"), "the old vehicle is gone");
+  check(!has("MH 00 EX 0000"), "the old vehicle is gone");
   check(has("WT/OGC/TR/999999"), "the new challan is printed");
-  check(!has("WT/OGC/TR/261186"), "the old challan is gone");
+  check(!has("WT/OGC/TR/9000006"), "the old challan is gone");
   check(has("REWORKED 5L DEEP KADHAI FLANGE TOOL"), "the edited description is printed");
   check(has("Second line added by the editor"), "the added line is printed");
   check(has("15 DAYS"), "the edited terms are printed");
