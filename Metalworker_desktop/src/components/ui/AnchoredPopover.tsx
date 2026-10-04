@@ -74,21 +74,45 @@ export default function AnchoredPopover({
     if (!anchor || !panel) return;
     const a = anchor.getBoundingClientRect();
     const box = panel.getBoundingClientRect();
-    setPosition(
-      computePopoverPosition(
-        { ...a, width: a.width, height: a.height },
-        { width: width || box.width, height: box.height },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
+    /* Every field is read out by name. A DOMRect keeps its geometry on the prototype, so
+       `{ ...a }` yields an object with NONE of it — which computes to NaN and quietly
+       parks the panel at 0,0 with no error thrown anywhere. Reading the six fields
+       explicitly is the only safe way to turn a DOMRect into the plain shape the position
+       maths takes. */
+    const next = computePopoverPosition(
+      {
+        top: a.top,
+        left: a.left,
+        right: a.right,
+        bottom: a.bottom,
+        width: a.width,
+        height: a.height,
+      },
+      { width: width || box.width, height: box.height },
+      { width: window.innerWidth, height: window.innerHeight }
+    );
+    /* Keep the previous object when nothing moved. The measurement is stored as state, so
+       returning a fresh object on every call would re-render, which re-runs the
+       measurement — a loop. Returning `prev` makes "nothing changed" a no-op. */
+    setPosition((prev) =>
+      prev &&
+      prev.top === next.top &&
+      prev.left === next.left &&
+      prev.placement === next.placement &&
+      prev.caretX === next.caretX
+        ? prev
+        : next
     );
     setMeasured(true);
   }, [anchorRef, width]);
 
   /* Measure once the panel has been laid out, before paint, so it never appears at the
-     wrong place for a frame. */
+     wrong place for a frame. Content that changes size afterwards is the ResizeObserver's
+     job below; `children` is deliberately NOT a dependency, because it is a fresh object
+     on every render and would re-trigger this on every one of them. */
   useLayoutEffect(() => {
     if (open) reposition();
-  }, [open, reposition, children]);
+  }, [open, reposition]);
 
   useEffect(() => {
     if (!open) return;

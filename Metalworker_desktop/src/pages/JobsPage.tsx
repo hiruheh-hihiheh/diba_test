@@ -80,7 +80,6 @@ import BillNodeRail from "../components/jobs/BillNodeRail";
 import LinkJobsToBillModal from "../components/jobs/LinkJobsToBillModal";
 import {
   WIRE_ATTR_ANCHOR,
-  WIRE_ATTR_RAIL,
   anchorAttr,
   groupLinksByJob,
   hoverJob,
@@ -1288,23 +1287,18 @@ export default function JobsPage({
                             </th>
                             {/* Deliberately NOT `sticky-actions`: that class is for the
                                 frozen right-hand column, and giving it a second use would
-                                fight its z-index and its fade-out gradient. */}
-                            <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
+                                fight its z-index and its fade-out gradient.
+                                The column is WIDER while Show Links is on, because the
+                                shared bill targets are positioned inside it — no new
+                                column is added, and the table is untouched when links are
+                                off. */}
+                            <th
+                              className={`text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 ${
+                                showLinks ? "w-[15rem]" : ""
+                              }`}
+                            >
                               Connections
                             </th>
-                            {/* The rail exists only while Show Links is on. It is an empty
-                                column: the CARDS are positioned over it by
-                                `BillNodeRail`, so that one bill is drawn once however many
-                                rows point at it. Rendering a card inside each row is what
-                                made three jobs on one invoice look like three invoices. */}
-                            {showLinks && (
-                              <th
-                                {...{ [WIRE_ATTR_RAIL]: "" }}
-                                className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 w-[13rem]"
-                              >
-                                Linked Bills
-                              </th>
-                            )}
                             <th className="sticky-actions sticky-head-cell text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 w-[9.5rem]">
                               Actions
                             </th>
@@ -1313,6 +1307,12 @@ export default function JobsPage({
                         <tbody className="divide-y divide-border">
                           {pageJobs.map((item) => {
                             const rowBusy = rowBusyId === item.id;
+                            const rowLinks = linksByJob.get(item.id) ?? [];
+                            const rowBillIds = rowLinks.map((b) => b.bill_id);
+                            /* Hovering a bill target lights every row that reaches it, which
+                               is the whole reason the target is worth hovering. */
+                            const rowOnHoveredBill =
+                              !!hoveredWire?.billId && rowBillIds.includes(hoveredWire.billId);
                             return (
                               <tr
                                 key={item.id}
@@ -1322,17 +1322,19 @@ export default function JobsPage({
                                    count badge. Cheap: it only sets state while Show Links
                                    is on and the row actually has links. */
                                 onMouseEnter={() => {
-                                  if (showLinks && (linksByJob.get(item.id)?.length ?? 0) > 0) {
-                                    setHoveredWire(hoverJob(item.id));
+                                  if (showLinks && rowLinks.length > 0) {
+                                    setHoveredWire(hoverJob(item.id, rowBillIds));
                                   }
                                 }}
                                 onMouseLeave={() => {
                                   if (showLinks) setHoveredWire(null);
                                 }}
                                 className={`transition-colors ${
-                                  jobSelection.isSelected(item.id)
-                                    ? "bg-primary/5"
-                                    : "hover:bg-surface-hover/50"
+                                  rowOnHoveredBill
+                                    ? "bg-connection-muted"
+                                    : jobSelection.isSelected(item.id)
+                                      ? "bg-primary/5"
+                                      : "hover:bg-surface-hover/50"
                                 } ${rowBusy ? "opacity-60" : ""}`}
                               >
                                 {canSelect && (
@@ -1409,19 +1411,13 @@ export default function JobsPage({
                                   {item.model_status || "—"}
                                 </td>
                                 <ConnectionsCell
-                                  jobId={item.id}
                                   jobNo={item.job_no}
-                                  bills={linksByJob.get(item.id) ?? []}
+                                  bills={rowLinks}
+                                  rail={showLinks}
                                   busy={rowBusy}
                                   onHover={setHoveredWire}
                                   onUnlink={(link) => void handleUnlink(item, link)}
                                 />
-                                {/* Empty: the CARDS for this column are positioned over it by
-                                    `BillNodeRail`, one per unique bill. Every row needs a
-                                    cell here or the columns would not line up. */}
-                                {showLinks && (
-                                  <td {...{ [WIRE_ATTR_RAIL]: "" }} className="px-4 py-3.5" />
-                                )}
                                 <td className="sticky-actions px-4 py-3.5">
                                   <div className="flex items-center gap-1">
                                     <IconButton

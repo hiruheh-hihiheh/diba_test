@@ -27,16 +27,21 @@ import { fileURLToPath } from "node:url";
    The restatement is what would let the two drift. */
 import {
   anchorAttr,
+  billEmphasis,
   buildBillNodes,
+  buildBillWiring,
   groupLinksByBill,
   groupLinksByJob,
   hoverBill,
   hoverJob,
   isBillEmphasised,
   layoutBillNodes,
+  stubPath,
+  trunkOpacity,
+  trunkPath,
   wireOpacity,
-  wirePath,
   wireWidth,
+  wiringPaths,
   WIRE_ATTR_ANCHOR,
   WIRE_ATTR_RAIL,
 } from "../../../../Metalworker_desktop/src/components/jobs/wireGeometry.ts";
@@ -84,6 +89,12 @@ const rail = mustRead(resolve(DESKTOP, "src/components/jobs/BillNodeRail.tsx"));
 const popover = mustRead(resolve(DESKTOP, "src/components/ui/AnchoredPopover.tsx"));
 const cell = mustRead(resolve(DESKTOP, "src/components/jobs/ConnectionsCell.tsx"));
 const css = mustRead(resolve(DESKTOP, "src/index.css"));
+const hook = mustRead(resolve(DESKTOP, "src/hooks/useConnectionWires.ts"));
+/* The pure geometry, read as text so the grouping can be checked for what it does NOT
+   depend on — job type above all. */
+const wireGeometrySource = mustRead(
+  resolve(DESKTOP, "src/components/jobs/wireGeometry.ts")
+);
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1) SCHEMA — one link table, two real foreign keys
@@ -393,7 +404,7 @@ check(
   "clicks on rows and actions must behave exactly as they did before"
 );
 check(
-  /if \(!segments\.length \|\| width === 0 \|\| height === 0\) return null;/.test(wires),
+  /if \(!wirings\.length \|\| width === 0 \|\| height === 0\) return null;/.test(wires),
   "no layer is rendered at all when there is nothing to draw",
   "so Show Links off costs no DOM and no measurement"
 );
@@ -442,37 +453,11 @@ check(
   "the job number cell is the wire's anchor, so a wire sweeps across its row"
 );
 
-const path = wirePath({ x: 0, y: 0 }, { x: 300, y: 40 });
-check(
-  /^M 0\.00 0\.00 C \d+\.\d+ 0\.00, \d+\.\d+ 40\.00, 300\.00 40\.00$/.test(path),
-  "a wire leaves and arrives horizontally",
-  "which is what makes a bundle of wires read as a bundle",
-  path
-);
-check(
-  /C 70\.00/.test(wirePath({ x: 0, y: 0 }, { x: 600, y: 0 })),
-  "the control handle is a third of the gap, clamped"
-);
-check(
-  /C 12\.00/.test(wirePath({ x: 0, y: 0 }, { x: 4, y: 0 })),
-  "a very short gap still gets a visible handle rather than a degenerate curve"
-);
-/* The property that matters is the DIRECTION of the handles, not their size: a
-   leftward wire's control points must both sit left of the start, or the curve
-   doubles back on itself before reaching its target. */
-const leftPath = wirePath({ x: 0, y: 0 }, { x: -200, y: 0 });
-const leftC = /C (-?\d+\.\d+) (-?\d+\.\d+), (-?\d+\.\d+) (-?\d+\.\d+)/.exec(leftPath);
-check(
-  !!leftC && Number(leftC[1]) < 0 && Number(leftC[3]) < 0,
-  "a wire pointing left bows LEFT, not back past its own start",
-  "both control points must follow the direction of travel",
-  leftPath
-);
-check(
-  wirePath({ x: 0, y: 0 }, { x: 0, y: 80 }).includes("C 0.00 0.00, 0.00 80.00"),
-  "a wire straight up or down degenerates to a straight line",
-  "rather than dividing by a zero-width gap"
-);
+/* A link shaped exactly like the one the database returns, carrying only the fields the
+   visual layer reads. */
+const link = (jobId: string, billId: string, label: string, party: string | null = null) =>
+  ({ job_id: jobId, bill_id: billId, label, party_name: party }) as never;
+const allMounted = (...ids: string[]) => new Set(ids);
 
 const links = [
   { job_id: "j1", bill_id: "b1" },
@@ -485,41 +470,220 @@ check(
     grouped.get("j1")?.length === 2 &&
     grouped.get("j1")?.[0].bill_id === "b1" &&
     grouped.get("j2")?.length === 1,
-  "links group per job and keep their order, so chips and wires stay in step"
+  "links group per job and keep their order, so the count badge and the wires stay in step"
 );
 check(
   groupLinksByJob([]).size === 0,
   "no links groups to nothing, without throwing"
 );
 
-const hovered = hoverBill("b1");
-const onB1 = { jobId: "j1", billId: "b1" };
-const other = { jobId: "j2", billId: "b3" };
+/* ═══════════════════════════════════════════════════════════════════════════
+   WIRING — one convergence line per bill, one stub per row
+   ═══════════════════════════════════════════════════════════════════════════ */
+console.log("\nevery row for a bill meets ONE vertical line, then one run into the target");
+
+/* Six rows down one bill: the shape the whole change exists for. */
+const SIX_Y = [54, 108, 162, 216, 270, 324];
+const anchorsOf = (...ys: number[]) => {
+  const m = new Map<string, { x: number; y: number }>();
+  ys.forEach((y, i) => m.set(`j${i + 1}`, { x: 200, y }));
+  return m;
+};
+const sixNode = layoutBillNodes(
+  buildBillNodes(
+    SIX_Y.map((_, i) => link(`j${i + 1}`, "bA", "SEW/317")),
+    allMounted("j1", "j2", "j3", "j4", "j5", "j6")
+  ),
+  new Map(SIX_Y.map((y, i) => [`j${i + 1}`, y])),
+  { nodeHeight: 28, minGap: 8, minY: 0, maxY: 900 }
+);
+const sixAnchors = anchorsOf(...SIX_Y);
+const sixWiring = buildBillWiring(sixNode[0], sixAnchors, 900)!;
+
+check(!!sixWiring, "a bill with six visible rows produces one wiring");
+check(sixWiring.stubs.length === 6, "with one stub per row", `${sixWiring.stubs.length}`);
 check(
-  wireOpacity(onB1, null) === 0.55 && wireOpacity(onB1, hovered) === 1,
-  "with nothing hovered every wire rests; an emphasised one comes to the front"
+  sixWiring.topY === 54 && sixWiring.bottomY === 324,
+  "the line spans the first and last connected row",
+  `${sixWiring.topY}..${sixWiring.bottomY}`
 );
 check(
-  wireOpacity(other, hovered) < wireOpacity(onB1, hovered),
-  "hovering a BILL emphasises its wires and dims unrelated ones",
-  "which is the case that makes one invoice with five jobs legible"
+  sixWiring.nodeY === 189,
+  "the target sits at the MEAN of the rows pointing at it, so it does not jump between rows",
+  `${sixWiring.nodeY}`
+);
+
+/* THE NO-CROSSING PROPERTY. Every stub is horizontal and every stub ends at the same x,
+   so two wires can only ever meet head-on at that line. Curves aimed at a shared midpoint
+   would have to cross, which is exactly what this routing removes. */
+const paths6 = wiringPaths(sixWiring);
+const endXOf = (d: string) => {
+  const nums = d.match(/-?\d+\.\d+/g)!.map(Number);
+  /* A path ends on an x,y pair; take the second-to-last number as the final x. */
+  return nums[nums.length - 2];
+};
+check(
+  paths6.stubs.every((s) => s.path.startsWith("M 200.00 ")),
+  "every stub starts on its own job row"
 );
 check(
-  wireOpacity({ jobId: "j1", billId: "b2" }, hoverJob("j1")) === 1 &&
-    wireOpacity({ jobId: "j2", billId: "b3" }, hoverJob("j1")) === 0.12,
-  "hovering a JOB emphasises every wire out of that row, and only those"
+  paths6.stubs.every((s) => endXOf(s.path) === sixWiring.trunkX),
+  "and every stub is a single horizontal run ending at the SAME x",
+  "nothing curves and nothing doubles back, so no two wires can cross",
+  paths6.stubs.map((s) => s.path).join("   ")
 );
 check(
-  isBillEmphasised("b1", hoverBill("b1")) && !isBillEmphasised("b2", hoverBill("b1")),
-  "only the pointed-at bill's node highlights, not every node on the rail"
+  paths6.trunk.includes(`L 900.00 ${sixWiring.nodeY.toFixed(2)}`),
+  "with exactly one run from the line into the target",
+  paths6.trunk
 );
 check(
-  !isBillEmphasised("b1", null) && !isBillEmphasised("b1", hoverJob("j1")),
-  "and nothing highlights when the pointer is not on a bill"
+  (paths6.trunk.match(/M /g) || []).length === 2,
+  "the line and that run are two subpaths of ONE path, so the shared line is stroked once",
+  "otherwise a dimmed wire beside a lit one leaves a bright seam down the bundle"
+);
+/* Only the two outermost rows turn a corner; the ones between meet the line head-on. */
+check(
+  sixWiring.stubs.filter((s) => s.turn !== 0).length === 2,
+  "only the first and last rows turn a corner",
+  sixWiring.stubs.map((s) => s.turn).join(",")
 );
 check(
-  wireWidth(onB1, hovered) === 3 && wireWidth(onB1, null) === 2,
-  "the emphasised wire is thicker, which reads without relying on colour"
+  sixWiring.stubs[0].turn === 1 && sixWiring.stubs[5].turn === -1,
+  "the top row turns down into the line and the bottom row turns up"
+);
+check(
+  sixWiring.stubs.slice(1, 5).every((s) => s.turn === 0),
+  "the rows in between meet it head-on, so a bundle stays six stubs and one line"
+);
+check(
+  /Q 876\.00 54\.00 876\.00 60\.00$/.test(paths6.stubs[0].path),
+  "the outermost corner is rounded rather than a hard right angle",
+  paths6.stubs[0].path
+);
+check(
+  paths6.stubs[1].path === "M 200.00 108.00 L 876.00 108.00",
+  "while an interior stub is a plain straight line",
+  paths6.stubs[1].path
+);
+
+/* The line must never sit left of a row, or that row's stub would travel backwards. */
+const tight = buildBillWiring(
+  { ...sixNode[0], jobs: [link("j1", "bA", "SEW/317")], jobCount: 1 },
+  new Map([["j1", { x: 890, y: 200 }]]),
+  900
+)!;
+check(
+  tight.trunkX > 890,
+  "the line stays clear of the job anchors even in a narrow column",
+  `anchor at 890, line at ${tight.trunkX}`
+);
+check(tight.trunkX <= 900 - 4, "and never so close to the target that the run into it vanishes");
+check(
+  trunkPath(tight).startsWith(`M ${tight.trunkX.toFixed(2)} ${tight.nodeY.toFixed(2)} L 900.00`) &&
+    trunkPath(tight).split("L").length === 2,
+  "a bill with a single visible row draws no vertical line, only the run into the target",
+  trunkPath(tight)
+);
+check(
+  buildBillWiring({ ...sixNode[0], jobs: [], jobCount: 0 }, new Map(), 900) === null,
+  "a target with no measured row produces no wiring at all, without throwing"
+);
+check(
+  stubPath({ x: 100, y: 50 }, 110, 6, 0) === "M 100.00 50.00 L 110.00 50.00",
+  "a stub with no room for a corner stays straight rather than doubling back",
+  stubPath({ x: 100, y: 50 }, 110, 6, 0)
+);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOVER — one tier for what is pointed at, one for its siblings, one for the rest
+   ═══════════════════════════════════════════════════════════════════════════ */
+console.log("\nhovering separates this row, its bill's other rows, and everything else");
+
+const onB1 = { jobId: "j1", billId: "bA" };
+const siblingOnB1 = { jobId: "j4", billId: "bA" };
+const elsewhere = { jobId: "j9", billId: "bZ" };
+
+check(wireOpacity(onB1, null) === 0.5, "with nothing hovered every wire rests at the same strength");
+check(
+  wireOpacity(siblingOnB1, null) === wireOpacity(onB1, null),
+  "so a resting bundle is uniform, not a picket fence of different greys"
+);
+
+const hoverTarget = hoverBill("bA");
+check(
+  wireOpacity(onB1, hoverTarget) === 1 && wireOpacity(siblingOnB1, hoverTarget) === 1,
+  "hovering a BILL target lights every wire into it, including all of a shared bundle's"
+);
+check(
+  wireOpacity(elsewhere, hoverTarget) === 0.1,
+  "and drops every unrelated bill right back"
+);
+check(
+  trunkOpacity(sixWiring, hoverTarget) === 1 && wireWidth(onB1, hoverTarget) === 2.5,
+  "the shared line lights with them and thickens, so emphasis reads without colour"
+);
+
+/* The three-tier case: hovering a ROW must not erase the other rows reaching the same
+   bill, because that shared destination is the thing being communicated. */
+const hoverRow = hoverJob("j1", ["bA"]);
+check(wireOpacity(onB1, hoverRow) === 1, "hovering a ROW lights its own wire");
+check(
+  wireOpacity(siblingOnB1, hoverRow) === 0.42,
+  "and leaves the other rows on the SAME bill visible but clearly dimmer",
+  "erasing them would hide the very relationship the wire exists to show"
+);
+check(wireOpacity(elsewhere, hoverRow) === 0.1, "while a different bill goes fully back");
+check(
+  wireOpacity(siblingOnB1, hoverRow) > wireOpacity(elsewhere, hoverRow),
+  "and the sibling tier really does sit between the two"
+);
+check(
+  trunkOpacity(sixWiring, hoverRow) === 1,
+  "the shared line lights too, because this row's wire runs into it"
+);
+
+/* A row on two bills lights both, and neither bill's other rows go dark. */
+const hoverTwo = hoverJob("j1", ["bA", "bB"]);
+check(
+  wireOpacity({ jobId: "j1", billId: "bB" }, hoverTwo) === 1,
+  "a row linked to two bills lights its wire into each of them"
+);
+check(
+  wireOpacity({ jobId: "j5", billId: "bA" }, hoverTwo) === 0.42 &&
+    wireOpacity({ jobId: "j5", billId: "bB" }, hoverTwo) === 0.42,
+  "and both bills' other rows stay at the sibling tier"
+);
+check(
+  wireOpacity(elsewhere, hoverTwo) === 0.1,
+  "two distinct bills are never merged into one bundle"
+);
+/* A wiring for a DIFFERENT bill, to prove a hovered row does not light every line. */
+const otherBillWiring = buildBillWiring(
+  { ...sixNode[0], billId: "bZ", label: "SEW/999", jobs: [link("j9", "bZ", "SEW/999")], jobCount: 1 },
+  new Map([["j9", { x: 200, y: 500 }]]),
+  900
+)!;
+check(
+  trunkOpacity(sixWiring, hoverTwo) === 1 && trunkOpacity(otherBillWiring, hoverTwo) === 0.1,
+  "only the hovered row's own bill lights its line",
+  `${trunkOpacity(sixWiring, hoverTwo)} vs ${trunkOpacity(otherBillWiring, hoverTwo)}`
+);
+
+/* Target emphasis is a level, not a flag, so a hovered row can light its own target
+   without lighting every target on the rail. */
+check(
+  billEmphasis("bA", hoverTarget) === 2 && billEmphasis("bZ", hoverTarget) === 0,
+  "the pointed-at target is fully emphasised and no other is"
+);
+check(
+  billEmphasis("bA", hoverRow) === 1 && billEmphasis("bZ", hoverRow) === 0,
+  "hovering a row emphasises ITS target only, at a lighter level"
+);
+check(billEmphasis("bA", null) === 0, "and nothing is emphasised with the pointer elsewhere");
+check(
+  isBillEmphasised("bA", hoverTarget) && !isBillEmphasised("bA", hoverRow),
+  "isBillEmphasised means the strict case only"
 );
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -721,201 +885,157 @@ check(
   "a fresh project must still be able to apply this migration"
 );
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   9) ONE BILL, ONE NODE — the consolidation this change is about
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* ==========================================================================
+   9) THE VISUAL GROUPING - one target per unique bill among the visible rows
+   ========================================================================== */
 console.log("\none bill is drawn once, however many rows point at it");
 
-/* A link shaped exactly like the one the database returns. Only the fields the
-   visual layer reads are needed, so these are deliberately minimal. */
-const link = (jobId: string, billId: string, label: string, party: string | null = null) =>
-  ({ job_id: jobId, bill_id: billId, label, party_name: party }) as never;
-
-const allMounted = (...ids: string[]) => new Set(ids);
-
-// 1, 2 ── the same bill from several rows
+/* 1 - two rows, one bill */
 {
   const nodes = buildBillNodes(
-    [link("j1", "bA", "SEW/317/2026-27", "Hawkins Cookers Ltd."), link("j2", "bA", "SEW/317/2026-27")],
+    [
+      link("j1", "bA", "SEW/317/2026-27", "Hawkins Cookers Ltd."),
+      link("j2", "bA", "SEW/317/2026-27"),
+    ],
     allMounted("j1", "j2")
   );
-  check(nodes.length === 1, "2 jobs on one bill produce exactly ONE node", `got ${nodes.length}`);
-  check(nodes[0].jobs.length === 2, "and that node carries both jobs", `${nodes[0].jobs.length}`);
+  check(nodes.length === 1, "2 jobs on the same bill produce exactly ONE visual target", `got ${nodes.length}`);
+  check(nodes[0].jobs.length === 2, "and that one target carries both jobs", `${nodes[0].jobs.length}`);
   check(
     nodes[0].label === "SEW/317/2026-27" && nodes[0].partyName === "Hawkins Cookers Ltd.",
-    "the node names the invoice and the customer once"
+    "naming the invoice once is enough - it is the same bills row on every link"
   );
 }
+
+/* 2 - five rows, one bill */
 {
   const five = buildBillNodes(
     ["j1", "j2", "j3", "j4", "j5"].map((j) => link(j, "bA", "SEW/317/2026-27")),
     allMounted("j1", "j2", "j3", "j4", "j5")
   );
-  check(five.length === 1, "5 jobs on one bill still produce exactly ONE node", `got ${five.length}`);
+  check(five.length === 1, "5 jobs on the same bill still produce exactly ONE target", `got ${five.length}`);
   check(five[0].jobs.length === 5, "carrying all five", `${five[0].jobs.length}`);
+  /* And the drawing: five stubs, ONE shared line, one run into the target. */
+  const ys = [54, 108, 162, 216, 270];
+  const node = layoutBillNodes(
+    five,
+    new Map(ys.map((y, i) => [`j${i + 1}`, y])),
+    { nodeHeight: 28, minGap: 8, minY: 0, maxY: 900 }
+  )[0];
+  const paths = wiringPaths(buildBillWiring(node, anchorsOf(...ys), 900)!);
+  check(
+    paths.stubs.length === 5 && (paths.trunk.match(/M /g) || []).length === 2,
+    "so it draws 5 stubs and ONE line, not 5 separate wires",
+    `${paths.stubs.length} stubs, ${(paths.trunk.match(/M /g) || []).length} subpaths`
+  );
 }
 
-// 3, 4 ── the reverse case, and two bills side by side
+/* 3 - two bills across five rows */
 {
-  const twoFromOneJob = buildBillNodes(
-    [link("j1", "bA", "Bill A"), link("j1", "bB", "Bill B")],
-    allMounted("j1")
-  );
-  check(twoFromOneJob.length === 2, "one job on TWO bills produces TWO nodes", `${twoFromOneJob.length}`);
-}
-{
-  const mixed = buildBillNodes(
+  const two = buildBillNodes(
     [
-      link("j1", "bA", "Bill A"),
-      link("j2", "bA", "Bill A"),
-      link("j3", "bA", "Bill A"),
-      link("j4", "bB", "Bill B"),
-      link("j5", "bB", "Bill B"),
+      link("j1", "bA", "Bill A"), link("j2", "bA", "Bill A"), link("j3", "bA", "Bill A"),
+      link("j4", "bB", "Bill B"), link("j5", "bB", "Bill B"),
     ],
     allMounted("j1", "j2", "j3", "j4", "j5")
   );
+  check(two.length === 2, "3 rows on Bill A and 2 on Bill B produce exactly TWO targets", `${two.length}`);
   check(
-    mixed.length === 2,
-    "3 jobs on Bill A and 2 on Bill B produce exactly TWO nodes",
-    `${mixed.length}`
+    (two.find((n) => n.billId === "bA")?.jobs.length ?? 0) === 3 &&
+      (two.find((n) => n.billId === "bB")?.jobs.length ?? 0) === 2,
+    "each target keeps only its own rows, so the two bundles never mix"
   );
   check(
-    (mixed.find((n) => n.billId === "bA")?.jobs.length ?? 0) === 3 &&
-      (mixed.find((n) => n.billId === "bB")?.jobs.length ?? 0) === 2,
-    "each node keeps only its own jobs"
+    groupLinksByBill([link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bB", "B")]).size === 2,
+    "the grouping key is bill_id, which is what makes any of this work"
+  );
+  check(
+    buildBillNodes([
+      link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bB", "B"),
+    ]).length === 2,
+    "and buildBillNodes agrees with it on how many targets there are"
   );
 }
 
-// 5, 11 ── job type is not part of a node's identity
+/* 4 - one row, two bills */
 {
-  const bothTypes = buildBillNodes(
-    [link("j1", "bA", "Bill A"), link("j2", "bA", "Bill A"), link("j3", "bA", "Bill A")],
-    allMounted("j1", "j2", "j3")
-  );
+  const fan = buildBillNodes([link("j1", "bA", "Bill A"), link("j1", "bB", "Bill B")], allMounted("j1"));
+  check(fan.length === 2, "one job on TWO bills produces TWO targets", `${fan.length}`);
   check(
-    bothTypes.length === 1,
-    "labour and with-material jobs sharing a bill share ONE node",
-    "job type is a property of the job, not of the bill it points at"
+    fan.every((n) => n.jobs.length === 1),
+    "each with a single wire, and neither folded into the other"
   );
 }
 
-// 10 ── a node must not outlive its rows
+/* 5 - labour and with-material on the same bill */
 {
-  const filtered = buildBillNodes(
-    [link("j1", "bA", "Bill A"), link("j2", "bB", "Bill B")],
-    allMounted("j2")
+  /* The visual layer is handed bill-side fields only; job_type is not even on the row it
+     groups. Including it here proves the grouping cannot depend on it. */
+  const typed = [
+    { ...(link("j1", "bA", "Bill A") as object), job_type: "labour" },
+    { ...(link("j2", "bA", "Bill A") as object), job_type: "with_material" },
+    { ...(link("j3", "bA", "Bill A") as object), job_type: "with_material" },
+  ] as never;
+  const nodes = buildBillNodes(typed, allMounted("j1", "j2", "j3"));
+  check(
+    nodes.length === 1 && nodes[0].jobs.length === 3,
+    "labour and with-material rows on one bill share ONE target",
+    "job type is a property of the job, not part of the grouping key"
   );
   check(
-    filtered.length === 1 && filtered[0].billId === "bB",
-    "a bill whose only job was filtered out loses its node",
-    "otherwise the rail would keep a stale card no visible row points at"
-  );
-  check(
-    buildBillNodes([link("j1", "bA", "Bill A")], allMounted()).length === 0,
-    "a bill with no visible jobs at all produces nothing"
+    !/job_type/.test(wireGeometrySource),
+    "and the grouping code never mentions job type",
+    "so it cannot start splitting a bill by type"
   );
 }
 
-// grouping is the same thing said differently, and must agree with buildBillNodes
+/* 8, 9 - filtering and pagination must not leave a stale target behind */
 {
-  const mixedLinks = [link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bB", "B")];
+  const all = [link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bB", "B")];
+
+  const oneLeft = buildBillNodes(all, allMounted("j1"));
   check(
-    groupLinksByBill(mixedLinks).size === 2,
-    "groupLinksByBill buckets by bill id, which is what buildBillNodes builds on"
+    oneLeft.length === 1 && oneLeft[0].billId === "bA" && oneLeft[0].jobs.length === 1,
+    "when a search leaves ONE of a bill's rows visible, that bill keeps its target",
+    "now reached by a single wire"
   );
+
+  const bGone = buildBillNodes(all, allMounted("j1", "j2"));
   check(
-    buildBillNodes(mixedLinks).length === groupLinksByBill(mixedLinks).size,
-    "and the two agree on how many nodes there are"
+    bGone.length === 1 && bGone[0].billId === "bA",
+    "and a bill whose rows all left the page loses its target entirely",
+    "no stale card that no visible row points at"
+  );
+
+  check(buildBillNodes(all, allMounted()).length === 0, "an empty page produces no targets");
+  check(buildBillNodes(all, null).length === 2, "with no mounted set at all, every unique bill is a target");
+  check(buildBillNodes([], allMounted("j1")).length === 0, "no links produces no targets, without throwing");
+  check(
+    buildBillNodes([link("j1", "bA", "A"), link("j2", "bA", "A")], allMounted("j1")).length === 1,
+    "and the surviving target is the same one, not a new card"
   );
 }
 
-console.log("\nnodes are placed in the middle of the rows pointing at them");
-{
-  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
-  const anchors = new Map([
-    ["j1", 100],
-    ["j2", 200],
-    ["j3", 300],
-  ]);
-  const one = layoutBillNodes(
-    buildBillNodes([link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bA", "A")]),
-    anchors,
-    opts
-  );
-  check(one.length === 1 && one[0].y === 200, "a node sits at the MEAN of its rows", `${one[0]?.y}`);
-  check(one[0].jobCount === 3, "and reports how many rows point at it");
-}
-{
-  /* Two bills whose jobs interleave both want the middle, so they must be pushed apart
-     rather than drawn on top of each other. */
-  const anchors = new Map([
-    ["j1", 100],
-    ["j2", 200],
-    ["j3", 300],
-    ["j4", 400],
-  ]);
-  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
-  const nodes = layoutBillNodes(
-    buildBillNodes(
-      [link("j1", "bA", "A"), link("j2", "bB", "B"), link("j3", "bA", "A"), link("j4", "bB", "B")],
-      allMounted("j1", "j2", "j3", "j4")
-    ),
-    anchors,
-    opts
-  );
-  check(nodes.length === 2, "interleaved bills still yield two nodes");
-  check(
-    Math.abs(nodes[0].y - nodes[1].y) >= 46,
-    "and never overlap",
-    `separation ${Math.abs(nodes[0].y - nodes[1].y)}pt`
-  );
-}
-{
-  /* Near the bottom the stack would overrun, so it is lifted back inside the area
-     rather than being drawn off the end of the page. */
-  const anchors = new Map([
-    ["j1", 900],
-    ["j2", 940],
-    ["j3", 980],
-  ]);
-  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
-  const nodes = layoutBillNodes(
-    buildBillNodes([link("j1", "bA", "A"), link("j2", "bB", "B"), link("j3", "bC", "C")]),
-    anchors,
-    opts
-  );
-  check(
-    nodes.every((n) => n.y <= 1000 - 23 + 0.001),
-    "nodes are lifted back inside the drawable area",
-    `max ${Math.max(...nodes.map((n) => n.y))}`
-  );
-  check(
-    Math.abs(nodes[0].y - nodes[1].y) >= 46 && Math.abs(nodes[1].y - nodes[2].y) >= 46,
-    "and the lift does not make them overlap again"
-  );
-  check(
-    nodes[0].y < nodes[1].y && nodes[1].y < nodes[2].y,
-    "nodes come back top-to-bottom, so paint order is stable frame to frame"
-  );
-}
-check(
-  layoutBillNodes([], new Map(), { nodeHeight: 46, minGap: 10, minY: 0, maxY: 100 }).length === 0,
-  "no nodes lays out to nothing, without throwing"
-);
-
-console.log("\nShow Links off means no rail and no wires");
-check(
-  /\{showLinks && \(\s*<th/.test(jobsPage.replace(/\s+/g, " ")),
-  "the rail column is only rendered while Show Links is on",
-  "so the default table is byte-for-byte what it was before this feature"
-);
+console.log("\nShow Links off means no targets, no wires and no reserved space");
 check(
   /useConnectionWires\(\{[\s\S]*?enabled: showLinks/.test(jobsPage),
-  "and the measuring hook is gated on Show Links, so nothing is measured when it is off"
+  "the measuring hook is gated on Show Links, so nothing is measured when it is off"
 );
 check(
-  /if \(!segments\.length/.test(wires),
-  "the wire layer renders nothing when there is nothing to draw"
+  /rail=\{showLinks\}/.test(jobsPage) && /\{rail && \(/.test(cell),
+  "the space the targets occupy is only reserved while Show Links is on"
+);
+check(
+  /showLinks \? "w-\[15rem\]" : ""/.test(jobsPage),
+  "and the column is only widened while it is on, so the default table is unchanged"
+);
+check(
+  /if \(!wirings\.length/.test(wires),
+  "the wire layer renders nothing at all when there is nothing to draw"
+);
+check(
+  /if \(nodes\.length === 0 \|\| railWidth <= 0\) return null/.test(rail),
+  "and the target rail renders nothing when there is nothing to point at"
 );
 check(
   !/WIRE_ATTR_NODE|data-wire-node|showChips/.test(cell),
@@ -923,44 +1043,97 @@ check(
   "that per-row chip was what made three jobs on one invoice look like three invoices"
 );
 check(
-  !/<button[\s\S]{0,200}?bills\.map/.test(cell) &&
-    /<AnchoredPopover[\s\S]*?\{bills\.map/.test(cell),
-  "the bills are listed only inside the popover, not in the table cell itself",
-  "so the cell stays a count in both Show Links states"
-);
-check(
   /connectionCountLabel\(count\)/.test(cell),
   "but it still shows the count as text",
-  "so the relationship survives with the wires off and for a screen reader"
+  "so the relationship survives with the wires off, and for a screen reader"
 );
 check(
-  /<BillNodeRail/.test(jobsPage) && /nodes=\{wireGeometry\.nodes\}/.test(jobsPage),
-  "the rail is rendered once per page from the measured nodes"
+  /connectionCountLabel\(count\)/.test(cell) && /jobCountLabel\(node\.jobCount\)/.test(rail),
+  "a row's badge counts BILLS and a target's badge counts JOBS",
+  "a target stands for exactly one bill, so 6 Bills on it would contradict the merge"
+);
+check(
+  (jobsPage.match(/WIRE_ATTR_RAIL/g) || []).length === 0 &&
+    !/Linked Bills/.test(jobsPage),
+  "no extra column was added for the targets - they live inside the existing one"
+);
+check(
+  /BILL_NODE_HEIGHT = 28/.test(hook) && /height: BILL_NODE_HEIGHT/.test(rail),
+  "the target is one compact row high, not a card"
+);
+check(
+  /<span className="text-\[11px\] leading-none">\{jobCountLabel\(node\.jobCount\)\}<\/span>/.test(rail),
+  "the badge's only text is the job count, so it stays the compact badge it replaced",
+  "a wide card per bill would turn the table into a dashboard"
+);
+check(
+  /title=\{`\$\{node\.label\}/.test(rail) && /aria-label=\{`\$\{node\.label\}/.test(rail),
+  "the invoice and party remain available in the title and the accessible name"
+);
+check(
+  /Jobs linked to \$\{openNode\?\.label/.test(rail),
+  "and in the popover it opens"
 );
 
-console.log("\nthe rail cannot swallow table clicks");
+console.log("\nthe targets cannot swallow table clicks");
+check(/z-\[3\] pointer-events-none/.test(rail), "the target layer is transparent to the pointer");
+check(/pointer-events-auto/.test(rail) && /<button/.test(rail), "with the targets themselves interactive");
+check(/focus-visible:ring-2/.test(rail), "and keyboard-focusable");
 check(
-  /z-\[3\] pointer-events-none/.test(rail),
-  "the node layer is transparent to the pointer"
-);
-check(
-  /pointer-events-auto/.test(rail) && /<button/.test(rail),
-  "with the cards themselves interactive"
+  /aria-label=\{`\$\{node\.label\}/.test(rail) && /aria-haspopup="dialog"/.test(rail),
+  "each target names the bill, its party and its job count for a screen reader"
 );
 check(
   /pointer-events-none/.test(wires) && /stroke="currentColor"/.test(wires),
   "and the wires are decoration that cannot intercept a click"
 );
+check(
+  /onMouseEnter=\{\(\) => showLinks && setHoveredWire\(null\)\}|onMouseLeave/.test(jobsPage),
+  "hover is read off the row and the target, never off the SVG"
+);
+
+console.log("\nthe theme still drives the colour, and nothing hard-codes a second one");
+check(/text-connection/.test(wires), "the wire layer takes its colour from --color-connection");
+check(/text-connection/.test(rail), "and so does the target");
+check(
+  !/#[0-9a-fA-F]{3,8}\b/.test(wires) && !/#[0-9a-fA-F]{3,8}\b/.test(rail),
+  "neither file contains a hex colour at all",
+  "so a theme change cannot leave one of them behind"
+);
+check(
+  /--theme-connection: #EF4444/.test(css),
+  "dark mode wires are red"
+);
+check(
+  /--theme-connection: #2563EB/.test(css),
+  "light mode wires are blue"
+);
+check(
+  /--color-connection: var\(--theme-connection\)/.test(css),
+  "both come from the one existing variable, not a second colour system"
+);
 
 console.log("\nthe popover is portalled so the table cannot clip it");
 check(
   /createPortal/.test(popover) && /document\.body/.test(popover),
-  "the panel is rendered into <body>, not into the row that opened it"
+  "the panel is rendered into the body, not into the row that opened it"
 );
 check(
   /className=\{`fixed z-\[200\]/.test(popover),
   "and positioned fixed against the viewport",
   "an absolutely positioned child of a cell inherits that cell's clipping, and no z-index lifts it out"
+);
+/* The bug that cost an afternoon: spreading a DOMRect yields an object with none of its
+   geometry, because those fields live on the prototype. The arithmetic came out NaN and
+   the panel sat silently in the corner of the window. */
+check(
+  !/\{\s*\.\.\.a\s*,/.test(popover) && /top: a\.top/.test(popover) && /bottom: a\.bottom/.test(popover),
+  "the six rect fields are read out by name rather than spread",
+  "a spread DOMRect has none of them, and the arithmetic then silently produces NaN"
+);
+check(
+  /!open \|\| typeof document === "undefined"/.test(popover),
+  "and the panel is not rendered at all while closed"
 );
 check(
   /addEventListener\("scroll", reposition, true\)/.test(popover),
@@ -968,13 +1141,22 @@ check(
   "capture phase, because a bubble-phase listener on window never sees an inner scroll box"
 );
 check(
-  /open\) schedule|if \(!open\) return;/.test(popover) &&
-    !/addEventListener\("scroll"/.test(cell),
-  "only an OPEN panel listens, so fifty rows do not each react to every scroll event"
+  /new ResizeObserver/.test(popover) && /window\.addEventListener\("resize", reposition\)/.test(popover),
+  "and re-measures on resize and on its own content changing size"
+);
+check(
+  /\[open, reposition\]\)/.test(popover) && !/\[open, reposition, children\]/.test(popover),
+  "the measure effect does not depend on children",
+  "children is a fresh object every render, which loops: measure, setState, render, measure"
+);
+check(
+  /setPosition\(\(prev\) =>/.test(popover),
+  "and an unchanged measurement returns the previous object",
+  "the same loop guard, at the point where it would start"
 );
 check(
   /<AnchoredPopover/.test(cell) && /<AnchoredPopover/.test(rail),
-  "both the row popover and the card popover use the one implementation"
+  "both the row popover and the target popover use the one implementation"
 );
 
 console.log("\nviewport placement: flip, then clamp");
@@ -1001,16 +1183,23 @@ const rect = (top: number, left: number, width = 120, height = 24) => ({
   );
   check(below.caretX !== null, "with a caret pointing back at the trigger");
 }
+/* The reported bug: a row near the bottom of the table. */
 {
-  /* The bug that started this: a row near the bottom of the table. */
   const near = computePopoverPosition(rect(700, 400), PANEL, VP);
   check(near.placement === "top", "with no room below, it opens ABOVE the trigger");
   check(
     near.top + PANEL.height <= 700 - TRIGGER_GAP + 0.01,
-    "and is entirely above it",
+    "and lies entirely above it, rather than hanging off the bottom of the window",
     `top ${near.top}`
   );
   check(near.caretX !== null, "the caret is still there when it flips");
+  /* The threshold: below needs anchor.bottom + gap + padding + height to fit. */
+  check(
+    computePopoverPosition(rect(518, 400), PANEL, VP).placement === "bottom" &&
+      computePopoverPosition(rect(519, 400), PANEL, VP).placement === "top",
+    "the flip happens at the exact threshold",
+    "a trigger one pixel lower still opens downwards"
+  );
 }
 {
   const right = computePopoverPosition(rect(100, 950), PANEL, VP);
@@ -1027,8 +1216,6 @@ const rect = (top: number, left: number, width = 120, height = 24) => ({
   );
 }
 {
-  /* A trigger hard against the left edge: the panel gets clamped, but the trigger is
-     still inside the panel's horizontal span, so the caret is still meaningful. */
   const left = computePopoverPosition(rect(100, 4), PANEL, VP);
   check(left.left >= VIEWPORT_PADDING - 0.01, "a trigger hard against the left edge is respected");
   check(
@@ -1046,9 +1233,8 @@ const rect = (top: number, left: number, width = 120, height = 24) => ({
 }
 {
   /* Taller than the space on either side: below still wins, because that is the side
-     people read first. The panel itself is capped by the component's maxHeight and
-     scrolls internally, so what has to hold here is that it STARTS on screen, on the
-     right side of the trigger. */
+     people read first. The panel is capped by the component's maxHeight and scrolls
+     internally, so what must hold is that it STARTS on screen, under its trigger. */
   const huge = computePopoverPosition(rect(300, 400), { width: 200, height: 700 }, VP);
   check(huge.placement === "bottom", "when neither side fits, it opens below");
   check(
@@ -1063,7 +1249,7 @@ check(
 );
 check(
   VIEWPORT_PADDING >= 8 && VIEWPORT_PADDING <= 12,
-  "the viewport padding is the 8–12px asked for",
+  "the viewport padding is the 8-12px asked for",
   `${VIEWPORT_PADDING}px`
 );
 check(
@@ -1073,7 +1259,6 @@ check(
   ),
   "placement holds on a small window too"
 );
-
 console.log();
 console.log(
   failures === 0
