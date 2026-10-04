@@ -617,6 +617,21 @@ const TOTAL_LABELS = new Set([
 const SIGNATURE_RE = /signature|proprietor|receiver|authori[sz]ed\s*(sign|for)/i;
 
 /**
+ * What spells the RECIPIENT's heading.
+ *
+ * One constant, used in three places: to find the heading, to read the note beside it,
+ * and to keep that heading out of the SELLER's block. They were three separate copies of
+ * the same pattern, and the third one drifting from the first two is what let a workbook
+ * with no seller block print "Details of Receipient (Billed To)" as the supplier's name.
+ *
+ * This template spells it "Receipient"; "recipient" and "billed to" are matched because
+ * the heading is not always written out in full. The template's own header note -
+ * "Original Copy of Invoice for Receipt..." - mentions none of them, so it cannot be
+ * mistaken for the recipient block.
+ */
+const RECIPIENT_HEADING_RE = /billed\s*to|recipient|receipient/i;
+
+/**
  * A footer line that is ONLY a designation — "(Proprietor)", "Director" — as
  * opposed to "For EXAMPLE ENGINEERING WORKS", which names a party.
  *
@@ -681,13 +696,38 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     );
   }
 
-  // leftHeader[0] is the title itself; the rest are the seller's lines in order.
   const leftHeader = r.colCells(leftCol, headerTop, headerBottom);
-  const sellerName = leftHeader[1]?.text ?? null;
-  const sellerDescriptor = leftHeader[2]?.text ?? null;
-  const sellerTaxLine = leftHeader[3]?.text ?? null;
-  const sellerAddress = leftHeader[4]?.text ?? null;
-  const sellerContact = leftHeader[5]?.text ?? null;
+
+  // The seller's own block is every left-column header line EXCEPT the recipient
+  // heading.
+  //
+  // WHY THE HEADING HAS TO BE FILTERED OUT
+  // A workbook is allowed to carry no seller block at all - it hands the company
+  // defaults to the Invoice Business Profile instead - and then the left column runs
+  // straight from the title to the recipient heading with nothing in between. Left
+  // unfiltered, that heading slides up into index 1 and becomes the seller's name, which
+  // does two wrong things at once:
+  //
+  //   1. it prints a section label where the supplier's name belongs, on an invoice
+  //      that goes to a customer;
+  //   2. because it is non-null it WINS over the profile's company name, so the very
+  //      defaults meant to fill the gap silently never appear.
+  //
+  // and a third, downstream: `splitFooter` names the supplier on the signature block
+  // from this same field, so a second bogus "For <the section heading>" line is printed
+  // in the footer beside the real one.
+  //
+  // The test is the same pattern the recipient heading itself is found with, so the
+  // two can never disagree about which line it is. Nothing else is filtered: a
+  // workbook that does carry a seller block is read exactly as before.
+  const sellerBlock = leftHeader.filter(
+    (l, i) => i === 0 || !RECIPIENT_HEADING_RE.test(l.text)
+  );
+  const sellerName = sellerBlock[1]?.text ?? null;
+  const sellerDescriptor = sellerBlock[2]?.text ?? null;
+  const sellerTaxLine = sellerBlock[3]?.text ?? null;
+  const sellerAddress = sellerBlock[4]?.text ?? null;
+  const sellerContact = sellerBlock[5]?.text ?? null;
 
   /* ---- labelled header fields ------------------------------------------- */
 
@@ -791,12 +831,12 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
   // This template spells it "Details of Receipient (Billed To)"; match either
   // spelling. The template's own header note mentions neither, so it cannot be
   // mistaken for the recipient block.
-  const recipientHit = r.findMatch(/billed\s*to|recipient|receipient/i, headerTop, 0);
+  const recipientHit = r.findMatch(RECIPIENT_HEADING_RE, headerTop, 0);
   const recipientHeading = recipientHit?.text ?? null;
   const recipientNote = recipientHit
     ? (r
         .row(recipientHit.row)
-        .find((c) => c.col > recipientHit.col && !/billed\s*to|recipient|receipient/i.test(c.text))
+        .find((c) => c.col > recipientHit.col && !RECIPIENT_HEADING_RE.test(c.text))
         ?.text ?? null)
     : null;
 
@@ -926,6 +966,22 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
       if (c.row === termsHit.row) continue;
       if (SIGNATURE_RE.test(c.text)) signatureLines.push(c.text);
       else termsLines.push(c.text);
+    }
+  } else {
+    // No Terms block at all - which is a legitimate workbook, not a broken one: it keeps
+    // its own footer and takes its terms from the Invoice Business Profile instead.
+    //
+    // The signature caption still has to be found, because the profile does not supply
+    // one. Without this the caption is silently dropped and the renderer falls back to
+    // its own built-in wording, so a workbook that wrote "(Buyer's Signature)" would be
+    // re-printed saying "(Receivers Signature)" - the workbook's wording replaced by the
+    // template's, with nothing to show that it happened.
+    //
+    // Only SIGNATURE_RE lines are taken. Without a Terms label there is nothing to say
+    // that any other line down here IS a term, and guessing would print arbitrary
+    // footer annotations as terms.
+    for (const c of r.colCells(leftCol, (wordsHit?.row ?? totalRow) + 1, last)) {
+      if (SIGNATURE_RE.test(c.text)) signatureLines.push(c.text);
     }
   }
 

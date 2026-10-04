@@ -216,10 +216,30 @@ function audit(filePath: string, label: string): void {
       ...lines.map((l) => PH - (l.y1 + l.y2) / 2),
       ...rects.map((r) => r.yTop + r.h)
     );
+
+    /* The signature block is ANCHORED to the foot of the sheet, so the whitespace above
+       it is deliberate and grows with how short the invoice is. Walking the baselines
+       straight through would count that space as an internal gap and report the design
+       itself as a formatting bug on every short bill, which is why this walked all the
+       way down before. The walk now stops at the signature rules — the two long
+       horizontals in the band just above the footer. `contentEnd` above still counts
+       them, because they really are content, and the block is still drawn in the map. */
+    const sigBandTop = CONTENT_BOTTOM - 60;
+    const sigYs = lines
+      .filter(
+        (l) =>
+          l.y1 === l.y2 &&
+          Math.abs(l.x2 - l.x1) >= 200 &&
+          PH - l.y1 > sigBandTop &&
+          PH - l.y1 <= CONTENT_BOTTOM
+      )
+      .map((l) => PH - l.y1);
+    const sigTop = sigYs.length ? Math.min(...sigYs) : Number.POSITIVE_INFINITY;
     let biggestGap = 0;
     let gapAt = 0;
     let prev = 0;
     for (const b of baselines) {
+      if (b >= sigTop - 0.01) break;
       if (b - prev > biggestGap) {
         biggestGap = b - prev;
         gapAt = prev;
@@ -229,6 +249,10 @@ function audit(filePath: string, label: string): void {
     const trailingBlank = CONTENT_BOTTOM - contentEnd;
     console.log(
       `  body: ${body.length} of ${items.length} runs; ends y=${contentEnd.toFixed(1)}; unused below = ${trailingBlank.toFixed(1)}pt`
+    );
+    console.log(
+      `  signature block anchored at y=${Number.isFinite(sigTop) ? sigTop.toFixed(1) : "not found"}` +
+        `; whitespace above it is deliberate and excluded from the gap walk`
     );
     console.log(`  largest internal gap = ${biggestGap}pt (after y=${gapAt})`);
     if (biggestGap > 90) {

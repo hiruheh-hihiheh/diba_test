@@ -362,14 +362,21 @@ console.log("\nno-logo renders carry nothing image-shaped");
    seller block with a name, descriptor, GST line, address and contact, which is
    the fullest header anything in the fixtures produces. If a change to the
    header, the type scale or the PDF writer perturbs a no-logo invoice by so much
-   as a byte, these fail and say which copy moved. */
+   as a byte, these fail and say which copy moved.
+
+   RE-PINNED, DELIBERATELY, for the footer alignment work: the signature block is
+   now anchored to the foot of the sheet and shifted 8pt left, and the totals
+   block 6.7pt left, to match a supplied reference invoice. Those are intended
+   changes to no-logo output too, so the pre-alignment digests no longer describe
+   the renderer. The digests below are the bytes as they stood immediately after
+   that change. Their purpose is unchanged — catch the NEXT unintended byte. */
 const NO_LOGO_DIGESTS: Record<CopyKind, string> = {
-  original: "b76c2e51c7eab106e986837760bac04639cfea9979188abd72ffefbfe0047812",
-  duplicate: "574ab94954e7500d6a738f9f767a8ae2c4fc4d4d0ce0b00fa0c555bedac046f0",
-  triplicate: "a27f092902cad94e2e992c7952a9e9d6904f88738f62df3de0103c5561a36ade",
+  original: "6a40e24adb407853d4808f859355b75cf2f9213d35b1a01bce330e7e774dc2ff",
+  duplicate: "8559a25768b665d24f7bfe88f6b68968cd8f075fb99e9d92083a78c771da1c8e",
+  triplicate: "9d3aa3e829747ddc3f8ce86eddaf734733fb8fedb1876058a3e1810609b1b982",
 };
 
-console.log("\nno-logo renders are byte-identical to the pre-letterhead documents");
+console.log("\nno-logo renders are byte-identical to the pinned documents");
 {
   for (const copy of COPY_ORDER) {
     const bytes = renderBillDocument([found[copy]], COPY_LABEL[copy]);
@@ -644,24 +651,61 @@ if (logoOpaque) {
   const growth = ruleMarked - rulePlain;
   check(growth > 0, "the bordered header is taller than the plain one", `${growth}pt`);
 
+  /* The signature block is the ONE thing below the header that no longer moves with
+     the flow: it is anchored to the foot of the sheet so a short invoice does not leave
+     a wide blank band above the signatures. So the body has to be compared in two parts
+     — the flow-following part shifts by exactly the growth, and the anchored part is
+     identical in both documents because nothing about it depends on the header.
+
+     The boundary is read out of each render rather than assumed, so a block that got
+     clamped against the foot of a full page still splits correctly. */
+  const anchored = (pdf: string): number | null => {
+    const ys = strokedLines(pdf)
+      .filter((l) => l.h < 0.6 && l.w >= 200 && l.y > CONTENT_BOTTOM - 60 && l.y <= CONTENT_BOTTOM)
+      .map((l) => l.y);
+    return ys.length ? Math.max(...ys) : null;
+  };
+  const anchorMarked = anchored(marked);
+  const anchorPlain = anchored(plain);
+  check(
+    anchorMarked !== null && anchorPlain !== null && anchorMarked === anchorPlain,
+    "the anchored signature rule lands in the same place with and without the logo",
+    `${anchorMarked} vs ${anchorPlain}`
+  );
+  const cut = anchorPlain ?? CONTENT_BOTTOM;
+
   // The body's own strings, compared as multisets of (text, y) pairs. Index-by-
   // index is meaningless here: the seller block re-wraps into an extra line, so
   // every subsequent index shifts.
   const below = (pdf: string, rule: number) =>
     textPlacements(pdf)
-      .filter((t) => t.y > rule + 0.01 && t.y <= CONTENT_BOTTOM)
+      .filter((t) => t.y > rule + 0.01 && t.y < cut - 0.01)
       .map((t) => `${t.text}\u0000${t.y.toFixed(3)}`);
   const shifted = (pdf: string, rule: number, by: number) =>
     textPlacements(pdf)
-      .filter((t) => t.y > rule + 0.01 && t.y <= CONTENT_BOTTOM)
+      .filter((t) => t.y > rule + 0.01 && t.y < cut - 0.01)
       .map((t) => `${t.text}\u0000${(t.y - by).toFixed(3)}`);
   const sortCount = (xs: string[]) => xs.sort();
   const a = sortCount(shifted(marked, ruleMarked, growth));
   const b = sortCount(below(plain, rulePlain));
   check(
     a.length === b.length && a.every((v, i) => v === b[i]),
-    "the whole body is the same strings, shifted down by exactly the header growth",
+    "the whole body above the signature block is the same strings, shifted down by exactly the header growth",
     `${a.length} strings, growth ${growth}pt`
+  );
+
+  /* And the anchored part is the same strings at the same y in both — proof the
+     anchor is to the sheet and not to whatever the content happened to measure. */
+  const anchoredText = (pdf: string) =>
+    sortCount(
+      textPlacements(pdf)
+        .filter((t) => t.y > cut - 0.01 && t.y <= CONTENT_BOTTOM)
+        .map((t) => `${t.x.toFixed(3)} ${t.y.toFixed(3)} ${t.text}`)
+    );
+  check(
+    anchoredText(marked).join("\n") === anchoredText(plain).join("\n"),
+    "the signature block is identical with and without the logo",
+    `${anchoredText(plain).length} strings below the rule`
   );
 
   /* Text alone is not enough: the item table's rules, the GST table's outline and
@@ -677,17 +721,30 @@ if (logoOpaque) {
   const graphics = (pdf: string, rule: number, by: number): string[] => {
     const stream = contentStream(pdf);
     const boxes = [...strokedRects(stream), ...strokedLines(stream)].filter(
-      (b) => b.y > rule + 0.01
+      (b) => b.y > rule + 0.01 && b.y < cut - 0.01
     );
     return boxes.map((b) => `${b.x.toFixed(3)} ${(b.y - by).toFixed(3)} ${b.w.toFixed(3)} ${b.h.toFixed(3)}`).sort();
+  };
+  /* The anchored block's own strokes, which must NOT be shifted. */
+  const anchoredGraphics = (pdf: string): string[] => {
+    const stream = contentStream(pdf);
+    return [...strokedRects(stream), ...strokedLines(stream)]
+      .filter((b) => b.y > cut - 0.01 && b.y <= CONTENT_BOTTOM)
+      .map((b) => `${b.x.toFixed(3)} ${b.y.toFixed(3)} ${b.w.toFixed(3)} ${b.h.toFixed(3)}`)
+      .sort();
   };
   const ga = graphics(marked, ruleMarked, growth);
   const gb = graphics(plain, rulePlain, 0);
   check(ga.length > 0, "the body draws strokes of its own", `${ga.length} rectangles and lines`);
   check(
     ga.length === gb.length && ga.every((v, i) => v === gb[i]),
-    "every rule and box below the header is the same, shifted by the growth",
+    "every rule and box above the signature block is the same, shifted by the growth",
     ga.length === gb.length ? "" : `${ga.length} vs ${gb.length}`
+  );
+  check(
+    anchoredGraphics(marked).join("\n") === anchoredGraphics(plain).join("\n"),
+    "the anchored signature rules are the same with and without the logo",
+    `${anchoredGraphics(plain).length} strokes below the rule`
   );
 
   // The footer is the one thing that must NOT move: it is anchored to the page,
@@ -702,6 +759,97 @@ if (logoOpaque) {
     fa.length === fb.length && fa.every((v, i) => v === fb[i]),
     "the footer does not move at all",
     fb.length === fa.length ? "" : `${fa.length} vs ${fb.length}`
+  );
+}
+
+console.log("\nthe footer sits where the reference invoice puts it");
+{
+  /* The three footer alignments, pinned against the numbers MEASURED from the supplied
+     reference invoice rather than restated as constants that could be moved in step with
+     the renderer and so never disagree with it. `real pdf template saastha.pdf` puts
+     its signature rules at x 38.1 and 305.8 with a y of 783.0, and its totals box at
+     x 284.5; it is 842.25pt tall against our 841.89, so the rule's height is compared
+     as a distance from the foot of the page, which is what the anchor is written in. */
+  const SIG_RULE_FROM_BOTTOM = 59.25;
+  const SIG_DX = -8;
+  const TOTALS_INSET = 6.7;
+
+  const pdf = latin1(renderBillDocument([ordinary], COPY_LABEL.original));
+  const pdfRule = headerRuleY(pdf);
+  const sigRules = strokedLines(pdf).filter(
+    (l) => l.h < 0.6 && l.w >= 200 && l.y > CONTENT_BOTTOM - 60 && l.y <= CONTENT_BOTTOM
+  );
+  check(
+    sigRules.length === 2,
+    "the signature block draws exactly two rules, one per column",
+    `${sigRules.length} found`
+  );
+  const sigY = sigRules.length ? Math.max(...sigRules.map((l) => l.y)) : NaN;
+  check(
+    Math.abs(PAGE_H - sigY - SIG_RULE_FROM_BOTTOM) < 0.05,
+    "the signature rule is anchored to the foot of the sheet",
+    `${(PAGE_H - sigY).toFixed(2)}pt above the bottom edge`
+  );
+  const left = sigRules.find((l) => l.x < RIGHT_EDGE / 2);
+  const right = sigRules.find((l) => l.x >= RIGHT_EDGE / 2);
+  check(
+    !!left && Math.abs(left.x - (MARGIN_X + SIG_DX + 16)) < 0.05,
+    "the left signature rule is 8pt left of where it was, at the same offset inside its column",
+    left ? `x=${left.x.toFixed(2)} want ${(MARGIN_X + SIG_DX + 16).toFixed(2)}` : "not found"
+  );
+  check(
+    !!left && !!right && Math.abs(right.x - (left.x + left.w) - 32) < 0.05,
+    "the gap between the two signature rules is the reference's 32pt",
+    right && left ? `${(right.x - (left.x + left.w)).toFixed(2)}pt` : "not found"
+  );
+  check(
+    !!left && !!right && Math.abs(left.w - right.w) < 0.05 && Math.abs(left.w - 235.6) < 0.1,
+    "both signature rules are the reference's 235.6pt long",
+    left && right ? `${left.w.toFixed(2)} / ${right.w.toFixed(2)}` : "not found"
+  );
+
+  /* The totals box is a stroked rectangle 274pt wide, which is TOTAL_LABEL_W +
+     TOTAL_VALUE_W, and the reference's sits at x 284.5 — 6.7pt inside our content
+     margin rather than flush with it. */
+  const totalsBoxes = strokedRects(pdf).filter((b) => Math.abs(b.w - 274) < 0.2);
+  check(totalsBoxes.length > 0, "the totals box is drawn at its declared width", `${totalsBoxes.length} found`);
+  const totalsX = Math.min(...totalsBoxes.map((b) => b.x));
+  check(
+    Math.abs(totalsX - (RIGHT_EDGE - 274 - TOTALS_INSET)) < 0.05,
+    "the totals block is 6.7pt inside the content margin",
+    `x=${totalsX.toFixed(2)} want ${(RIGHT_EDGE - 274 - TOTALS_INSET).toFixed(2)}`
+  );
+
+  /* The point of anchoring: where the signatures land is no longer a function of how much
+     content the invoice happened to carry. Two bills that end at different heights must
+     put the signature rule in the same place — and the guard below proves the two bills
+     really do end at different heights, so the check is not vacuous. */
+  const sparsePdf = latin1(renderBillDocument([sparse], COPY_LABEL.original));
+  const shortRule = headerRuleY(sparsePdf);
+  const lowestBody = (doc: string, rule: number, ceiling: number): number => {
+    const ys = textPlacements(doc)
+      .filter((t) => t.y > rule && t.y < ceiling - 0.01)
+      .map((t) => t.y);
+    return ys.length ? Math.max(...ys) : NaN;
+  };
+  const lowLong = lowestBody(pdf, pdfRule, sigY);
+  const lowShort = lowestBody(sparsePdf, shortRule, sigY);
+  check(
+    Number.isFinite(lowShort) &&
+      Number.isFinite(lowLong) &&
+      Math.abs(lowLong - lowShort) > 1,
+    "the two fixtures really do end at different heights",
+    `body ends at ${lowShort.toFixed(2)} and ${lowLong.toFixed(2)}`
+  );
+  const shortSig = strokedLines(sparsePdf).filter(
+    (l) => l.h < 0.6 && l.w >= 200 && l.y > CONTENT_BOTTOM - 60 && l.y <= CONTENT_BOTTOM
+  );
+  check(
+    shortSig.length === 2 && Math.abs(Math.max(...shortSig.map((l) => l.y)) - sigY) < 0.05,
+    "a bill that ends higher up still puts its signature rule in the same place",
+    shortSig.length
+      ? `${Math.max(...shortSig.map((l) => l.y)).toFixed(2)} vs ${sigY.toFixed(2)}`
+      : "none found"
   );
 }
 

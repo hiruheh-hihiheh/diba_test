@@ -1098,10 +1098,38 @@ const COLUMN_LEADING = T.columnBody + 2;
 const NOTE_LEADING = 10;
 const SIG_LEADING = 10.2;
 const SIG_RULE_OFFSET = 16;
+/**
+ * How far the signature block is shifted LEFT of the content margin.
+ *
+ * Measured, not guessed: the reference invoice's two signature rules sit at x 38.1 and
+ * x 305.8, ours at 46.0 and 313.6 — a translation of 7.8pt with the rules the same
+ * length (235.7 vs 235.6) and the same 32pt gap between them. So the block keeps its
+ * geometry and moves as one piece; the columns stay `CONTENT_W / 2` wide apart.
+ */
+const SIG_BLOCK_DX = -8;
+/**
+ * Distance from the page's bottom edge to the signature RULES.
+ *
+ * The block used to follow the content flow, which left a wide blank band between the
+ * signatures and the footer line on any bill shorter than a full page — about 127pt on
+ * the reference's own layout, against 20pt in the template it is meant to match.
+ * Anchoring to the foot of the sheet closes that. It is anchored on the RULE rather than
+ * on the block's bottom edge because the block's height varies with how many
+ * designations the workbook supplies, and the rule is the line that has to land in the
+ * same place on every bill.
+ */
+const SIG_RULE_FROM_BOTTOM = 59.25;
 const TOTAL_ROW_H = 15.5;
 const TOTAL_BLOCK_TAIL = 14;
 const TOTAL_LABEL_W = 178;
 const TOTAL_VALUE_W = 96;
+/**
+ * How far the totals block is shifted LEFT of the content margin.
+ *
+ * The reference draws it at x 284.5–558.6 and we draw at 291.3–565.3. The widths already
+ * agree (274.1 vs 274.0), so this is a pure translation of the whole block, not a resize.
+ */
+const TOTALS_INSET = 6.7;
 /** The "Total Quantity" rule-and-figure strip that closes the table. */
 const TOTAL_QTY_H = 32;
 const REF_ROW_H = 14.5;
@@ -1271,7 +1299,7 @@ function renderTotals(sheet: Sheet, bill: BillCopy): void {
   const rows = totalRows(bill);
   const labelW = TOTAL_LABEL_W;
   const valueW = TOTAL_VALUE_W;
-  const x = sheet.right - labelW - valueW;
+  const x = sheet.right - labelW - valueW - TOTALS_INSET;
   const rowH = TOTAL_ROW_H;
 
   sheet.reserve(rows.length * rowH + TOTAL_BLOCK_TAIL);
@@ -1405,6 +1433,16 @@ function renderColumns(sheet: Sheet, bill: BillCopy): void {
 const SUPPLIER_SIG_RE = /^\s*for\s+\S|proprietor|proprietorship|director|partner|signatory|for\s+and\s+on\s+behalf/i;
 
 /**
+ * A footer line that names the supplier: "For EXAMPLE ENGINEERING WORKS".
+ *
+ * Split out from `SUPPLIER_SIG_RE` because the two answer different questions. That one
+ * asks "does this line belong in the signature block at all", and a bare "(Proprietor)"
+ * qualifies. This one asks "does this line already NAME the company", which only a "For
+ * ..." line does - and only that answer suppresses adding a name of our own.
+ */
+const SUPPLIER_FOR_RE = /^\s*for\s+\S/i;
+
+/**
  * Split the trailing annotations into prose and the supplier's signature block.
  *
  * The workbook carries "For EXAMPLE ENGINEERING WORKS" and "(Proprietor)" as
@@ -1419,11 +1457,26 @@ function splitFooter(bill: BillCopy): { notes: string[]; supplierLines: string[]
     if (SUPPLIER_SIG_RE.test(note)) supplierLines.push(note);
     else notes.push(note);
   }
-  // Always name the supplier on the signature block, even if the template only
-  // carried the "(Proprietor)" designation.
-  if (bill.sellerName) {
-    const named = new RegExp(`^\\s*for\\s+${bill.sellerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-    if (!supplierLines.some((l) => named.test(l))) supplierLines.unshift(`For ${bill.sellerName}`);
+  // Name the supplier on the signature block when the footer does not already name one,
+  // so a template that carried only the "(Proprietor)" designation still says who is
+  // signing.
+  //
+  // WHEN A "FOR ..." LINE ALREADY EXISTS, IT IS LEFT ALONE - even if it names somebody
+  // other than `bill.sellerName`.
+  //
+  // The workbook naming itself in its own footer is the bill exercising the same
+  // precedence rule as every other field: its value wins. `sellerName` may by then have
+  // come from the Invoice Business Profile, because the workbook carried no seller block,
+  // so the two disagree by construction - the workbook's footer names one company while
+  // the profile supplies another. Adding a second "For ..." line would print both names
+  // on one invoice, which is worse than either alone: a customer cannot tell which
+  // company is issuing the bill.
+  //
+  // This also keeps the profile from contradicting itself. `onBehalfOf` already let the
+  // workbook's signatory line win, so synthesising another one from the profile's company
+  // name here would undo that decision in the one place it is visible.
+  if (bill.sellerName && !supplierLines.some((l) => SUPPLIER_FOR_RE.test(l))) {
+    supplierLines.unshift(`For ${bill.sellerName}`);
   }
   return { notes, supplierLines };
 }
@@ -1463,11 +1516,17 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
   const bodyH = signaturesHeight(bill) - ruleOffset - 4 - 8;
   const boxH = ruleOffset + bodyH + 4;
 
-  // The block follows the content flow rather than being pinned to the foot of
-  // the sheet: a short invoice would otherwise leave a large blank band above
-  // the signatures.
+  /* Reserve FIRST, in flow, so the page-break policy still sees the space the block
+     needs at the point the content actually reaches. Then place the block as low as it
+     will go on this page. Doing it the other way round would let the anchor push the
+     block past the foot of a page that was already full. */
   sheet.reserve(boxH + 8);
-  const top = sheet.y + 6;
+  const flowTop = sheet.y + 6;
+  const anchorTop = PAGE_H - SIG_RULE_FROM_BOTTOM - ruleOffset;
+  /* Never later than the flow position (that is where the content left off) and never
+     low enough to run past the content area (a tall block, or one landing on an already
+     full page, simply stays where the flow put it). */
+  const top = Math.max(flowTop, Math.min(anchorTop, CONTENT_BOTTOM - boxH));
   const lineY = top + ruleOffset;
 
   const drawColumn = (x: number, lines: string[], align: "left" | "right"): void => {
@@ -1484,8 +1543,8 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
     }
   };
 
-  drawColumn(sheet.left, supplierLines, "left");
-  drawColumn(sheet.left + colW, receiverLines, "right");
+  drawColumn(sheet.left + SIG_BLOCK_DX, supplierLines, "left");
+  drawColumn(sheet.left + colW + SIG_BLOCK_DX, receiverLines, "right");
 
   sheet.y = top + boxH;
 }

@@ -19,6 +19,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readXlsx } from "../process-bill-upload/_shared/xlsx.ts";
+// The self-test's own minimal workbook writer. Section M needs a REAL workbook - the
+// bugs it pins live in the parser, so a hand-built BillCopy would test nothing - and
+// this is how the repo already produces one without checking a binary into the tree.
+import { writeXlsx } from "./write-xlsx.ts";
+import type { Sheet, SheetCell } from "../process-bill-upload/_shared/xlsx.ts";
 import { decodePdfImage, deflate } from "../process-bill-upload/_shared/pdfImage.ts";
 // The client's own list of profile keys, imported across the boundary on purpose. It is
 // the single place the settings screen's field names live, and the one thing that could
@@ -98,7 +103,6 @@ function latin1(bytes: Uint8Array): string {
   return new TextDecoder("latin1").decode(bytes);
 }
 
-/**
 /**
  * A small opaque PNG letterhead, built byte by byte.
  *
@@ -1100,12 +1104,209 @@ console.log("\nL. a fuller header never costs a page");
   );
 }
 
-console.log(
-  failures === 0
-    ? "\nBUSINESS PROFILE CHECKS: all passed."
-    : `\nBUSINESS PROFILE CHECKS: ${failures} FAILED.`
-);
-process.exit(failures === 0 ? 0 : 1);
+/* ── M. A workbook that hands its header to the profile ──────────────────── */
+console.log("\nM. a workbook with no seller block of its own");
+
+{
+  // The whole point of the profile is a workbook that does NOT repeat the company's
+  // details on every bill. That is the shape built here, and it is the shape in which
+  // two real parser bugs appeared - the reason this section exists at all.
+  //
+  // It is derived from the committed sanitized fixture by deleting ONLY the seller's own
+  // header rows. Deriving it rather than hand-building it matters: the bugs live in the
+  // parser, so they can only be pinned by a real workbook, and a fixture rebuilt from a
+  // committed one is reproducible where a checked-in binary would not be.
+  const source = (await readXlsx(readFileSync(resolve(REPO, "test-bills-sanitized.xlsx")))).sheets[0];
+
+  // Every variant below is this fixture with some cells removed, so they all start from
+  // the SAME sheet and state every deletion in one predicate. Building them from a
+  // half-edited sheet instead would let one variant quietly inherit another's deletions,
+  // which is how a check can pass for the wrong reason.
+  const variant = (name: string, drop: (text: string, row: number) => boolean): Sheet => {
+    const cells = new Map<string, SheetCell>();
+    for (const cell of source.cells.values()) {
+      if (drop(String(cell.value ?? ""), cell.row)) continue;
+      cells.set(`${cell.row}:${cell.col}`, cell);
+    }
+    return { ...source, name, cells };
+  };
+
+  // 0-based rows 3-7 are the seller's name, descriptor, GST line, address and contacts.
+  // What survives runs straight from the title to the recipient heading, which is what a
+  // company gets once it decides its defaults live in the settings screen instead.
+  const noSellerBlock = (_text: string, row: number): boolean => row >= 3 && row <= 7;
+  const namesTheSupplier = (text: string): boolean => /^\s*for\s+\S/i.test(text);
+
+  const delegating = variant("DelegatesHeader", noSellerBlock);
+
+  const parsed = parseBills((await readXlsx(writeXlsx([delegating]))).sheets).bills;
+  check(parsed.length === 1, "a workbook with no seller block still parses to one bill", `${parsed.length} bills`);
+  const bill = parsed[0]?.original;
+  if (!bill) throw new Error("cannot continue: the seller-less workbook produced no bill");
+
+  // ── BUG 1: the recipient heading used to be read as the SUPPLIER's name.
+  //
+  // Left in the seller's slot it did not merely look wrong on the page. A non-null
+  // sellerName WINS over the profile, so the company's own configured name was discarded
+  // - the defaults meant to fill the gap could never be reached - and, one step further
+  // on, `splitFooter` builds the signature block's "For <name>" line out of this same
+  // field, so a second wrong line reached the footer as well.
+  check(bill.sellerName === null, "no seller name is invented from the recipient heading", JSON.stringify(bill.sellerName));
+  check(bill.sellerDescriptor === null, "and no description is invented", JSON.stringify(bill.sellerDescriptor));
+  check(bill.sellerTaxLine === null, "and no tax line", JSON.stringify(bill.sellerTaxLine));
+  check(bill.sellerAddress === null, "and no address", JSON.stringify(bill.sellerAddress));
+  check(bill.sellerContact === null, "and no contact line", JSON.stringify(bill.sellerContact));
+
+  // Filtering the seller's lines must not have disturbed the RECIPIENT's block, which is
+  // the whole reason the heading is recognised rather than simply skipped.
+  check(
+    (bill.recipientHeading ?? "").length > 0,
+    "the recipient heading is still read",
+    JSON.stringify(bill.recipientHeading)
+  );
+  check((bill.partyName ?? "").length > 0, "and so is the recipient's name", JSON.stringify(bill.partyName));
+  check((bill.partyGstNo ?? "").length > 0, "and their GST number", JSON.stringify(bill.partyGstNo));
+
+  // ── The profile reaches the page, which is the symptom this whole feature exists for.
+  const merged = applyBusinessProfile(bill, profile());
+  check(merged.sellerName === CO, "the profile's company name fills the empty seller slot", JSON.stringify(merged.sellerName));
+
+  const drawn = normalize(pdfText(renderBillDocument([bill], COPY_LABEL.original, null, profile())));
+  check(drawn.includes(normalize(CO)), "and it is printed at the top of the invoice");
+  // Counted, not merely tested for absence: the heading legitimately appears further down
+  // as the RECIPIENT's, so "does not contain it" would be the wrong question.
+  const heading = normalize(bill.recipientHeading ?? "RECEIPIENT");
+  const headingCount = heading.length > 0 ? drawn.split(heading).length - 1 : -1;
+  check(
+    headingCount === 1,
+    "the recipient heading is printed once, as the recipient's - not also as the supplier's",
+    `${headingCount} occurrences`
+  );
+
+  // ── BUG 2: the receiver caption used to be lost whenever there was no Terms block.
+  //
+  // It was only ever collected from inside that block, so a workbook that keeps its own
+  // footer and takes its terms from the profile lost the caption. The renderer then fell
+  // back to its own built-in wording, so the workbook's "(Buyer's Signature)" would be
+  // re-printed as "(Receivers Signature)" with nothing to show that it had happened.
+  //
+  // Built by removing the Terms LABEL and the numbered lines it introduces - the signature
+  // caption is left in place, which is the point.
+  const noTerms = variant(
+    "NoTerms",
+    (text, row) =>
+      noSellerBlock(text, row) ||
+      /terms\s*(?:and|&)?\s*conditions/i.test(text) ||
+      /^\s*\d+\s*\./.test(text)
+  );
+  const lean = parseBills((await readXlsx(writeXlsx([noTerms]))).sheets).bills[0]?.original;
+  check(lean !== undefined, "a workbook with no Terms block still parses");
+  if (lean) {
+    check(
+      (lean.receiverSignature ?? "").length > 0,
+      "its receiver signature caption survives",
+      JSON.stringify(lean.receiverSignature)
+    );
+    check(
+      lean.termsLines.length === 0,
+      "and it does not invent terms out of the remaining footer annotations",
+      JSON.stringify(lean.termsLines)
+    );
+    // The workbook's own wording must beat the profile's, because the bill wins.
+    const withProfile = applyBusinessProfile(lean, profile({ receiverSignatureLabel: "(PROFILE RECEIVER)" }));
+    check(
+      withProfile.receiverSignature === lean.receiverSignature,
+      "and beats the profile's, since the bill's own value wins",
+      JSON.stringify(withProfile.receiverSignature)
+    );
+    check(
+      !normalize(pdfText(renderBillDocument([lean], COPY_LABEL.original, null, profile()))).includes(
+        normalize("(PROFILE RECEIVER)")
+      ),
+      "so the caption printed is the workbook's, not the profile's"
+    );
+  }
+
+  // ── BUG 3, in the renderer: two different companies named on one invoice.
+  //
+  // The workbook's footer says "For EXAMPLE ENGINEERING WORKS" while the profile supplies
+  // a different company name. Both were printed, because the renderer added a line from
+  // the seller name without noticing the workbook had already named the supplier - and a
+  // customer cannot tell which company is issuing the bill.
+  //
+  // WHAT IS COUNTED, and why it is not the company name on its own: the profile's company
+  // name is CORRECTLY printed at the top of the invoice, in the seller's slot. Searching
+  // the page for it proves nothing about the signature block. Only the "For <name>" form
+  // can appear on a signature line, so that is what is counted.
+  const own = normalize(bill.onBehalfOf ?? "");
+  const pageWith = normalize(pdfText(renderBillDocument([bill], COPY_LABEL.original, null, profile())));
+  const pageWithout = normalize(pdfText(renderBillDocument([bill], COPY_LABEL.original)));
+
+  const occurrences = (page: string, needle: string): number =>
+    needle.length > 0 ? page.split(needle).length - 1 : 0;
+
+  check(
+    occurrences(pageWith, own) === 1,
+    "the workbook's own signatory line is printed exactly once",
+    `${occurrences(pageWith, own)} occurrences of ${JSON.stringify(own)}`
+  );
+  check(
+    occurrences(pageWith, normalize(`For ${CO}`)) === 0,
+    "and the profile's company name is NOT added as a second signatory line",
+    `${occurrences(pageWith, normalize(`For ${CO}`))} occurrences`
+  );
+  check(
+    occurrences(pageWith, normalize(`For ${bill.recipientHeading}`)) === 0,
+    "and the recipient heading is never used as that name"
+  );
+
+  // ── With no profile at all, the workbook's line stands alone. The seller name is null
+  // here, so there is nothing for the renderer to synthesise from - and the page must not
+  // gain a name just because a profile exists elsewhere in the system.
+  check(
+    occurrences(pageWithout, own) === 1,
+    "with no profile the workbook's signatory line still stands alone",
+    `${occurrences(pageWithout, own)} occurrences`
+  );
+  check(
+    occurrences(pageWithout, normalize(`For ${bill.recipientHeading}`)) === 0,
+    "and no 'For <section heading>' line is invented"
+  );
+
+  // ── The complementary case, so the fix above cannot be mistaken for "never name the
+  // supplier". A workbook whose footer does NOT name anyone must still get a name on the
+  // signature block - from the profile, since that is now the only source of one.
+  const silent = variant("SilentFooter", (text, row) => noSellerBlock(text, row) || namesTheSupplier(text));
+  const unnamed = parseBills((await readXlsx(writeXlsx([silent]))).sheets).bills[0]?.original;
+  check(unnamed !== undefined, "a workbook whose footer names nobody still parses");
+  if (unnamed) {
+    check(unnamed.onBehalfOf === null, "and names nobody", JSON.stringify(unnamed.onBehalfOf));
+    const page = normalize(pdfText(renderBillDocument([unnamed], COPY_LABEL.original, null, profile())));
+    check(
+      occurrences(page, normalize(`For ${CO}`)) === 1,
+      "the profile's company name is named on the signature block instead",
+      `${occurrences(page, normalize(`For ${CO}`))} occurrences`
+    );
+  }
+
+  // ── The regression that matters most: a workbook that DOES carry a seller block must
+  // still be read exactly as it always was. The filter above runs on every upload, so
+  // "it works on the new shape" is only half the claim - "it changed nothing for anyone
+  // else" is the other half.
+  const untouched = parseBills((await readXlsx(readFileSync(resolve(REPO, "test-bills-sanitized.xlsx")))).sheets).bills[0]
+    ?.original;
+  check(untouched !== undefined, "the unmodified fixture still parses");
+  if (untouched) {
+    check(untouched.sellerName === "EXAMPLE ENGINEERING WORKS", "a workbook with a seller block is read exactly as before", JSON.stringify(untouched.sellerName));
+    check(untouched.sellerDescriptor !== null, "its descriptor is intact", JSON.stringify(untouched.sellerDescriptor));
+    check(untouched.sellerTaxLine !== null, "its tax line is intact", JSON.stringify(untouched.sellerTaxLine));
+    check(untouched.sellerAddress !== null, "its address is intact");
+    check(untouched.sellerContact !== null, "its contact line is intact");
+    check(untouched.receiverSignature === "(Receivers Signature)", "its signature caption is intact", JSON.stringify(untouched.receiverSignature));
+    check(untouched.termsLines.length === 3, "and its three terms are still read", `${untouched.termsLines.length} terms`);
+  }
+}
+
 console.log(
   failures === 0
     ? "\nBUSINESS PROFILE CHECKS: all passed."
