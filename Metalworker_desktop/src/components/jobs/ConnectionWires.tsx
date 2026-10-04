@@ -19,9 +19,9 @@
 // clickable: clicking a job row or its actions column has to behave exactly as it did
 // before this feature existed.
 
-import type { Point } from "./wireGeometry";
+import type { Point, WireHover } from "./wireGeometry";
 import { wireOpacity, wirePath, wireWidth } from "./wireGeometry";
-import type { WireGeometry, WireHover } from "../../hooks/useConnectionWires";
+import type { WireGeometry } from "../../hooks/useConnectionWires";
 
 interface Props {
   geometry: WireGeometry;

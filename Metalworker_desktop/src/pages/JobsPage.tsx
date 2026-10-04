@@ -76,8 +76,16 @@ import JobEditModal from "../components/jobs/JobEditModal";
 import JobDrawingModal from "../components/jobs/JobDrawingModal";
 import ConnectionsCell from "../components/jobs/ConnectionsCell";
 import ConnectionWires from "../components/jobs/ConnectionWires";
+import BillNodeRail from "../components/jobs/BillNodeRail";
 import LinkJobsToBillModal from "../components/jobs/LinkJobsToBillModal";
-import { WIRE_ATTR_ANCHOR, anchorAttr, groupLinksByJob } from "../components/jobs/wireGeometry";
+import {
+  WIRE_ATTR_ANCHOR,
+  WIRE_ATTR_RAIL,
+  anchorAttr,
+  groupLinksByJob,
+  hoverJob,
+  type BillNodeBox,
+} from "../components/jobs/wireGeometry";
 import { useConnectionWires, type WireHover } from "../hooks/useConnectionWires";
 import { usePageMeta } from "../contexts/PageMetaContext";
 import { useSelection } from "../hooks/useSelection";
@@ -382,6 +390,14 @@ export default function JobsPage({
   /* Per job, so a row can render its own chips and the measuring pass can walk the
      table once per row rather than once per link. */
   const linksByJob = useMemo(() => groupLinksByJob(jobLinks), [jobLinks]);
+  /* Job numbers for the rail's cards. `get_job_bill_connections` returns the BILL's
+     fields, so the job's own number and type come from the rows the page already has —
+     no extra request to open a card. */
+  const railJobMeta = useMemo(
+    () =>
+      new Map(jobs.map((j) => [j.id, { jobNo: j.job_no, jobType: j.job_type }])),
+    [jobs]
+  );
   const linkedJobCount = useMemo(
     () => [...linksByJob.values()].filter((b) => b.length > 0).length,
     [linksByJob]
@@ -611,6 +627,56 @@ export default function JobsPage({
         title: "Unlinked",
         description: `${link.label} is no longer linked to job ${job.job_no || ""}.`,
       });
+    } catch (err) {
+      toast.error({
+        title: "Could not unlink",
+        description: err instanceof Error ? err.message : "The connection is unchanged.",
+      });
+    } finally {
+      setRowBusyId(null);
+      setLinksVersion((v) => v + 1);
+    }
+  }
+
+  /**
+   * Unlink from the BILL side — the shared rail's card.
+   *
+   * The same relationship as `handleUnlink`, approached from its other end, so it cannot
+   * drift: one delete of the same pair, one confirmation that says the same thing, one
+   * refresh of the same link list. The job's number is read back out of the node's own
+   * links rather than passed in, because the rail knows the bill and the link but not
+   * the job object.
+   */
+  async function handleUnlinkFromRail(node: BillNodeBox, link: JobBillConnection) {
+    const job = jobs.find((j) => j.id === link.job_id);
+    if (job) {
+      await handleUnlink(job, link);
+      return;
+    }
+    /* The job is not in the loaded page — it can only happen if the list changed between
+       rendering and clicking. Still unlink, just without the name. */
+    const jobNo = railJobMeta.get(link.job_id)?.jobNo ?? null;
+    const ok = await confirm({
+      title: "Unlink this job?",
+      message: (
+        <>
+          <strong className="text-text">{jobNo || "This job"}</strong> will be
+          unlinked from <strong className="text-text">{node.label}</strong>.
+          <strong className="block mt-2 text-text">
+            Only the connection is removed. The bill and the job both stay exactly as they
+            are.
+          </strong>
+        </>
+      ),
+      confirmLabel: "Unlink",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setRowBusyId(link.job_id);
+    try {
+      await unlinkConnections([link.job_id], [node.billId]);
+      await loadJobLinks(jobs.map((j) => j.id));
+      toast.success({ title: "Unlinked", description: `${jobNo || "Job"} is off ${node.label}.` });
     } catch (err) {
       toast.error({
         title: "Could not unlink",
@@ -1168,6 +1234,16 @@ export default function JobsPage({
                     <div className="overflow-auto scrollbar-thin flex-1 min-h-0">
                       <div ref={wireLayerRef} className="relative">
                         <ConnectionWires geometry={wireGeometry} hovered={hoveredWire} />
+                        <BillNodeRail
+                          nodes={wireGeometry.nodes}
+                          railX={wireGeometry.railX}
+                          railWidth={wireGeometry.railWidth}
+                          height={wireGeometry.height}
+                          hovered={hoveredWire}
+                          jobMeta={railJobMeta}
+                          onHover={setHoveredWire}
+                          onUnlink={(node, link) => void handleUnlinkFromRail(node, link)}
+                        />
                       <table className="w-full whitespace-nowrap relative z-[2]">
                         <thead className="sticky-head">
                           <tr className="border-b border-border">
@@ -1216,6 +1292,19 @@ export default function JobsPage({
                             <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
                               Connections
                             </th>
+                            {/* The rail exists only while Show Links is on. It is an empty
+                                column: the CARDS are positioned over it by
+                                `BillNodeRail`, so that one bill is drawn once however many
+                                rows point at it. Rendering a card inside each row is what
+                                made three jobs on one invoice look like three invoices. */}
+                            {showLinks && (
+                              <th
+                                {...{ [WIRE_ATTR_RAIL]: "" }}
+                                className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 w-[13rem]"
+                              >
+                                Linked Bills
+                              </th>
+                            )}
                             <th className="sticky-actions sticky-head-cell text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 w-[9.5rem]">
                               Actions
                             </th>
@@ -1228,6 +1317,18 @@ export default function JobsPage({
                               <tr
                                 key={item.id}
                                 aria-busy={rowBusy}
+                                /* Hovering anywhere on the row emphasises its wires, so the
+                                   relationship can be inspected without aiming at the
+                                   count badge. Cheap: it only sets state while Show Links
+                                   is on and the row actually has links. */
+                                onMouseEnter={() => {
+                                  if (showLinks && (linksByJob.get(item.id)?.length ?? 0) > 0) {
+                                    setHoveredWire(hoverJob(item.id));
+                                  }
+                                }}
+                                onMouseLeave={() => {
+                                  if (showLinks) setHoveredWire(null);
+                                }}
                                 className={`transition-colors ${
                                   jobSelection.isSelected(item.id)
                                     ? "bg-primary/5"
@@ -1311,11 +1412,16 @@ export default function JobsPage({
                                   jobId={item.id}
                                   jobNo={item.job_no}
                                   bills={linksByJob.get(item.id) ?? []}
-                                  showChips={showLinks}
                                   busy={rowBusy}
                                   onHover={setHoveredWire}
                                   onUnlink={(link) => void handleUnlink(item, link)}
                                 />
+                                {/* Empty: the CARDS for this column are positioned over it by
+                                    `BillNodeRail`, one per unique bill. Every row needs a
+                                    cell here or the columns would not line up. */}
+                                {showLinks && (
+                                  <td {...{ [WIRE_ATTR_RAIL]: "" }} className="px-4 py-3.5" />
+                                )}
                                 <td className="sticky-actions px-4 py-3.5">
                                   <div className="flex items-center gap-1">
                                     <IconButton

@@ -27,12 +27,24 @@ import { fileURLToPath } from "node:url";
    The restatement is what would let the two drift. */
 import {
   anchorAttr,
+  buildBillNodes,
+  groupLinksByBill,
   groupLinksByJob,
-  nodeAttr,
+  hoverBill,
+  hoverJob,
+  isBillEmphasised,
+  layoutBillNodes,
   wireOpacity,
   wirePath,
   wireWidth,
+  WIRE_ATTR_ANCHOR,
+  WIRE_ATTR_RAIL,
 } from "../../../../Metalworker_desktop/src/components/jobs/wireGeometry.ts";
+import {
+  computePopoverPosition,
+  TRIGGER_GAP,
+  VIEWPORT_PADDING,
+} from "../../../../Metalworker_desktop/src/components/ui/popoverPosition.ts";
 import { connectionCountLabel, jobCountLabel } from "../../../../Metalworker_desktop/src/types/billJobConnections.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
@@ -68,6 +80,9 @@ const jobsPage = mustRead(resolve(DESKTOP, "src/pages/JobsPage.tsx"));
 const billsPage = mustRead(resolve(DESKTOP, "src/pages/Bills.tsx"));
 const service = mustRead(resolve(DESKTOP, "src/services/billJobConnections.ts"));
 const wires = mustRead(resolve(DESKTOP, "src/components/jobs/ConnectionWires.tsx"));
+const rail = mustRead(resolve(DESKTOP, "src/components/jobs/BillNodeRail.tsx"));
+const popover = mustRead(resolve(DESKTOP, "src/components/ui/AnchoredPopover.tsx"));
+const cell = mustRead(resolve(DESKTOP, "src/components/jobs/ConnectionsCell.tsx"));
 const css = mustRead(resolve(DESKTOP, "src/index.css"));
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -413,8 +428,14 @@ check(
 console.log("\nwire geometry");
 
 check(
-  anchorAttr("job-1") === "job-1" && nodeAttr("job-1", "bill-1") === "job-1:bill-1",
-  "the anchor and node keys are built the same way the measuring hook looks them up"
+  anchorAttr("job-1") === "job-1" && WIRE_ATTR_ANCHOR === "data-wire-anchor",
+  "a row's anchor is its job id under one attribute name",
+  "so the measuring hook and the page cannot disagree about what to look for"
+);
+check(
+  WIRE_ATTR_RAIL === "data-wire-rail",
+  "the bill-node rail is marked with its own attribute",
+  "the hook uses it to tell 'Show Links is on but no rail rendered' from 'off'"
 );
 check(
   /WIRE_ATTR_ANCHOR/.test(jobsPage) && /anchorAttr\(item\.id\)/.test(jobsPage),
@@ -471,22 +492,33 @@ check(
   "no links groups to nothing, without throwing"
 );
 
-const hovered = { jobId: "j1", billId: "b1" };
-const same = { jobId: "j1", billId: "b1" };
-const sibling = { jobId: "j1", billId: "b2" };
+const hovered = hoverBill("b1");
+const onB1 = { jobId: "j1", billId: "b1" };
 const other = { jobId: "j2", billId: "b3" };
 check(
-  wireOpacity(same, null) === 0.55 && wireOpacity(same, hovered) === 1,
-  "with nothing hovered every wire rests; the hovered one comes to the front"
+  wireOpacity(onB1, null) === 0.55 && wireOpacity(onB1, hovered) === 1,
+  "with nothing hovered every wire rests; an emphasised one comes to the front"
 );
 check(
-  wireOpacity(sibling, hovered) < wireOpacity(same, hovered) &&
-    wireOpacity(sibling, hovered) > wireOpacity(other, hovered),
-  "a hovered job's other wires dim less than unrelated jobs",
-  "so the shape of its bundle stays readable"
+  wireOpacity(other, hovered) < wireOpacity(onB1, hovered),
+  "hovering a BILL emphasises its wires and dims unrelated ones",
+  "which is the case that makes one invoice with five jobs legible"
 );
 check(
-  wireWidth(same, hovered) === 3 && wireWidth(same, null) === 2,
+  wireOpacity({ jobId: "j1", billId: "b2" }, hoverJob("j1")) === 1 &&
+    wireOpacity({ jobId: "j2", billId: "b3" }, hoverJob("j1")) === 0.12,
+  "hovering a JOB emphasises every wire out of that row, and only those"
+);
+check(
+  isBillEmphasised("b1", hoverBill("b1")) && !isBillEmphasised("b2", hoverBill("b1")),
+  "only the pointed-at bill's node highlights, not every node on the rail"
+);
+check(
+  !isBillEmphasised("b1", null) && !isBillEmphasised("b1", hoverJob("j1")),
+  "and nothing highlights when the pointer is not on a bill"
+);
+check(
+  wireWidth(onB1, hovered) === 3 && wireWidth(onB1, null) === 2,
   "the emphasised wire is thicker, which reads without relying on colour"
 );
 
@@ -687,6 +719,359 @@ check(
   /SKIPPED/.test(fix),
   "it skips rather than failing when no active admin exists",
   "a fresh project must still be able to apply this migration"
+);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   9) ONE BILL, ONE NODE — the consolidation this change is about
+   ═══════════════════════════════════════════════════════════════════════════ */
+console.log("\none bill is drawn once, however many rows point at it");
+
+/* A link shaped exactly like the one the database returns. Only the fields the
+   visual layer reads are needed, so these are deliberately minimal. */
+const link = (jobId: string, billId: string, label: string, party: string | null = null) =>
+  ({ job_id: jobId, bill_id: billId, label, party_name: party }) as never;
+
+const allMounted = (...ids: string[]) => new Set(ids);
+
+// 1, 2 ── the same bill from several rows
+{
+  const nodes = buildBillNodes(
+    [link("j1", "bA", "SEW/317/2026-27", "Hawkins Cookers Ltd."), link("j2", "bA", "SEW/317/2026-27")],
+    allMounted("j1", "j2")
+  );
+  check(nodes.length === 1, "2 jobs on one bill produce exactly ONE node", `got ${nodes.length}`);
+  check(nodes[0].jobs.length === 2, "and that node carries both jobs", `${nodes[0].jobs.length}`);
+  check(
+    nodes[0].label === "SEW/317/2026-27" && nodes[0].partyName === "Hawkins Cookers Ltd.",
+    "the node names the invoice and the customer once"
+  );
+}
+{
+  const five = buildBillNodes(
+    ["j1", "j2", "j3", "j4", "j5"].map((j) => link(j, "bA", "SEW/317/2026-27")),
+    allMounted("j1", "j2", "j3", "j4", "j5")
+  );
+  check(five.length === 1, "5 jobs on one bill still produce exactly ONE node", `got ${five.length}`);
+  check(five[0].jobs.length === 5, "carrying all five", `${five[0].jobs.length}`);
+}
+
+// 3, 4 ── the reverse case, and two bills side by side
+{
+  const twoFromOneJob = buildBillNodes(
+    [link("j1", "bA", "Bill A"), link("j1", "bB", "Bill B")],
+    allMounted("j1")
+  );
+  check(twoFromOneJob.length === 2, "one job on TWO bills produces TWO nodes", `${twoFromOneJob.length}`);
+}
+{
+  const mixed = buildBillNodes(
+    [
+      link("j1", "bA", "Bill A"),
+      link("j2", "bA", "Bill A"),
+      link("j3", "bA", "Bill A"),
+      link("j4", "bB", "Bill B"),
+      link("j5", "bB", "Bill B"),
+    ],
+    allMounted("j1", "j2", "j3", "j4", "j5")
+  );
+  check(
+    mixed.length === 2,
+    "3 jobs on Bill A and 2 on Bill B produce exactly TWO nodes",
+    `${mixed.length}`
+  );
+  check(
+    (mixed.find((n) => n.billId === "bA")?.jobs.length ?? 0) === 3 &&
+      (mixed.find((n) => n.billId === "bB")?.jobs.length ?? 0) === 2,
+    "each node keeps only its own jobs"
+  );
+}
+
+// 5, 11 ── job type is not part of a node's identity
+{
+  const bothTypes = buildBillNodes(
+    [link("j1", "bA", "Bill A"), link("j2", "bA", "Bill A"), link("j3", "bA", "Bill A")],
+    allMounted("j1", "j2", "j3")
+  );
+  check(
+    bothTypes.length === 1,
+    "labour and with-material jobs sharing a bill share ONE node",
+    "job type is a property of the job, not of the bill it points at"
+  );
+}
+
+// 10 ── a node must not outlive its rows
+{
+  const filtered = buildBillNodes(
+    [link("j1", "bA", "Bill A"), link("j2", "bB", "Bill B")],
+    allMounted("j2")
+  );
+  check(
+    filtered.length === 1 && filtered[0].billId === "bB",
+    "a bill whose only job was filtered out loses its node",
+    "otherwise the rail would keep a stale card no visible row points at"
+  );
+  check(
+    buildBillNodes([link("j1", "bA", "Bill A")], allMounted()).length === 0,
+    "a bill with no visible jobs at all produces nothing"
+  );
+}
+
+// grouping is the same thing said differently, and must agree with buildBillNodes
+{
+  const mixedLinks = [link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bB", "B")];
+  check(
+    groupLinksByBill(mixedLinks).size === 2,
+    "groupLinksByBill buckets by bill id, which is what buildBillNodes builds on"
+  );
+  check(
+    buildBillNodes(mixedLinks).length === groupLinksByBill(mixedLinks).size,
+    "and the two agree on how many nodes there are"
+  );
+}
+
+console.log("\nnodes are placed in the middle of the rows pointing at them");
+{
+  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
+  const anchors = new Map([
+    ["j1", 100],
+    ["j2", 200],
+    ["j3", 300],
+  ]);
+  const one = layoutBillNodes(
+    buildBillNodes([link("j1", "bA", "A"), link("j2", "bA", "A"), link("j3", "bA", "A")]),
+    anchors,
+    opts
+  );
+  check(one.length === 1 && one[0].y === 200, "a node sits at the MEAN of its rows", `${one[0]?.y}`);
+  check(one[0].jobCount === 3, "and reports how many rows point at it");
+}
+{
+  /* Two bills whose jobs interleave both want the middle, so they must be pushed apart
+     rather than drawn on top of each other. */
+  const anchors = new Map([
+    ["j1", 100],
+    ["j2", 200],
+    ["j3", 300],
+    ["j4", 400],
+  ]);
+  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
+  const nodes = layoutBillNodes(
+    buildBillNodes(
+      [link("j1", "bA", "A"), link("j2", "bB", "B"), link("j3", "bA", "A"), link("j4", "bB", "B")],
+      allMounted("j1", "j2", "j3", "j4")
+    ),
+    anchors,
+    opts
+  );
+  check(nodes.length === 2, "interleaved bills still yield two nodes");
+  check(
+    Math.abs(nodes[0].y - nodes[1].y) >= 46,
+    "and never overlap",
+    `separation ${Math.abs(nodes[0].y - nodes[1].y)}pt`
+  );
+}
+{
+  /* Near the bottom the stack would overrun, so it is lifted back inside the area
+     rather than being drawn off the end of the page. */
+  const anchors = new Map([
+    ["j1", 900],
+    ["j2", 940],
+    ["j3", 980],
+  ]);
+  const opts = { nodeHeight: 46, minGap: 10, minY: 0, maxY: 1000 };
+  const nodes = layoutBillNodes(
+    buildBillNodes([link("j1", "bA", "A"), link("j2", "bB", "B"), link("j3", "bC", "C")]),
+    anchors,
+    opts
+  );
+  check(
+    nodes.every((n) => n.y <= 1000 - 23 + 0.001),
+    "nodes are lifted back inside the drawable area",
+    `max ${Math.max(...nodes.map((n) => n.y))}`
+  );
+  check(
+    Math.abs(nodes[0].y - nodes[1].y) >= 46 && Math.abs(nodes[1].y - nodes[2].y) >= 46,
+    "and the lift does not make them overlap again"
+  );
+  check(
+    nodes[0].y < nodes[1].y && nodes[1].y < nodes[2].y,
+    "nodes come back top-to-bottom, so paint order is stable frame to frame"
+  );
+}
+check(
+  layoutBillNodes([], new Map(), { nodeHeight: 46, minGap: 10, minY: 0, maxY: 100 }).length === 0,
+  "no nodes lays out to nothing, without throwing"
+);
+
+console.log("\nShow Links off means no rail and no wires");
+check(
+  /\{showLinks && \(\s*<th/.test(jobsPage.replace(/\s+/g, " ")),
+  "the rail column is only rendered while Show Links is on",
+  "so the default table is byte-for-byte what it was before this feature"
+);
+check(
+  /useConnectionWires\(\{[\s\S]*?enabled: showLinks/.test(jobsPage),
+  "and the measuring hook is gated on Show Links, so nothing is measured when it is off"
+);
+check(
+  /if \(!segments\.length/.test(wires),
+  "the wire layer renders nothing when there is nothing to draw"
+);
+check(
+  !/WIRE_ATTR_NODE|data-wire-node|showChips/.test(cell),
+  "the connections cell no longer renders a per-bill chip or a wire target",
+  "that per-row chip was what made three jobs on one invoice look like three invoices"
+);
+check(
+  !/<button[\s\S]{0,200}?bills\.map/.test(cell) &&
+    /<AnchoredPopover[\s\S]*?\{bills\.map/.test(cell),
+  "the bills are listed only inside the popover, not in the table cell itself",
+  "so the cell stays a count in both Show Links states"
+);
+check(
+  /connectionCountLabel\(count\)/.test(cell),
+  "but it still shows the count as text",
+  "so the relationship survives with the wires off and for a screen reader"
+);
+check(
+  /<BillNodeRail/.test(jobsPage) && /nodes=\{wireGeometry\.nodes\}/.test(jobsPage),
+  "the rail is rendered once per page from the measured nodes"
+);
+
+console.log("\nthe rail cannot swallow table clicks");
+check(
+  /z-\[3\] pointer-events-none/.test(rail),
+  "the node layer is transparent to the pointer"
+);
+check(
+  /pointer-events-auto/.test(rail) && /<button/.test(rail),
+  "with the cards themselves interactive"
+);
+check(
+  /pointer-events-none/.test(wires) && /stroke="currentColor"/.test(wires),
+  "and the wires are decoration that cannot intercept a click"
+);
+
+console.log("\nthe popover is portalled so the table cannot clip it");
+check(
+  /createPortal/.test(popover) && /document\.body/.test(popover),
+  "the panel is rendered into <body>, not into the row that opened it"
+);
+check(
+  /className=\{`fixed z-\[200\]/.test(popover),
+  "and positioned fixed against the viewport",
+  "an absolutely positioned child of a cell inherits that cell's clipping, and no z-index lifts it out"
+);
+check(
+  /addEventListener\("scroll", reposition, true\)/.test(popover),
+  "it follows its trigger while any ancestor scrolls",
+  "capture phase, because a bubble-phase listener on window never sees an inner scroll box"
+);
+check(
+  /open\) schedule|if \(!open\) return;/.test(popover) &&
+    !/addEventListener\("scroll"/.test(cell),
+  "only an OPEN panel listens, so fifty rows do not each react to every scroll event"
+);
+check(
+  /<AnchoredPopover/.test(cell) && /<AnchoredPopover/.test(rail),
+  "both the row popover and the card popover use the one implementation"
+);
+
+console.log("\nviewport placement: flip, then clamp");
+const VP = { width: 1000, height: 800 };
+const PANEL = { width: 288, height: 240 };
+const rect = (top: number, left: number, width = 120, height = 24) => ({
+  top,
+  left,
+  width,
+  height,
+  right: left + width,
+  bottom: top + height,
+});
+{
+  const below = computePopoverPosition(rect(100, 400), PANEL, VP);
+  check(
+    below.placement === "bottom" && below.top === 100 + 24 + TRIGGER_GAP,
+    "with room below, the panel opens below the trigger"
+  );
+  check(
+    Math.abs(below.left - (400 + 60 - 144)) < 0.01,
+    "and is centred on it",
+    `left ${below.left}`
+  );
+  check(below.caretX !== null, "with a caret pointing back at the trigger");
+}
+{
+  /* The bug that started this: a row near the bottom of the table. */
+  const near = computePopoverPosition(rect(700, 400), PANEL, VP);
+  check(near.placement === "top", "with no room below, it opens ABOVE the trigger");
+  check(
+    near.top + PANEL.height <= 700 - TRIGGER_GAP + 0.01,
+    "and is entirely above it",
+    `top ${near.top}`
+  );
+  check(near.caretX !== null, "the caret is still there when it flips");
+}
+{
+  const right = computePopoverPosition(rect(100, 950), PANEL, VP);
+  check(
+    right.left + PANEL.width <= VP.width - VIEWPORT_PADDING + 0.01,
+    "a panel that would cross the right edge is shifted back inside",
+    `left ${right.left}, right ${right.left + PANEL.width}`
+  );
+  check(right.left >= VIEWPORT_PADDING - 0.01, "and never crosses the left edge either");
+  check(
+    right.caretX === null,
+    "the caret is dropped rather than drawn on a corner",
+    "its trigger is off past the panel's own edge"
+  );
+}
+{
+  /* A trigger hard against the left edge: the panel gets clamped, but the trigger is
+     still inside the panel's horizontal span, so the caret is still meaningful. */
+  const left = computePopoverPosition(rect(100, 4), PANEL, VP);
+  check(left.left >= VIEWPORT_PADDING - 0.01, "a trigger hard against the left edge is respected");
+  check(
+    left.caretX !== null && Math.abs(left.left + left.caretX - (4 + 60)) < 0.01,
+    "and its caret still points at the trigger",
+    `caret ${left.caretX}`
+  );
+}
+{
+  const small = computePopoverPosition(rect(100, 400), { width: 400, height: 900 }, VP);
+  check(
+    small.left >= VIEWPORT_PADDING && small.left + 400 <= VP.width - VIEWPORT_PADDING + 0.01,
+    "a panel wider than the window is clamped to the padding on both sides"
+  );
+}
+{
+  /* Taller than the space on either side: below still wins, because that is the side
+     people read first. The panel itself is capped by the component's maxHeight and
+     scrolls internally, so what has to hold here is that it STARTS on screen, on the
+     right side of the trigger. */
+  const huge = computePopoverPosition(rect(300, 400), { width: 200, height: 700 }, VP);
+  check(huge.placement === "bottom", "when neither side fits, it opens below");
+  check(
+    huge.top === 300 + 24 + TRIGGER_GAP && huge.top >= 0 && huge.top < VP.height,
+    "starting on screen, just under its trigger",
+    `top ${huge.top}`
+  );
+}
+check(
+  /maxHeight/.test(popover) && /overflow-y-auto/.test(popover),
+  "an over-tall panel scrolls internally rather than running off the window"
+);
+check(
+  VIEWPORT_PADDING >= 8 && VIEWPORT_PADDING <= 12,
+  "the viewport padding is the 8–12px asked for",
+  `${VIEWPORT_PADDING}px`
+);
+check(
+  [computePopoverPosition(rect(100, 400), PANEL, { width: 320, height: 300 }),
+   computePopoverPosition(rect(250, 100), PANEL, { width: 320, height: 300 })].every(
+    (p) => p.left >= 0 && p.left + PANEL.width <= 320 + 0.01 && p.top >= 0
+  ),
+  "placement holds on a small window too"
 );
 
 console.log();

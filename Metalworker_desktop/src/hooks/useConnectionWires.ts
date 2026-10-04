@@ -1,6 +1,6 @@
 // src/hooks/useConnectionWires.ts
 //
-// Measures where the connection wires go.
+// Measures where the connection wires and the shared bill nodes go.
 //
 // WHY THE OVERLAY LIVES INSIDE THE SCROLL CONTAINER
 // The obvious implementation is a `position: fixed` layer plus a scroll listener that
@@ -9,37 +9,43 @@
 // a ResizeObserver all wired up, and it re-measures the whole table sixty times a
 // second on a trackpad.
 //
-// Instead the SVG is absolutely positioned inside the SAME scrolling box as the table.
-// The browser then moves the table and the wires together as one layer, so scrolling
-// — vertical or horizontal — cannot desynchronise them at all, with no listener and no
-// re-measure. What is left to measure is only the things that actually move the boxes
-// relative to each other: a reflow from a resize, a filter changing which rows exist,
-// a page change, a link being added or removed, and the container itself changing size.
+// Instead the layer is absolutely positioned inside the SAME scrolling box as the table.
+// The browser then moves the table, the wires and the nodes together as one layer, so
+// scrolling — vertical or horizontal — cannot desynchronise them at all, with no
+// listener and no re-measure. What is left to measure is only what actually moves the
+// boxes relative to each other: a reflow from a resize, a filter changing which rows
+// exist, a page change, a link being added or removed, and the container resizing.
 //
-// WHY ONLY RENDERED ROWS ARE MEASURED
+// WHY ONLY MOUNTED ROWS COUNT
 // The DOM is queried for the rows that exist right now, so a table of two thousand jobs
-// at fifty to a page measures fifty rows. There is no "render everything and hide it"
-// path to go slow on.
+// at fifty to a page measures fifty rows. That same set of mounted ids is what decides
+// which bill nodes exist: a node is drawn only while some visible row points at it, so
+// paging away from a bill removes its node without any extra bookkeeping.
+//
+// WHY NODES ARE COMPUTED, NOT MEASURED
+// A node's position is derived from the rows pointing at it, not read back from the DOM.
+// Measuring would be circular — the node would need a position before it could be
+// rendered, and rendering would move it. Computing also lets the overlap resolution in
+// `layoutBillNodes` run as pure arithmetic that a unit test can check.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   WIRE_ATTR_ANCHOR,
-  WIRE_ATTR_NODE,
+  WIRE_ATTR_RAIL,
+  buildBillNodes,
+  layoutBillNodes,
+  type BillNodeBox,
   type Point,
+  type WireHover,
   type WireSegment,
 } from "../components/jobs/wireGeometry";
 import type { JobBillConnection } from "../types/billJobConnections";
 
-export interface WireHover {
-  jobId: string;
-  billId: string;
-}
-
 interface Options {
-  /** The relatively-positioned box that contains BOTH the table and the SVG. */
+  /** The relatively-positioned box that contains the table, the SVG and the nodes. */
   containerRef: React.RefObject<HTMLElement | null>;
-  /** The links to draw. Only those whose row and chip are both mounted get a wire. */
+  /** The links to draw. Only those whose row is mounted become a wire. */
   links: JobBillConnection[];
   /** Show Links is on. When false nothing is measured at all. */
   enabled: boolean;
@@ -47,22 +53,39 @@ interface Options {
    * Anything that moves a box without changing the link list: a search, a page change,
    * a folder switch, a finished fetch. A plain string rather than a counter, because
    * the caller is declaring WHAT invalidates the geometry and this hook owns WHEN to
-   * re-measure. A counter would need an effect to bump it, which is a second render
-   * for information the hook could have taken as a dependency directly.
+   * re-measure.
    */
   measureKey?: string;
 }
 
 const NO_KEY = "";
+/** Height of one bill node, in pixels. Fixed so the layout maths needs no measuring. */
+export const BILL_NODE_HEIGHT = 46;
+/** Smallest gap between two stacked nodes. */
+const NODE_MIN_GAP = 10;
+/** Horizontal breathing room inside the rail. */
+const RAIL_PADDING = 8;
 
 export interface WireGeometry {
   segments: WireSegment[];
+  /** One entry per unique bill among the visible rows. */
+  nodes: BillNodeBox[];
+  /** Left edge and usable width of the rail, in overlay coordinates. */
+  railX: number;
+  railWidth: number;
   /** Width and height the SVG must cover. */
   width: number;
   height: number;
 }
 
-const EMPTY: WireGeometry = { segments: [], width: 0, height: 0 };
+const EMPTY: WireGeometry = {
+  segments: [],
+  nodes: [],
+  railX: 0,
+  railWidth: 0,
+  width: 0,
+  height: 0,
+};
 
 export function useConnectionWires({
   containerRef,
@@ -83,37 +106,64 @@ export function useConnectionWires({
     /* Every read happens before any write, in one pass, so the measuring loop cannot
        interleave with layout and force the browser to reflow twice per frame. */
     const base = container.getBoundingClientRect();
+
+    /* Where the rail sits. Absent means the column is not rendered, which is the case
+       whenever Show Links is off. */
+    const railEl = container.querySelector<HTMLElement>(`[${WIRE_ATTR_RAIL}]`);
+    if (!railEl) {
+      setGeometry(EMPTY);
+      return;
+    }
+    const railRect = railEl.getBoundingClientRect();
+    const railX = railRect.left - base.left + RAIL_PADDING;
+    const railWidth = Math.max(0, railRect.width - RAIL_PADDING * 2);
+
+    /* The rows that exist right now, in overlay coordinates. */
+    const anchors = new Map<string, Point>();
+    for (const el of container.querySelectorAll<HTMLElement>(`[${WIRE_ATTR_ANCHOR}]`)) {
+      const jobId = el.getAttribute(WIRE_ATTR_ANCHOR);
+      if (!jobId) continue;
+      const r = el.getBoundingClientRect();
+      anchors.set(jobId, { x: r.right - base.left, y: r.top + r.height / 2 - base.top });
+    }
+
+    const anchorY = new Map<string, number>();
+    for (const [jobId, p] of anchors) anchorY.set(jobId, p.y);
+
+    /* One node per unique bill, over the rows that are actually on screen. */
+    const nodes = layoutBillNodes(buildBillNodes(links, new Set(anchors.keys())), anchorY, {
+      nodeHeight: BILL_NODE_HEIGHT,
+      minGap: NODE_MIN_GAP,
+      minY: 0,
+      maxY: container.scrollHeight,
+    });
+
+    const nodePoint = new Map<string, Point>();
+    for (const node of nodes) {
+      nodePoint.set(node.billId, { x: railX, y: node.y });
+    }
+
     const segments: WireSegment[] = [];
-
-    for (const link of links) {
-      const anchor = container.querySelector<HTMLElement>(
-        `[${WIRE_ATTR_ANCHOR}="${cssEscape(link.job_id)}"]`
-      );
-      const node = container.querySelector<HTMLElement>(
-        `[${WIRE_ATTR_NODE}="${cssEscape(nodeKey(link.job_id, link.bill_id))}"]`
-      );
-      /* A link whose row is on another page, or whose chip has not been rendered, is
-         simply not drawn. That is the viewport limiting, and it needs no special case
-         above. */
-      if (!anchor || !node) continue;
-
-      const a = anchor.getBoundingClientRect();
-      const n = node.getBoundingClientRect();
-
-      const from: Point = { x: a.right - base.left, y: a.top + a.height / 2 - base.top };
-      const to: Point = { x: n.left - base.left, y: n.top + n.height / 2 - base.top };
-      segments.push({
-        id: nodeKey(link.job_id, link.bill_id),
-        jobId: link.job_id,
-        billId: link.bill_id,
-        from,
-        to,
-        span: Math.hypot(to.x - from.x, to.y - from.y),
-      });
+    for (const [jobId, from] of anchors) {
+      for (const link of links) {
+        if (link.job_id !== jobId) continue;
+        const to = nodePoint.get(link.bill_id);
+        if (!to) continue;
+        segments.push({
+          id: `${jobId}->${link.bill_id}`,
+          jobId,
+          billId: link.bill_id,
+          from,
+          to,
+        });
+      }
     }
 
     setGeometry({
       segments,
+      nodes,
+      railX,
+      railWidth,
       width: container.scrollWidth,
       height: container.scrollHeight,
     });
@@ -132,15 +182,14 @@ export function useConnectionWires({
 
   /* Turning Show Links off must not leave a stale overlay behind, so the last thing
      measured is discarded. Deriving the empty result here rather than clearing it in
-     the effect means "off" cannot leave one frame of wires on screen, and the effect
-     below only ever has to ask for a measurement. */
+     the effect means "off" cannot leave one frame of wires on screen. */
   useEffect(() => {
     if (enabled) schedule();
   }, [enabled, schedule]);
 
-  /* After the DOM has been updated with new rows, chips or links — layout effects run
-     after React's mutation phase but before paint, so the measurement reads the new
-     boxes rather than the previous frame's. */
+  /* After the DOM has been updated with new rows — layout effects run after React's
+     mutation phase but before paint, so the measurement reads the new boxes rather than
+     the previous frame's. */
   useLayoutEffect(() => {
     if (enabled) schedule();
   }, [enabled, measureKey, schedule]);
@@ -176,13 +225,12 @@ export function useConnectionWires({
   return enabled ? geometry : EMPTY;
 }
 
-const nodeKey = (jobId: string, billId: string): string => `${jobId}:${billId}`;
-
-/** Job and bill ids are uuids, but a stray quote must not be able to break the query. */
+/** Job ids are uuids, but a stray quote must not be able to break the query. */
 function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(value)
     : value.replace(/["\\]/g, "\\$&");
 }
 
-export { WIRE_ATTR_ANCHOR, WIRE_ATTR_NODE };
+export { WIRE_ATTR_ANCHOR, WIRE_ATTR_RAIL, cssEscape };
+export type { WireHover };
