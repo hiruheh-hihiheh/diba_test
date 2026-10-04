@@ -27,6 +27,12 @@
   --color-text-muted: var(--theme-text-muted);
   --color-border: var(--theme-border);
   --color-border-hover: var(--theme-border-hover);
+  /* Bill ↔ Job connection wires. Themed, because a link line that stayed one colour
+     in both themes read as a stray accent in one of them. Exposed as `text-connection`
+     so the SVG layer can use `stroke="currentColor"` and recolour on a theme flip
+     without any JavaScript holding a resolved hex. */
+  --color-connection: var(--theme-connection);
+  --color-connection-muted: var(--theme-connection-muted);
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
 }
 
@@ -46,6 +52,10 @@
   --theme-text-muted: #A3A3A3;
   --theme-border: #2A2A2A;
   --theme-border-hover: #404040;
+  /* Dark mode wires are red: the dark primary is itself a red, so a blue wire would
+     read as a second, unrelated accent against it. */
+  --theme-connection: #EF4444;
+  --theme-connection-muted: #EF444426;
 }
 
 [data-theme="light"] {
@@ -64,6 +74,9 @@
   --theme-text-muted: #666666;
   --theme-border: #E5E7EB;
   --theme-border-hover: #D1D5DB;
+  /* Light mode wires are blue — the same blue as this theme's primary. */
+  --theme-connection: #2563EB;
+  --theme-connection-muted: #2563EB26;
 }
 
 @layer base {

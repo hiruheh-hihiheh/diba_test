@@ -17,6 +17,7 @@ import {
   Filter,
   ImageOff,
   ImagePlus,
+  Link2,
   Loader2,
   Pencil,
   Receipt,
@@ -68,6 +69,14 @@ import { applyLogoToBills, fetchLogosByIds } from "../services/invoiceLogos";
 import { logoReprintFailureReason, type BillLogoRef } from "../types/invoiceLogo";
 import LogoPickerModal from "../components/bills/LogoPickerModal";
 import { LogoThumbnail } from "../components/bills/LogoThumbnail";
+import LinkBillsToJobsModal from "../components/bills/LinkBillsToJobsModal";
+import BillConnectionsPanel from "../components/bills/BillConnectionsPanel";
+import {
+  getBillConnectionCounts,
+  getBillConnections,
+  unlinkConnections,
+} from "../services/billJobConnections";
+import { jobCountLabel, type BillJobConnection } from "../types/billJobConnections";
 
 const DEFAULT_PAGE_SIZE = 25;
 
@@ -127,6 +136,20 @@ export default function BillsPage() {
   const [logoNames, setLogoNames] = useState<Map<string, BillLogoRef>>(() => new Map());
   /** The bulk-assign picker. Opening it is the whole of "Assign Logo". */
   const [assignLogoOpen, setAssignLogoOpen] = useState(false);
+
+  /* ── Bill ↔ Job connections ────────────────────────── */
+  /** Link counts for the bills currently on screen, by bill id. */
+  const [billLinkCounts, setBillLinkCounts] = useState<
+    Map<string, { total: number; labour: number; withMaterial: number }>
+  >(() => new Map());
+  /** The bill whose linked jobs are open in the panel, or null for closed. */
+  const [connectionsFor, setConnectionsFor] = useState<Bill | null>(null);
+  /** That bill's linked jobs, split by type for the panel. */
+  const [connectionsList, setConnectionsList] = useState<BillJobConnection[]>([]);
+  const [connectionsBusy, setConnectionsBusy] = useState(false);
+  /** The bill the "link jobs" picker is open for. Separate from `connectionsFor`
+      so viewing a bill's links and adding to it are two independent actions. */
+  const [linkJobsFor, setLinkJobsFor] = useState<Bill | null>(null);
 
   const hasFilters = !!uploadFilter || !!from || !!to || jobGroup !== null;
 
@@ -242,6 +265,140 @@ export default function BillsPage() {
       cancelled = true;
     };
   }, [visibleLogoKey]);
+
+  /* Link counts for the bills on screen. Read for the visible page only, for the
+     same reason the logos are: a list of two thousand bills must not become two
+     thousand count lookups. Failures degrade the column to "0" rather than taking the
+     page down, because a missing connection count must not hide the invoices.
+
+     A bill with no entry reads as "0" in the render — no entry and a zero are the
+     same thing to this column, and there is nothing to distinguish them by. */
+  const visibleBillKey = useMemo(() => bills.map((b) => b.id).join(","), [bills]);
+
+  /* The one bill a "Link Jobs" bulk action could apply to.
+     Null unless EXACTLY ONE bill is selected AND that bill is on the current page —
+     the selection can also be an "all N matching" selection spanning pages, in which
+     case there is no single bill for the picker to attach to and offering the button
+     would be a lie about what it will do. */
+  const singleSelectedBill = useMemo(() => {
+    if (selection.count !== 1) return null;
+    const id = [...selection.selected][0];
+    return bills.find((b) => b.id === id) ?? null;
+  }, [bills, selection.count, selection.selected]);
+
+  useEffect(() => {
+    const wanted = visibleBillKey ? visibleBillKey.split(",") : [];
+    /* An empty list needs no request and no state write: the derived map below already
+       reads as "no counts", so clearing it here would only be a second render. */
+    if (wanted.length === 0) return;
+    let cancelled = false;
+    getBillConnectionCounts(wanted)
+      .then((next) => {
+        if (!cancelled) setBillLinkCounts(next);
+      })
+      .catch(() => {
+        if (!cancelled) setBillLinkCounts(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleBillKey]);
+
+  /** Open the "this bill's linked jobs" panel. */
+  async function openConnections(bill: Bill) {
+    setConnectionsFor(bill);
+    setConnectionsBusy(true);
+    try {
+      setConnectionsList(await getBillConnections(bill.id));
+    } catch {
+      setConnectionsList([]);
+      toast.error({
+        title: "Could not read linked jobs",
+        description: "The bill's connections are unchanged. Please try again.",
+      });
+    } finally {
+      setConnectionsBusy(false);
+    }
+  }
+
+  /** Unlink one job from the open bill. Neither entity is touched. */
+  async function unlinkOne(connection: BillJobConnection) {
+    if (!connectionsFor) return;
+    const ok = await confirm({
+      title: "Unlink this job?",
+      message: (
+        <>
+          <strong className="text-text">
+            {connection.job_no || "This job"}
+          </strong>{" "}
+          will be unlinked from{" "}
+          <strong className="text-text">
+            {connectionsFor.invoice_no || connectionsFor.sheet_name}
+          </strong>
+          .
+          <strong className="block mt-2 text-text">
+            Only the connection is removed. The bill and the job both stay exactly as they
+            are.
+          </strong>
+        </>
+      ),
+      confirmLabel: "Unlink",
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    setConnectionsBusy(true);
+    try {
+      await unlinkConnections([connection.job_id], [connectionsFor.id]);
+      setConnectionsList((prev) => prev.filter((l) => l.job_id !== connection.job_id));
+      setBillLinkCounts((prev) => {
+        const next = new Map(prev);
+        const current = next.get(connectionsFor.id);
+        if (current) {
+          next.set(connectionsFor.id, {
+            total: Math.max(0, current.total - 1),
+            labour:
+              connection.job_type === "labour"
+                ? Math.max(0, current.labour - 1)
+                : current.labour,
+            withMaterial:
+              connection.job_type === "with_material"
+                ? Math.max(0, current.withMaterial - 1)
+                : current.withMaterial,
+          });
+        }
+        return next;
+      });
+      toast.success({ title: "Unlinked", description: "The connection was removed." });
+    } catch (err) {
+      toast.error({
+        title: "Could not unlink",
+        description: err instanceof Error ? err.message : "The connection is unchanged.",
+      });
+    } finally {
+      setConnectionsBusy(false);
+    }
+  }
+
+  /** After the link picker reports what it did. */
+  async function handleBillLinked(result: { linked: number; alreadyLinked: number }) {
+    toast.success({
+      title: result.alreadyLinked > 0 ? `Linked ${result.linked} new job(s)` : "Jobs linked",
+      description:
+        result.alreadyLinked > 0
+          ? `${result.alreadyLinked} were already linked and were left as they were.`
+          : "Open the bill's Connections cell to review them.",
+    });
+    if (linkJobsFor) {
+      const bill = linkJobsFor;
+      setLinkJobsFor(null);
+      void openConnections(bill);
+    }
+    const wanted = visibleBillKey ? visibleBillKey.split(",") : [];
+    if (wanted.length > 0) {
+      setBillLinkCounts(await getBillConnectionCounts(wanted));
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -875,6 +1032,9 @@ export default function BillsPage() {
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
                         Logo
                       </th>
+                      <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
+                        Connections
+                      </th>
                       <th className="sticky-actions sticky-head-cell text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-5 py-3 w-28">
                         Actions
                       </th>
@@ -1001,6 +1161,37 @@ export default function BillsPage() {
                             )}
                           </td>
 
+                          {/* Bill ↔ Job connections. A count in words, split by job
+                              type, because the bill side presents labour and
+                              with-material as two separate lists. Clicking opens the
+                              same panel the "Link Jobs" action does. */}
+                          <td className="px-3 py-3">
+                            {billLinkCounts.get(bill.id) ? (
+                              <button
+                                type="button"
+                                onClick={() => setLinkJobsFor(bill)}
+                                aria-label={`${jobCountLabel(
+                                  billLinkCounts.get(bill.id)?.total ?? 0
+                                )} linked. Manage connections`}
+                                title="Manage linked jobs"
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-hover text-xs font-bold text-text-muted hover:text-connection transition-colors cursor-pointer"
+                              >
+                                <Link2 size={12} className="text-connection" aria-hidden="true" />
+                                {jobCountLabel(billLinkCounts.get(bill.id)?.total ?? 0)}
+                              </button>
+                            ) : (
+                              <span className="text-sm text-text-muted/70">
+                                {jobCountLabel(0)}
+                              </span>
+                            )}
+                            {billLinkCounts.get(bill.id) ? (
+                              <p className="text-[11px] text-text-muted mt-0.5 whitespace-nowrap">
+                                {billLinkCounts.get(bill.id)?.labour ?? 0} labour ·{" "}
+                                {billLinkCounts.get(bill.id)?.withMaterial ?? 0} with material
+                              </p>
+                            ) : null}
+                          </td>
+
                           <td className="sticky-actions px-5 py-3">
                             <div className="flex items-center justify-end gap-1">
                               <IconButton
@@ -1009,6 +1200,13 @@ export default function BillsPage() {
                                 tooltipPlacement="top-end"
                                 icon={<FileText size={15} />}
                                 onClick={() => setDetailId(bill.id)}
+                              />
+                              <IconButton
+                                label={`Link jobs to bill ${bill.invoice_no ?? bill.sheet_name}`}
+                                size="sm"
+                                tooltipPlacement="top-end"
+                                icon={<Link2 size={15} />}
+                                onClick={() => setLinkJobsFor(bill)}
                               />
                               <IconButton
                                 label={`Edit bill ${bill.invoice_no ?? bill.sheet_name}`}
@@ -1080,6 +1278,26 @@ export default function BillsPage() {
           <ImagePlus size={13} />
           Assign Logo
         </button>
+        {/* Connections are per-BILL, so a multi-bill selection cannot offer a single
+            "link jobs" action that would mean anything. Rather than guess which bill
+            was meant, this is only offered when exactly one bill is selected, and the
+            label says so. */}
+        <button
+          type="button"
+          onClick={() => {
+            if (singleSelectedBill) setLinkJobsFor(singleSelectedBill);
+          }}
+          disabled={busy || !singleSelectedBill}
+          title={
+            singleSelectedBill
+              ? "Link jobs to the selected bill"
+              : "Select exactly one bill on this page to link jobs to it"
+          }
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Link2 size={13} />
+          Link Jobs
+        </button>
         <button
           type="button"
           onClick={() => void runBulkLogo(null)}
@@ -1135,6 +1353,36 @@ export default function BillsPage() {
           onClose={() => setUploadOpen(false)}
         />
       </Modal>
+
+      <BillConnectionsPanel
+        open={!!connectionsFor}
+        billLabel={
+          connectionsFor
+            ? (connectionsFor.invoice_no?.trim() ||
+                connectionsFor.sheet_name?.trim() ||
+                "this bill")
+            : ""
+        }
+        connections={connectionsList}
+        loading={connectionsBusy}
+        onClose={() => setConnectionsFor(null)}
+        onUnlink={(connection) => void unlinkOne(connection)}
+        onAddJobs={() => {
+          if (connectionsFor) setLinkJobsFor(connectionsFor);
+        }}
+      />
+
+      <LinkBillsToJobsModal
+        open={!!linkJobsFor}
+        billId={linkJobsFor?.id ?? ""}
+        billLabel={
+          linkJobsFor
+            ? (linkJobsFor.invoice_no?.trim() || linkJobsFor.sheet_name?.trim() || "this bill")
+            : ""
+        }
+        onClose={() => setLinkJobsFor(null)}
+        onLinked={(result) => void handleBillLinked(result)}
+      />
 
       <BillDetailModal
         billId={detailId}

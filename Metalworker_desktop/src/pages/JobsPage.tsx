@@ -22,6 +22,17 @@
 //  * The bulk bar is viewport-anchored.
 //  * Refreshing, saving, adding or removing never replaces the table with a
 //    full-page spinner, so scroll position and page number are preserved.
+//
+// Bill ↔ Job connections, added later:
+//  * A CONNECTIONS column carries a text count per row (a link that is only visible
+//    as a drawn wire is invisible with the wires off, and to a screen reader).
+//  * "Show Links" is OFF on load. On, it draws a wire from each row's job number to
+//    each bill it is linked to, and reveals the bill chips the wires attach to.
+//  * The bulk bar's "Link to Bill" is available in ALL view modes, not only inside a
+//    folder. It used to be folder-only because removing a job from a folder only means
+//    anything in a folder; linking a job to a bill is equally meaningful in the full
+//    list, which is where an admin starts. The checkbox column moved with it, so the
+//    header select-all and the row count stay consistent with the bar.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,6 +50,7 @@ import {
   Layers,
   Check,
   ArrowLeft,
+  Link2,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
@@ -53,10 +65,20 @@ import {
   addMultipleJobsToFolder,
 } from "../services/jobs";
 import { fetchFolders, createFolder, updateFolder, deleteFolder } from "../services/folders";
+import {
+  getJobConnections,
+  unlinkConnections,
+} from "../services/billJobConnections";
 import type { Job, JobType } from "../types/job";
 import type { AdminFolder } from "../types/folder";
+import type { JobBillConnection } from "../types/billJobConnections";
 import JobEditModal from "../components/jobs/JobEditModal";
 import JobDrawingModal from "../components/jobs/JobDrawingModal";
+import ConnectionsCell from "../components/jobs/ConnectionsCell";
+import ConnectionWires from "../components/jobs/ConnectionWires";
+import LinkJobsToBillModal from "../components/jobs/LinkJobsToBillModal";
+import { WIRE_ATTR_ANCHOR, anchorAttr, groupLinksByJob } from "../components/jobs/wireGeometry";
+import { useConnectionWires, type WireHover } from "../hooks/useConnectionWires";
 import { usePageMeta } from "../contexts/PageMetaContext";
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../components/ui/Toast";
@@ -144,11 +166,54 @@ export default function JobsPage({
   const availableSelection = useSelection();
 
   const tableRef = useRef<HTMLDivElement>(null);
+  /* The box that contains BOTH the table and the wire overlay. The overlay lives
+     inside the scroll container rather than beside it, so scrolling carries the wires
+     and the rows together and the two cannot drift apart. */
+  const wireLayerRef = useRef<HTMLDivElement>(null);
+
+  /* ── Bill ↔ Job connections ────────────────────────── */
+  /* Show Links is OFF on load. The table has to look like the table did before this
+     feature existed until someone asks to see relationships. */
+  const [showLinks, setShowLinks] = useState(false);
+  const [jobLinks, setJobLinks] = useState<JobBillConnection[]>([]);
+  const [connectionsError, setConnectionsError] = useState<string | null>(null);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [hoveredWire, setHoveredWire] = useState<WireHover | null>(null);
+  /* Bumped by the operations that change links without changing which rows exist:
+     a completed link or unlink. It is part of the wire geometry key rather than a
+     counter of its own so nothing has to run an effect to invalidate it. */
+  const [linksVersion, setLinksVersion] = useState(0);
 
   const inFolderView = viewMode === "folders" && !!selectedFolder;
   const showingFolders = viewMode === "folders" && !selectedFolder;
+  /* Selection is offered wherever there is a job table, not only inside a folder.
+     Linking a job to a bill is meaningful in the full list too, and it is where an
+     admin actually starts. */
+  const canSelect = !showingFolders;
 
   /* ── Data loading ───────────────────────────────────── */
+
+  /* Links for a set of jobs. Kept separate from `loadJobs` so it can be called again
+     on its own after a link or unlink without refetching the whole table. */
+  const loadJobLinks = useCallback(async (jobIds: string[]) => {
+    if (jobIds.length === 0) {
+      setJobLinks([]);
+      return;
+    }
+    try {
+      setJobLinks(await getJobConnections(jobIds));
+      setConnectionsError(null);
+    } catch (err) {
+      /* Not fatal: the jobs are still perfectly usable without their link counts, so
+         this reports itself in the page's own error slot rather than replacing the
+         table with a failure screen. */
+      setConnectionsError(
+        err instanceof Error ? err.message : "Could not read this job's linked bills."
+      );
+    } finally {
+      setLinksVersion((v) => v + 1);
+    }
+  }, []);
 
   const loadFolders = useCallback(
     async (silent = false) => {
@@ -181,6 +246,10 @@ export default function JobsPage({
         setJobs(list);
         // Drop selections for jobs that no longer exist in this view.
         jobSelection.prune(list.map((j) => j.id));
+        /* Connections are read for the jobs just loaded, in the same pass, and
+           separately from the table fetch so a permissions problem reading links
+           cannot stop the jobs themselves from appearing. */
+        void loadJobLinks(list.map((j) => j.id));
       } catch (err) {
         setError(
           err instanceof Error ? err.message : `Could not load ${typeLabel.toLowerCase()} jobs.`
@@ -191,7 +260,7 @@ export default function JobsPage({
     },
     // `jobSelection.prune` is stable; excluded to avoid a re-fetch loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inFolderView, selectedFolder, viewMode, jobType, typeLabel]
+    [inFolderView, selectedFolder, viewMode, jobType, typeLabel, loadJobLinks]
   );
 
   const loadAvailableJobs = useCallback(
@@ -308,6 +377,32 @@ export default function JobsPage({
   );
 
   const pageJobIds = useMemo(() => pageJobs.map((j) => j.id), [pageJobs]);
+
+  /* ── Connection wires ─────────────────────────────── */
+  /* Per job, so a row can render its own chips and the measuring pass can walk the
+     table once per row rather than once per link. */
+  const linksByJob = useMemo(() => groupLinksByJob(jobLinks), [jobLinks]);
+  const linkedJobCount = useMemo(
+    () => [...linksByJob.values()].filter((b) => b.length > 0).length,
+    [linksByJob]
+  );
+
+  /* Recomputed whenever the boxes move: a search, a page change, a folder switch, a
+     finished fetch, a completed link or unlink. Declared as a plain string so the
+     measuring hook can take it as a dependency — no effect and no extra render just
+     to signal that the geometry went stale. */
+  const wireGeometry = useConnectionWires({
+    containerRef: wireLayerRef,
+    links: jobLinks,
+    enabled: showLinks,
+    measureKey: [
+      jobSearch,
+      pagination.page,
+      inFolderView ? (selectedFolder?.id ?? "") : viewMode,
+      jobs.length,
+      linksVersion,
+    ].join("|"),
+  });
 
   /* ── Available jobs: bounded rendering ──────────────
      "Available Labour Jobs" is every job in the system that is not already in
@@ -479,6 +574,67 @@ export default function JobsPage({
         description: res.error || "The job is still in the folder. Please try again.",
       });
     }
+  }
+
+  /* ── Bill ↔ Job connections ────────────────────────── */
+
+  /** Unlink one bill from one job, after confirming. Neither entity is touched. */
+  async function handleUnlink(job: Job, link: JobBillConnection) {
+    const ok = await confirm({
+      title: "Unlink this bill?",
+      message: (
+        <>
+          <strong className="text-text">{link.label}</strong> will be unlinked from job{" "}
+          <strong className="text-text">{job.job_no || "(no number)"}</strong>.
+          <strong className="block mt-2 text-text">
+            Only the connection is removed. The bill and the job both stay exactly as they
+            are, and any other bills this job is linked to are untouched.
+          </strong>
+        </>
+      ),
+      confirmLabel: "Unlink",
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    setRowBusyId(job.id);
+    try {
+      await unlinkConnections([job.id], [link.bill_id]);
+      /* Read the links for this one job again rather than refetching the table: the
+         only thing that changed is a relationship. */
+      const refreshed = await getJobConnections([job.id]);
+      setJobLinks((prev) => [
+        ...prev.filter((l) => l.job_id !== job.id),
+        ...refreshed,
+      ]);
+      toast.success({
+        title: "Unlinked",
+        description: `${link.label} is no longer linked to job ${job.job_no || ""}.`,
+      });
+    } catch (err) {
+      toast.error({
+        title: "Could not unlink",
+        description: err instanceof Error ? err.message : "The connection is unchanged.",
+      });
+    } finally {
+      setRowBusyId(null);
+      setLinksVersion((v) => v + 1);
+    }
+  }
+
+  /** Called after the link modal reports what it actually did. */
+  async function handleLinked(result: { linked: number; alreadyLinked: number }) {
+    await loadJobLinks(jobs.map((j) => j.id));
+    toast.success({
+      title:
+        result.alreadyLinked > 0
+          ? `Linked ${result.linked} job${result.linked === 1 ? "" : "s"}`
+          : "Jobs linked",
+      description:
+        result.alreadyLinked > 0
+          ? `${result.linked} new connection${result.linked === 1 ? "" : "s"} created. ${result.alreadyLinked} were already linked and were left as they were.`
+          : `${result.linked} connection${result.linked === 1 ? "" : "s"} created. Turn on Show Links to see the wires.`,
+    });
   }
 
   async function handleRemoveSelected() {
@@ -710,6 +866,28 @@ export default function JobsPage({
             </button>
           </div>
 
+          {/* Show Links. Present in every view that has a job table, and OFF on load:
+              the plain table is the default, and relationships are something to go
+              and look at rather than something to arrive already drawn. */}
+          {canSelect && (
+            <button
+              type="button"
+              onClick={() => setShowLinks((v) => !v)}
+              aria-pressed={showLinks}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                showLinks
+                  ? "bg-connection text-white shadow-md"
+                  : "bg-surface border border-border text-text-muted hover:text-text hover:bg-surface-hover"
+              }`}
+            >
+              <Link2 size={14} />
+              Show Links
+              {linkedJobCount > 0 && (
+                <span className="text-xs font-semibold opacity-70">{linkedJobCount}</span>
+              )}
+            </button>
+          )}
+
           <IconButton
             label={refreshing ? "Refreshing…" : "Refresh data"}
             icon={<RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />}
@@ -726,6 +904,18 @@ export default function JobsPage({
           onRetry={() => (showingFolders ? loadFolders() : loadJobs())}
           title="Could not load this list"
         />
+      )}
+
+      {/* A connections failure is reported INLINE rather than replacing the table: the
+          jobs are all still there and fully usable, and only the link counts are
+          missing. Swapping the page for an error would overstate the problem. */}
+      {connectionsError && !error && (
+        <p
+          role="status"
+          className="shrink-0 rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-xs text-warning"
+        >
+          Could not read bill connections: {connectionsError} The jobs below are unaffected.
+        </p>
       )}
 
       {/* ─── Folders view ─── */}
@@ -967,12 +1157,21 @@ export default function JobsPage({
                   <>
                     {/* Sticky header + horizontal scroll for the wide columns,
                         with a frozen action column so the actions never scroll
-                        out of reach. */}
+                        out of reach.
+
+                        The wire layer is a SIBLING of the table inside this same
+                        scroll box, not a fixed overlay beside it. That is deliberate:
+                        the browser scrolls one layer containing both, so a wire can
+                        never end up a frame behind its row no matter how the table is
+                        scrolled, and no scroll listener is needed to keep them
+                        together. */}
                     <div className="overflow-auto scrollbar-thin flex-1 min-h-0">
-                      <table className="w-full whitespace-nowrap">
+                      <div ref={wireLayerRef} className="relative">
+                        <ConnectionWires geometry={wireGeometry} hovered={hoveredWire} />
+                      <table className="w-full whitespace-nowrap relative z-[2]">
                         <thead className="sticky-head">
                           <tr className="border-b border-border">
-                            {inFolderView && (
+                            {canSelect && (
                               <th className="px-4 py-3 w-11 text-left">
                                 <SelectAllCheckbox
                                   ids={pageJobIds}
@@ -1011,6 +1210,12 @@ export default function JobsPage({
                             <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
                               Model
                             </th>
+                            {/* Deliberately NOT `sticky-actions`: that class is for the
+                                frozen right-hand column, and giving it a second use would
+                                fight its z-index and its fade-out gradient. */}
+                            <th className="text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
+                              Connections
+                            </th>
                             <th className="sticky-actions sticky-head-cell text-left text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3 w-[9.5rem]">
                               Actions
                             </th>
@@ -1029,7 +1234,7 @@ export default function JobsPage({
                                     : "hover:bg-surface-hover/50"
                                 } ${rowBusy ? "opacity-60" : ""}`}
                               >
-                                {inFolderView && (
+                                {canSelect && (
                                   <td className="px-4 py-3.5">
                                     <input
                                       type="checkbox"
@@ -1040,7 +1245,14 @@ export default function JobsPage({
                                     />
                                   </td>
                                 )}
-                                <td className="px-4 py-3.5">
+                                {/* This cell is the wire's job-side anchor. Measuring an
+                                    existing cell rather than adding a marker element keeps
+                                    the row's DOM unchanged, so the wire starts at the same
+                                    place whether or not links are shown. */}
+                                <td
+                                  className="px-4 py-3.5"
+                                  {...{ [WIRE_ATTR_ANCHOR]: anchorAttr(item.id) }}
+                                >
                                   <button
                                     type="button"
                                     onClick={() => setEditingJob(item)}
@@ -1095,6 +1307,15 @@ export default function JobsPage({
                                 <td className="px-4 py-3.5 text-sm text-text-muted">
                                   {item.model_status || "—"}
                                 </td>
+                                <ConnectionsCell
+                                  jobId={item.id}
+                                  jobNo={item.job_no}
+                                  bills={linksByJob.get(item.id) ?? []}
+                                  showChips={showLinks}
+                                  busy={rowBusy}
+                                  onHover={setHoveredWire}
+                                  onUnlink={(link) => void handleUnlink(item, link)}
+                                />
                                 <td className="sticky-actions px-4 py-3.5">
                                   <div className="flex items-center gap-1">
                                     <IconButton
@@ -1140,6 +1361,7 @@ export default function JobsPage({
                           })}
                         </tbody>
                       </table>
+                      </div>
                     </div>
 
                     {inFolderView && (
@@ -1354,27 +1576,51 @@ export default function JobsPage({
       ))}
 
       {/* ─── Bulk action bar (viewport-anchored) ─── */}
-      {inFolderView && (
+      {canSelect && (
         <BulkActionBar
           count={jobSelection.count}
           itemLabel={typeLabel}
           context={selectedFolder?.name}
           onClear={jobSelection.clear}
         >
+          {/* Linking is meaningful in the full list as well as inside a folder, which is
+              why this bar is no longer gated on `inFolderView`. "Remove from folder"
+              stays folder-only: removing a job from a folder only means anything when
+              there is one. */}
           <button
             type="button"
-            onClick={handleRemoveSelected}
-            className="px-3.5 py-2 rounded-lg bg-warning/15 text-warning text-xs font-bold border border-warning/30 hover:bg-warning/25 transition-colors cursor-pointer whitespace-nowrap"
+            onClick={() => setLinkModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-white transition-colors cursor-pointer whitespace-nowrap"
           >
-            Remove from folder
+            <Link2 size={13} />
+            Link to Bill
           </button>
-          <span className="text-[11px] text-text-muted hidden md:inline whitespace-nowrap">
-            jobs are kept
-          </span>
+          {inFolderView && (
+            <>
+              <button
+                type="button"
+                onClick={handleRemoveSelected}
+                className="px-3.5 py-2 rounded-lg bg-warning/15 text-warning text-xs font-bold border border-warning/30 hover:bg-warning/25 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Remove from folder
+              </button>
+              <span className="text-[11px] text-text-muted hidden md:inline whitespace-nowrap">
+                jobs are kept
+              </span>
+            </>
+          )}
         </BulkActionBar>
       )}
 
       {/* ─── Modals ─── */}
+
+      <LinkJobsToBillModal
+        open={linkModalOpen}
+        jobIds={[...jobSelection.selected]}
+        jobTypeLabel={typeLabel}
+        onClose={() => setLinkModalOpen(false)}
+        onLinked={(result) => void handleLinked(result)}
+      />
 
       <JobEditModal
         open={!!editingJob}
