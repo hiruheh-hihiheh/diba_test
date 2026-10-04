@@ -60,6 +60,9 @@ const check = (ok: boolean, what: string, detail = ""): void => {
 };
 
 const mig = mustRead(resolve(APP, "supabase/migrations/0013_bill_job_connections.sql"));
+const fix = mustRead(
+  resolve(APP, "supabase/migrations/0014_fix_bill_job_connection_rpc_ambiguity.sql")
+);
 const DESKTOP = resolve(REPO, "Metalworker_desktop");
 const jobsPage = mustRead(resolve(DESKTOP, "src/pages/JobsPage.tsx"));
 const billsPage = mustRead(resolve(DESKTOP, "src/pages/Bills.tsx"));
@@ -505,6 +508,185 @@ check(
 check(
   /deleteJob\(/.test(jobsPage),
   "job deletion is untouched; the database cascade handles its links"
+);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   8) THE AMBIGUOUS-REFERENCE REGRESSION
+   ═══════════════════════════════════════════════════════════════════════════ */
+console.log("\nno PL/pgSQL function names an OUT parameter unqualified again");
+
+/* The defect this section exists for: a PL/pgSQL function that declares
+   `RETURNS TABLE (job_id uuid, …)` makes `job_id` a variable, so an unqualified
+   `job_id` in a SQL statement inside the body is ambiguous between the variable and a
+   real column, and PostgreSQL refuses to guess. It reached production because
+   `CREATE FUNCTION` does not resolve names — only the first execution does, which is
+   when a user clicks a button. So the check has to be static, and it has to run on
+   every change rather than only on the ones someone remembers to try. */
+const plpgsqlBodies = [
+  ...fix.matchAll(/CREATE OR REPLACE FUNCTION (public\.\w+)\(([^)]*)\)([\s\S]*?)\$\$;/g),
+].map((m) => ({ name: m[1], params: m[2], body: m[3] }));
+
+check(
+  plpgsqlBodies.length > 0,
+  "the fix migration is being read at all",
+  "a missing or renamed 0014 would leave this section vacuously green"
+);
+
+/* Strip comments before any assertion about the SQL. The fix migration deliberately
+   QUOTES the broken code in its header — `array_agg(job_id)`, `ON CONFLICT (bill_id,
+   job_id)` — to explain the defect, so a check that reads the file as-is sees the
+   broken text it is meant to be looking for and passes a file that never fixed
+   anything. */
+const fixCode = fix.replace(/--[^\n]*/g, "");
+
+/* Every OUT / result column name declared by a function, per its RETURNS TABLE. */
+const outNamesOf = (body: string): string[] => {
+  const block = /RETURNS TABLE\s*\(([\s\S]*?)\)/.exec(body)?.[1] ?? "";
+  return block
+    .split(",")
+    .map((c) => c.trim().split(/\s+/)[0])
+    .filter((n) => /^\w+$/.test(n));
+};
+
+let ambiguous: string[] = [];
+for (const fn of plpgsqlBodies) {
+  const outs = outNamesOf(fn.body);
+  if (!outs.length) continue;
+  /* Three things are not references even though they spell the name:
+       · the RETURNS TABLE declaration that creates the variable,
+       · an INSERT target column list, which PostgreSQL resolves against the target
+         table and will not accept qualified — and which the self-check proves works,
+       · comments and string literals, which are not code at all. */
+  const code = fn.body
+    .replace(/--[^\n]*/g, "")
+    .replace(/RETURNS TABLE\s*\([\s\S]*?\)/, "RETURNS TABLE ()")
+    .replace(/(INSERT\s+INTO\s+[\w.]+)\s*\([^)]*\)/gi, "$1 (...)")
+    .replace(/'[^']*'/g, "''");
+  for (const name of outs) {
+    /* A bare occurrence is one NOT preceded by `.` (a table or alias qualifier) and
+       NOT part of a longer identifier. */
+    const bare = new RegExp(`(?<![.\\w])${name}(?![\\w])`);
+    if (bare.test(code)) ambiguous.push(`${fn.name}: ${name}`);
+  }
+}
+check(
+  ambiguous.length === 0,
+  "no function references one of its own OUT parameters without qualifying it",
+  ambiguous.join(" | ")
+);
+
+/* The two specific repairs, asserted individually so a regression names itself. */
+check(
+  /array_agg\(ins\.job_id\)/.test(fixCode) && !/array_agg\(job_id\)/.test(fixCode),
+  "link_bill_jobs aggregates the CTE's own column: array_agg(ins.job_id)"
+);
+check(
+  /array_agg\(del\.job_id\)/.test(fixCode) && !/array_agg\(job_id\)/.test(fixCode),
+  "unlink_bill_jobs aggregates the CTE's own column: array_agg(del.job_id)"
+);
+/* `ON CONFLICT (bill_id, job_id)` is parsed as column references too, so it is as
+   ambiguous as the aggregate was; naming the constraint removes the class of problem
+   rather than this one instance. */
+check(
+  !/ON CONFLICT \(bill_id, job_id\)/.test(fixCode) &&
+    /ON CONFLICT ON CONSTRAINT bill_job_connections_pair_key DO NOTHING/.test(fixCode),
+  "the conflict target names the constraint instead of re-listing bare column names"
+);
+check(
+  /RETURNING bill_job_connections\.job_id/.test(fixCode),
+  "the inserted row's column is table-qualified in RETURNING"
+);
+
+console.log("\nthe fix changed only what was broken");
+for (const fn of ["link_bill_jobs", "unlink_bill_jobs"] as const) {
+  const fixed = new RegExp(
+    `CREATE OR REPLACE FUNCTION public\\.${fn}\\([^)]*\\)([\\s\\S]*?)\\$\\$;`
+  ).exec(fix)?.[1] ?? "";
+  check(!!fixed, `${fn} is redefined in 0014, which is the only way to fix an applied function`);
+  check(
+    /SECURITY DEFINER/.test(fixed) && /SET search_path = public/.test(fixed),
+    `${fn} keeps SECURITY DEFINER and a pinned search_path`
+  );
+  check(
+    /role = 'admin' AND p\.is_active = true/.test(fixed) && /RAISE EXCEPTION/.test(fixed),
+    `${fn} keeps its active-admin check`
+  );
+  /* The link path stays idempotent through ON CONFLICT; the unlink path has no
+     conflict clause at all, because deleting a link cannot conflict. */
+  check(
+    fn === "link_bill_jobs"
+      ? /ON CONFLICT/.test(fixed)
+      : /RETURNING c\.job_id/.test(fixed),
+    `${fn} keeps its conflict/absent-conflict behaviour`
+  );
+  check(
+    /DISTINCT u\.id/.test(fixed) && /u\.id = ANY \(v_\w+\)/.test(fixed),
+    `${fn} still reports one row per requested job, with a linked/unlinked flag`
+  );
+}
+check(
+  !/CREATE TABLE|ALTER TABLE|DROP TABLE|CREATE POLICY|DROP POLICY|CREATE INDEX/.test(
+    fixCode
+  ),
+  "0014 touches no table, policy or index",
+  "a bug fix for two functions must not also change the schema"
+);
+check(
+  !/CREATE OR REPLACE FUNCTION public\.(unlink_job_bill_links|get_bill_job_connections|get_job_bill_connections|get_job_connection_counts|get_bill_connection_counts)/.test(
+    fixCode
+  ),
+  "the five functions that were never broken are left alone"
+);
+check(
+  /REVOKE ALL ON FUNCTION public\.link_bill_jobs\(uuid, uuid\[\]\) FROM public;/.test(fix) &&
+    /GRANT EXECUTE ON FUNCTION public\.link_bill_jobs\(uuid, uuid\[\]\) TO authenticated;/.test(
+      fix
+    ) &&
+    /REVOKE ALL ON FUNCTION public\.unlink_bill_jobs\(uuid, uuid\[\]\) FROM public;/.test(fix) &&
+    /GRANT EXECUTE ON FUNCTION public\.unlink_bill_jobs\(uuid, uuid\[\]\) TO authenticated;/.test(
+      fix
+    ),
+  "both functions re-issue their REVOKE and GRANT, which are dropped with the old body"
+);
+
+console.log("\nthe migration proves itself against the real database");
+check(
+  /SAVEPOINT bill_job_connections_selfcheck/.test(fix) &&
+    /ROLLBACK TO SAVEPOINT bill_job_connections_selfcheck/.test(fix),
+  "the self-check runs inside a savepoint and is rolled back",
+  "so it can call the real functions without leaving a row behind"
+);
+check(
+  /set_config\('request\.jwt\.claim\.sub'/.test(fix),
+  "it authenticates as a real active admin rather than bypassing the gate",
+  "the code path under test is then the one a user actually takes"
+);
+check(
+  /RAISE EXCEPTION/.test(fix) && /ROLLBACK TO SAVEPOINT/.test(fix),
+  "a failed assertion aborts the whole migration",
+  "so a broken body can never be recorded as applied"
+);
+/* Every operation the bug report asked to be covered, asserted as present. */
+for (const [what, pattern] of [
+  ["three labour jobs to one bill", /SELFCHECK-L/],
+  ["three with-material jobs", /SELFCHECK-M/],
+  ["both types on one bill", /mixed link/],
+  ["a repeated link creating nothing", /idempotency broken/],
+  ["one job to two bills", /one job to two bills/],
+  ["unlinking from one bill", /unlink_bill_jobs: expected 1 removed/],
+  ["other bill's links untouched", /unlink removed the wrong row/],
+  ["delete cascading to the link only", /cascade broken/],
+] as const) {
+  check(pattern.test(fix), `the self-check covers ${what}`);
+}
+check(
+  /WHEN insufficient_privilege/.test(fix) && /WHEN data_exception/.test(fix),
+  "and that the authorization and empty-list refusals still hold"
+);
+check(
+  /SKIPPED/.test(fix),
+  "it skips rather than failing when no active admin exists",
+  "a fresh project must still be able to apply this migration"
 );
 
 console.log();
