@@ -44,6 +44,8 @@ import { billFromRecord, type BillRecord } from "../process-bill-upload/_shared/
 import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import { computeBillValues, EditError, type BillPatch } from "../process-bill-upload/_shared/billEdit.ts";
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
+import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
+import { profileForBill } from "../process-bill-upload/_shared/businessProfile.ts";
 
 const BUCKET = "bills";
 const TABLE = "bills";
@@ -274,6 +276,44 @@ Deno.serve(async (req) => {
     );
   }
 
+  /* Which company-level DEFAULTS this re-print uses, and what to record against the
+     bill afterwards. This is where historical safety is actually decided, so it is
+     worth being explicit about the two cases:
+
+       the bill already carries a snapshot -> that snapshot, NOT today's profile.
+           An edit re-prints an invoice that already exists. If it picked up a
+           profile that has been changed since, the corrected document would differ
+           from the original one in ways the admin never asked for and cannot see —
+           a different payment window, a different bank branch — and it would carry
+           the same invoice number. A re-print has to reproduce the invoice.
+
+       the bill carries none              -> today's profile, snapshotted now.
+           Either the bill predates the feature, or this is its first print with a
+           profile configured. Both mean "finalise it against what is in force".
+
+     The current profile is only read when it will be used, so a bill with a
+     snapshot does not depend on the profile table being readable at all. */
+  let billProfile;
+  try {
+    const current = await loadActiveBusinessProfile(admin);
+    billProfile = profileForBill(
+      current,
+      (stored as Record<string, unknown>).business_profile_snapshot
+    );
+  } catch (err) {
+    await restore(admin, billId, existing, currentItems);
+    console.error("update-bill: invoice business profile read error:", err);
+    return json(
+      {
+        ok: false,
+        error:
+          "The bill was not saved because the invoice business profile could not be read. Nothing has changed.",
+        reason: "profile_unreadable",
+      },
+      500
+    );
+  }
+
   try {
     for (const copy of COPY_ORDER) {
       const model = billFromRecord(
@@ -281,7 +321,7 @@ Deno.serve(async (req) => {
         lineItems,
         COPY_LABEL[copy]
       );
-      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy], logoImage);
+      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy], logoImage, billProfile.profile);
     }
   } catch (err) {
     await restore(admin, billId, existing, currentItems);
@@ -324,6 +364,11 @@ Deno.serve(async (req) => {
          mark it as owing a logo it already has, and it would be re-printed on
          every subsequent queue pass, forever. */
       logo_rendered_logo_id: logoWanted,
+      /* Whatever produced these three documents, recorded so a later profile edit
+         cannot reach this bill. Written on every finalisation rather than only on
+         the first, because a bill that had none is exactly the bill that would
+         otherwise adopt today's settings on its next re-print. */
+      business_profile_snapshot: billProfile.snapshot,
     })
     .eq("id", billId);
   if (pathError) {

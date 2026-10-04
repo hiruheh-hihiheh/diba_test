@@ -205,11 +205,13 @@ export function QuickActions({
         </Pressable>
       </View>
 
-      {/* The reusable letterheads invoices print. It sits with the documents rather
-          than on its own because a logo is only ever used through an invoice — on
-          its own it is an asset, and the "used on N bills" count on that screen
-          only makes sense next to the bills. */}
-      <SectionHeader title="Invoice branding" subtitle="Reusable logos" />
+      {/* The reusable letterheads invoices print, and the company details they
+          print alongside them. Both sit with the documents rather than on their
+          own: a logo is only ever used through an invoice - on its own it is an
+          asset, and the "used on N bills" count on that screen only makes sense
+          next to the bills - and the business profile exists purely so an invoice
+          has those details without every workbook carrying them. */}
+      <SectionHeader title="Invoice branding" subtitle="Reusable logos & company details" />
       <View style={styles.quickActionsRow}>
         <Pressable
           style={styles.quickActionCard}
@@ -226,6 +228,27 @@ export function QuickActions({
             <Text style={styles.quickActionIconText}>🖼️</Text>
           </View>
           <Text style={styles.quickActionLabel}>Logo Library</Text>
+        </Pressable>
+
+        {/* The company-level defaults: name, address, bank block, terms, footer
+            wording. Separate from the Logo Library on purpose - one is an image
+            asset, the other is text - but they answer the same question, "what
+            does our invoice letterhead say?", so they sit together. */}
+        <Pressable
+          style={styles.quickActionCard}
+          onPress={() => onNavigate("/invoice-settings")}
+          accessibilityRole="button"
+          accessibilityLabel="Invoice business profile"
+        >
+          <View
+            style={[
+              styles.quickActionIcon,
+              { backgroundColor: theme.colors.primary + "20" },
+            ]}
+          >
+            <Text style={styles.quickActionIconText}>📄</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Invoice Profile</Text>
         </Pressable>
       </View>
 

@@ -91,6 +91,11 @@ const navSections: NavSection[] = [
       // is only ever used through an invoice — on its own it is an asset, and the
       // "used on N bills" count on that screen only makes sense next to the bills.
       { label: "Logo Library", icon: <ImagePlus size={20} />, path: "/bills/logos" },
+      // The company-level defaults: name, address, bank block, terms, footer
+      // wording. Nested beside the Logo Library and kept separate from it - one is an
+      // image asset, the other is text - but they answer the same question, so they
+      // sit together.
+      { label: "Invoice Profile", icon: <Building2 size={20} />, path: "/bills/profile" },
       { label: "Group Bills", icon: <FileText size={20} />, path: "/group-bills" },
       { label: "Group Drawings", icon: <PenTool size={20} />, path: "/group-drawings" },
     ],

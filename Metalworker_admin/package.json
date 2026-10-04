@@ -49,7 +49,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "lint:edge": "tsc -p tsconfig.edge.json",
-    "bills:selftest": "node supabase/functions/_selftest/test-copies.ts && node supabase/functions/_selftest/test-parse.ts && node supabase/functions/_selftest/test-pdf.ts && node supabase/functions/_selftest/test-logo.ts && node supabase/functions/_selftest/test-per-bill.ts && node supabase/functions/_selftest/test-billing-folders.ts && node supabase/functions/_selftest/test-edit.ts && node supabase/functions/_selftest/test-jobkind.ts && node supabase/functions/_selftest/test-structure.ts && node supabase/functions/_selftest/test-folder-summary-export.ts && node supabase/functions/_selftest/test-audit-log.ts && node supabase/functions/_selftest/test-fixture-hygiene.ts && node supabase/functions/_selftest/audit.ts"
+    "bills:selftest": "node supabase/functions/_selftest/test-copies.ts && node supabase/functions/_selftest/test-parse.ts && node supabase/functions/_selftest/test-pdf.ts && node supabase/functions/_selftest/test-logo.ts && node supabase/functions/_selftest/test-business-profile.ts && node supabase/functions/_selftest/test-per-bill.ts && node supabase/functions/_selftest/test-billing-folders.ts && node supabase/functions/_selftest/test-edit.ts && node supabase/functions/_selftest/test-jobkind.ts && node supabase/functions/_selftest/test-structure.ts && node supabase/functions/_selftest/test-folder-summary-export.ts && node supabase/functions/_selftest/test-audit-log.ts && node supabase/functions/_selftest/test-fixture-hygiene.ts && node supabase/functions/_selftest/audit.ts"
   },
   "private": true
 }

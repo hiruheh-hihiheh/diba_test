@@ -77,6 +77,8 @@ import {
 import { renderBillDocument } from "./_shared/renderBill.ts";
 import { safeBillToken, copyDisagreements } from "./_shared/parseBill.ts";
 import { toBillRecord } from "./_shared/billDocument.ts";
+import { loadActiveBusinessProfile } from "./_shared/businessProfileDb.ts";
+import { profileToSnapshot, type BusinessProfile } from "./_shared/businessProfile.ts";
 
 /** Private bucket created by migration 0005_bills.sql. */
 const BUCKET = "bills";
@@ -293,12 +295,52 @@ Deno.serve(async (req) => {
       );
     }
 
+    /* The company-level DEFAULTS this workbook's invoices will be printed with.
+       Read ONCE for the whole upload, before any row is written, so every bill in a
+       workbook is rendered against the same profile — and so an upload cannot
+       straddle a settings change and produce a folder of invoices carrying two
+       different payment windows.
+
+       A read failure here is fatal to the upload, and unwinds through the same
+       rollback as a render failure. Proceeding without the defaults would print a
+       whole workbook of invoices with no company address on them and report
+       success, which is not a recoverable outcome to discover later. */
+    let profile: BusinessProfile;
+    try {
+      profile = await loadActiveBusinessProfile(adminClient);
+    } catch (err) {
+      console.error("invoice business profile read error:", err);
+      await rollback(adminClient, uploadId, uploadedPaths);
+      uploadId = null;
+      return json(
+        {
+          ok: false,
+          error: "The invoice business profile could not be read, so the bills were not saved.",
+          reason: "profile_unreadable",
+        },
+        500
+      );
+    }
+
     // ---------------- 3. Insert the bill rows first ----------------
     // The bill id goes into the PDF filename, so the row has to exist before its
     // documents can be named. Writing the rows before the documents also means a
     // render failure unwinds to the same rollback as a storage failure, rather
     // than leaving documents with no records pointing at them.
-    const billRows = parsed.map((p) => toBillRecord(p, uploadId as string));
+    //
+    // The snapshot is added here rather than inside `toBillRecord`, and that split
+    // matters: `toBillRecord` stores what the WORKBOOK said, and the profile's
+    // values must not be written into `seller_name` / `bank_details` / `terms`.
+    // If they were, the profile's answers would become the bill's own data, the
+    // "the bill wins" precedence would be inverted on every later read, and editing
+    // the profile would appear to do nothing because the old values were already
+    // baked in. The snapshot records that these defaults were in force, and is the
+    // only place they are persisted.
+    const snapshot = profileToSnapshot(profile);
+    const billRows = parsed.map((p) => ({
+      ...toBillRecord(p, uploadId as string),
+      business_profile_snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
+    }));
     const { data: insertedBills, error: billsError } = await adminClient
       .from("bills")
       .insert(billRows)
@@ -399,7 +441,7 @@ Deno.serve(async (req) => {
            TRIPLICATE otherwise — so this line is correct for all six workbook shapes
            without knowing which ones the author actually typed out. */
         for (const kind of COPY_ORDER) {
-          rendered[kind] = renderBillDocument([p.original], COPY_LABEL[kind]);
+          rendered[kind] = renderBillDocument([p.original], COPY_LABEL[kind], null, profile);
         }
       } catch (err) {
         console.error("PDF render error for bill", billId, err);
@@ -466,7 +508,9 @@ Deno.serve(async (req) => {
       try {
         bytes = renderBillDocument(
           parsed.map((b) => b[kind]),
-          COPY_LABEL[kind]
+          COPY_LABEL[kind],
+          null,
+          profile
         );
       } catch (err) {
         // The per-bill documents are already written and linked at this point, so

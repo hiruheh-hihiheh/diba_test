@@ -18,6 +18,7 @@ import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
 import BillsPage from "./pages/Bills";
 import InvoiceLogosPage from "./pages/InvoiceLogos";
+import InvoiceSettingsPage from "./pages/InvoiceSettings";
 import FoldersPage from "./pages/Folders";
 import FolderDetailPage from "./pages/FolderDetail";
 import PlaceholderPage from "./pages/Placeholder";
@@ -61,6 +62,11 @@ export default function App() {
                   {/* Phase 4 — Documents */}
                   <Route path="/bills" element={<BillsPage />} />
                   <Route path="/bills/logos" element={<InvoiceLogosPage />} />
+                  {/* The company-level defaults: name, address, bank block, terms,
+                      footer wording. Sits beside the Logo Library because both answer
+                      the same question - "what does our invoice letterhead say?" - and
+                      because both exist purely so an invoice carries them. */}
+                  <Route path="/bills/profile" element={<InvoiceSettingsPage />} />
                   <Route path="/group-bills" element={<GroupBillsPage />} />
                   <Route path="/group-drawings" element={<GroupDrawingsPage />} />
 

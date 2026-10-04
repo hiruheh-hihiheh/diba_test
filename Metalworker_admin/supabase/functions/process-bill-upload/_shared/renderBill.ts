@@ -34,6 +34,7 @@ import { formatJobKind } from "./formatJobKind.ts";
 import { PdfDocument, measurePdfText, type PdfPage, wrapText } from "./pdf.ts";
 import { measureText } from "./fontMetrics.ts";
 import type { PdfImage } from "./pdfImage.ts";
+import { applyBusinessProfile, type BusinessProfile } from "./businessProfile.ts";
 
 /* ──────────────────────────────────────────────
    Geometry
@@ -202,7 +203,7 @@ function impliedRate(tax: number | null, base: number | null): string | null {
 /**
  * The phrases in the Terms block that are drawn in the emphasised style.
  *
- * This is a PATTERN, not the literal text "40 DAYS", because the number is a
+ * This is a PATTERN, not one window written out literally, because the number is a
  * business decision that changes: 15 DAYS on one client, 40 on another, 30 on the
  * next. Matching the shape rather than the value means a newly typed term is
  * emphasised the moment it is saved, with no change to the renderer and no styling
@@ -1124,7 +1125,7 @@ function columnsHeight(bill: BillCopy): number {
   if (blocks.every((b) => b.lines.length === 0)) return 0;
   const colW = (CONTENT_W - COL_GAP) / 2;
   /* The terms column is measured through `layoutRuns`, the same function the
-     renderer draws it with, so the emphasized "40 DAYS" — which is measured in a
+     renderer draws it with, so the emphasized window — which is measured in a
      LARGER font than the rest of the line — is accounted for in the height. A
      plain `wrapText` here would under-measure that line and the block below it
      would be drawn on top of the terms. */
@@ -1373,7 +1374,7 @@ function renderColumns(sheet: Sheet, bill: BillCopy): void {
         continue;
       }
       /* Mixed-style line. Every run of a visual line shares ONE baseline, so the
-         larger bold "40 DAYS" sits in the sentence rather than above or below it,
+         larger bold window sits in the sentence rather than above or below it,
          and the row keeps the height of the surrounding text. */
       for (const visual of layoutRuns(splitEmphasis(line), colW, size)) {
         let x = block.x;
@@ -1522,7 +1523,8 @@ const COPY_KIND_BY_LABEL = COPY_LABEL;
 export function renderBillDocument(
   bills: BillCopy[],
   copyLabel: string,
-  logo?: PdfImage | null
+  logo?: PdfImage | null,
+  profile?: BusinessProfile | null
 ): Uint8Array {
   if (bills.length === 0) throw new Error("A bill document needs at least one bill");
 
@@ -1536,14 +1538,25 @@ export function renderBillDocument(
      footer said DUPLICATE - the same invoice, self-contradicting on one page.
 
      The `kind` is recovered from the label so the two can never disagree either. */
-  const labelled: BillCopy[] = bills.map((bill) => ({
-    ...bill,
-    label: copyLabel,
-    kind:
-      (Object.keys(COPY_KIND_BY_LABEL) as CopyKind[]).find(
-        (k) => COPY_KIND_BY_LABEL[k].toUpperCase() === copyLabel.trim().toUpperCase()
-      ) ?? bill.kind,
-  }));
+  const labelled: BillCopy[] = bills.map((bill) => {
+    const kinded: BillCopy = {
+      ...bill,
+      label: copyLabel,
+      kind:
+        (Object.keys(COPY_KIND_BY_LABEL) as CopyKind[]).find(
+          (k) => COPY_KIND_BY_LABEL[k].toUpperCase() === copyLabel.trim().toUpperCase()
+        ) ?? bill.kind,
+    };
+    /* Company-level DEFAULTS are folded in here, once, for every bill in the
+       document, and only after the label override so a copied designation can
+       never be mistaken for business data.
+
+       The call is a no-op when no profile is configured — it returns the very
+       object it was handed — so an invoice rendered without a profile passes
+       through this function completely untouched. That is what keeps every
+       pre-existing invoice byte-identical. */
+    return applyBusinessProfile(kinded, profile);
+  });
 
   const firstBill = labelled[0];
   const sheet = new Sheet(

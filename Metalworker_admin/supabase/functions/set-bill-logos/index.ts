@@ -49,6 +49,8 @@ import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../pro
 // which returns null rather than throwing when a logo cannot be read.
 import type { PdfImage } from "../process-bill-upload/_shared/pdfImage.ts";
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
+import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
+import { profileForBill } from "../process-bill-upload/_shared/businessProfile.ts";
 
 const BUCKET = "bills";
 
@@ -128,6 +130,21 @@ async function reprint(
   };
 
   const rendered: Record<string, Uint8Array> = {};
+
+  /* Same rule as `update-bill`: a logo re-print reproduces the invoice, so it uses
+     the bill's recorded snapshot when it has one and today's profile only when it
+     does not. Without this, assigning a logo to a year-old bill would quietly
+     restate its payment window and bank details from the settings as they are
+     today — a different invoice, printed under the same number. */
+  let billProfile;
+  try {
+    const current = await loadActiveBusinessProfile(admin);
+    billProfile = profileForBill(current, row.business_profile_snapshot);
+  } catch (err) {
+    console.error("set-bill-logos: profile read error:", billId, err);
+    return { ok: false, reason: "profile_unreadable" };
+  }
+
   try {
     for (const copy of COPY_ORDER) {
       const model = billFromRecord(
@@ -135,7 +152,7 @@ async function reprint(
         target.lineItems,
         COPY_LABEL[copy]
       );
-      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy], logo);
+      rendered[copy] = renderBillDocument([model], COPY_LABEL[copy], logo, billProfile.profile);
     }
   } catch (err) {
     console.error("set-bill-logos: render failed:", billId, err);
@@ -168,6 +185,10 @@ async function reprint(
       triplicate_pdf_path: newPaths.triplicate,
       pdf_version: nextVersion,
       logo_rendered_logo_id: (row.logo_id as string | null) ?? null,
+      // Recorded in the same statement as the paths, for the reason given above:
+      // this re-print is a finalisation, so whatever produced it is now the bill's
+      // recorded provenance and the next one reads it back rather than the settings.
+      business_profile_snapshot: billProfile.snapshot,
     })
     .eq("id", billId);
   if (repointError) {
