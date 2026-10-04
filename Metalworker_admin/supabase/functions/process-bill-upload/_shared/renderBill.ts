@@ -317,48 +317,105 @@ function layoutRuns(runs: Run[], maxWidth: number, size: number): Run[][] {
 }
 
 /* ──────────────────────────────────────────────
-   Invoice logo
+   Invoice logo — the bordered letterhead
    ────────────────────────────────────────────── */
 
 /**
- * The logo slot: the strip of the header the copy marker has always reserved.
+ * The copy marker's reservation, used only when there is NO logo.
  *
- * The header already reserves the rightmost 110pt for ORIGINAL / DUPLICATE /
- * TRIPLICATE (`bodyWidth = CONTENT_W - HEAD_STRIP` below), and the seller block
- * is wrapped to that width, so no seller line can ever reach past x = 455.28.
- * That makes this strip the one place in the header where a logo can go without
- * displacing, shortening or overlapping anything.
+ * The header reserves the rightmost 110pt for ORIGINAL / DUPLICATE / TRIPLICATE
+ * (`bodyWidth = CONTENT_W - COPY_MARKER_RESERVE_W`), and the seller block wraps
+ * to that width, so no seller line can ever reach past x = 455.28.
  *
- * WHY THESE NUMBERS
- *   WIDTH      exactly the existing reservation, so introducing a logo cannot
- *              change how the seller block wraps.
- *   TOP_GAP    clears the copy marker's baseline, which sits at `top + 12` with an
- *              11pt face and so reaches roughly `top + 20`.
- *   BOTTOM_GAP clearance above the header rule.
- *   GOOD_H     the height at or above which a logo is big enough that the header
- *              is left exactly as it is. Below it the header is lengthened, up to
- *              MAX_GROW. This is the threshold that decides whether anything on
- *              the page moves, and it is deliberately well under the slot a full
- *              seller block provides, so a normal invoice never reaches it.
- *   MAX_GROW   the most the header may be lengthened. Growth moves every block
- *              below it down by the same amount, so it is bounded: a seller
- *              block with almost no detail must not be able to reflow a one-page
- *              invoice onto two. Past this bound the logo takes the smaller slot
- *              that is left rather than the page getting longer.
- *   MIN_H      below this the logo is not drawn at all. A mark squeezed under an
- *              eighth of an inch tall reads as a printing fault, and an invoice
- *              with a legible header and no logo is a far better outcome than
- *              one with a smear where the letterhead should be.
+ * With a logo the mark moves ABOVE the letterhead box instead, which frees that
+ * strip, so the logo path does not reserve anything on the right. The no-logo
+ * path is left exactly as it was: it is the document every existing invoice is,
+ * and it must not gain or lose a point.
  */
-const LOGO_STRIP_W = 110;
-const LOGO_TOP_GAP = 22;
-const LOGO_BOTTOM_GAP = 6;
-const LOGO_GOOD_H = 34;
-const LOGO_MAX_GROW = 30;
-const LOGO_MIN_H = 12;
-const LOGO_PAD = 4;
+const COPY_MARKER_RESERVE_W = 110;
 
-/** Where a logo ended up, in the header's own coordinate space. */
+/**
+ * Why these numbers
+ *
+ *   LETTERHEAD_BORDER_W / LOGO_BOX_BORDER_W
+ *     Both hairlines. The outer box is the letterhead, the inner box is a
+ *     compartment inside it, so the inner one is drawn a shade lighter to keep
+ *     the nesting legible at A4 without either line reading as a rule.
+ *   LETTERHEAD_PAD
+ *     Internal padding of the outer box. This is what costs the page its
+ *     vertical budget: the box must clear the seller block above AND below it,
+ *     so it is 2 * LETTERHEAD_PAD taller than the text it surrounds.
+ *   LOGO_BOX_PAD
+ *     The gap between the compartment's border and the logo inside it, so the
+ *     mark never touches the line that frames it.
+ *   LOGO_BOX_W_RATIO
+ *     The compartment's share of the letterhead width. 0.21 sits inside the
+ *     18-25% band a letterhead mark occupies, and is taken from CONTENT_W so it
+ *     scales with the page rather than being a literal.
+ *   LOGO_BOX_GAP
+ *     Clear space between the compartment and the company text, so the two read
+ *     as separate elements rather than as one crowded row.
+ *   LOGO_BOX_IDEAL_H
+ *     The compartment height a letterhead mark wants. It is a FLOOR, not a
+ *     target: a seller block with no address gets a box this tall rather than a
+ *     letterhead-sized one squeezed into 20pt.
+ *   LETTERHEAD_MARK_BAND / LETTERHEAD_MARK_CLEARANCE
+ *     The band the copy marker lives in, and the clear space left under it. The
+ *     mark is deliberately OUTSIDE the border by design, so it needs a band of
+ *     its own. The band is added ABOVE the box rather than taken out of the
+ *     page margin, which is the point worth stating: it puts the mark at exactly
+ *     the baseline it has always had (COPY_MARKER_BASELINE below `top`, ~30pt of
+ *     ink clearance from the top of the sheet). Lifting it into the top margin
+ *     instead would also leave the border at `top`, but it would set the mark's
+ *     ink about 3mm from the paper edge, inside the unprintable margin of plenty
+ *     of printers. A mark that gets shaved off in print is worse than a page that
+ *     is a few points longer, so the page pays.
+ *   LOGO_MAX_GROW
+ *     The most the header may be lengthened, and it is the budget that keeps the
+ *     one-page invoice a one-page invoice. Growth is a pure vertical translation
+ *     of everything below the rule, so what it can break is pagination. The
+ *     value is not a guess: `_selftest/test-logo.ts` asserts that every copy of
+ *     every fixture workbook has the SAME page count with and without a logo.
+ *     The number below is the largest growth the fixtures tolerate with room to
+ *     spare, not a target the layout aims at.
+ *   LOGO_MIN_H
+ *     Below this the logo is not drawn at all, though the letterhead box is
+ *     still drawn. A mark squeezed under an eighth of an inch reads as a
+ *     printing fault, and an invoice with a legible header and no mark is a far
+ *     better outcome than one with a smear where the letterhead should be.
+ */
+const LETTERHEAD_BORDER_W = 0.8;
+const LETTERHEAD_PAD = 7;
+const LOGO_BOX_BORDER_W = 0.6;
+const LOGO_BOX_PAD = 5;
+const LOGO_BOX_W_RATIO = 0.21;
+const LOGO_BOX_GAP = 12;
+const LOGO_BOX_IDEAL_H = 44;
+const LOGO_MAX_GROW = 60;
+const LOGO_MIN_H = 12;
+
+/** Where the copy mark's baseline sits, with or without a logo. */
+const COPY_MARKER_BASELINE = 12;
+
+/** Clear space between the copy mark's baseline and the letterhead's top edge. */
+const LETTERHEAD_MARK_CLEARANCE = 8;
+
+/**
+ * The band the copy marker occupies: its own baseline, plus the clear space kept
+ * under it before the border begins. Derived rather than stated, so moving the
+ * mark can never quietly close the gap it is supposed to have.
+ */
+const LETTERHEAD_MARK_BAND = COPY_MARKER_BASELINE + LETTERHEAD_MARK_CLEARANCE;
+
+/** A rectangle in the page's own top-down coordinate space. */
+interface LogoRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Where a logo ended up inside its compartment. Same space as `LogoRect`. */
 interface LogoPlacement {
   x: number;
   y: number;
@@ -367,33 +424,125 @@ interface LogoPlacement {
 }
 
 /**
- * Fit a logo into the header strip, preserving its aspect ratio.
+ * The complete geometry of a logo letterhead, measured once.
  *
- * `availableH` is the vertical room between the copy marker and the header rule.
- * The result is always a "contain" fit: the logo is scaled by whichever axis runs
- * out first and then centred in the space that is left over, so it can never be
- * stretched, cropped, or pushed against a margin. A logo with a very wide aspect
- * ratio ends up narrower than the strip and a very tall one ends up shorter than
- * the room; neither is distorted.
- *
- * Returns null for a logo with no usable pixels rather than emitting a
- * zero-sized draw call.
+ * Every number the header draws with comes from here, so the border, the
+ * compartment, the logo, the company text and the copy marker cannot disagree
+ * about where anything is. Returning them together — rather than letting
+ * `renderHeader` recompute each one from the others — is what makes the
+ * non-overlap properties checkable: the tests compare these rectangles against
+ * each other instead of re-deriving the layout and hoping it agrees.
  */
-function fitLogo(image: PdfImage, slotX: number, slotTop: number, availableH: number): LogoPlacement | null {
+interface LogoHeaderLayout {
+  /** The outer hairline box around the whole letterhead. */
+  outerHeader: LogoRect;
+  /** The inner compartment, left aligned inside `outerHeader`. */
+  logoBox: LogoRect;
+  /** Where the company text starts, and how wide it may wrap. */
+  companyTextRect: { x: number; y: number; w: number };
+  /** Where ORIGINAL / DUPLICATE / TRIPLICATE goes: above the border. */
+  originalLabelPosition: { x: number; y: number };
+  /** The full-width rule that closes the header. */
+  ruleY: number;
+  /** How far `ruleY` moved from where it would be with no logo. */
+  growth: number;
+}
+
+/** The compartment's width, taken from the page rather than hard-coded. */
+function logoBoxWidth(): number {
+  return Math.round(CONTENT_W * LOGO_BOX_W_RATIO);
+}
+
+/**
+ * The width the company text may wrap to, which depends only on the page and the
+ * compartment's width — never on how tall the text turns out to be.
+ *
+ * That independence is what makes the layout measurable in one pass: the seller
+ * block is wrapped first at this width, measured, and only then does the box
+ * height follow from the measurement. Were the width derived from the height,
+ * the two would be mutually recursive and no deterministic answer would exist.
+ */
+function companyTextWidth(left: number, right: number): number {
+  const textLeft = left + LETTERHEAD_PAD + logoBoxWidth() + LOGO_BOX_GAP;
+  return right - LETTERHEAD_PAD - textLeft;
+}
+
+/**
+ * Lay out the logo letterhead.
+ *
+ * `blockHeight` is the measured height of the seller block, which the caller has
+ * already wrapped at `companyTextWidth(left, right)`.
+ *
+ * The box is anchored to `boxTop`, which is the header top pushed down by the
+ * copy mark's band. Nothing is anchored to `top` instead, because `top` is also
+ * where the mark's baseline is measured from: if the box started there the mark
+ * would have nowhere to sit outside it.
+ *
+ * HEIGHT. The box wants `blockHeight + 2 * LETTERHEAD_PAD` — the text, plus
+ * padding above and below — and normally gets exactly that. It is clamped at two
+ * ends: a floor of `LOGO_BOX_IDEAL_H + 2 * LETTERHEAD_PAD`, so a seller block
+ * with almost no detail still gets a compartment a logo can be seen in; and a
+ * ceiling derived from LOGO_MAX_GROW, so the page can never be lengthened by
+ * more than that however short the seller block is. Past the ceiling the
+ * compartment shrinks — the letterhead gives up height, never the page's
+ * one-page budget.
+ */
+function calculateLogoHeaderLayout(opts: {
+  top: number;
+  left: number;
+  right: number;
+  blockHeight: number;
+}): LogoHeaderLayout {
+  const { top, left, right, blockHeight } = opts;
+
+  const boxTop = top + LETTERHEAD_MARK_BAND;
+  const naturalH = blockHeight + LETTERHEAD_PAD * 2;
+  const floorH = LOGO_BOX_IDEAL_H + LETTERHEAD_PAD * 2;
+  const plainRuleY = top + blockHeight + 5;
+  const ceilingH = plainRuleY + LOGO_MAX_GROW - boxTop - 5;
+  const outerH = Math.max(Math.min(naturalH, ceilingH), Math.min(floorH, ceilingH));
+  const ruleY = boxTop + outerH + 5;
+
+  const boxX = left + LETTERHEAD_PAD;
+  const boxW = logoBoxWidth();
+  const textX = boxX + boxW + LOGO_BOX_GAP;
+
+  return {
+    outerHeader: { x: left, y: boxTop, w: right - left, h: outerH },
+    logoBox: { x: boxX, y: boxTop + LETTERHEAD_PAD, w: boxW, h: outerH - LETTERHEAD_PAD * 2 },
+    companyTextRect: { x: textX, y: boxTop + LETTERHEAD_PAD, w: right - LETTERHEAD_PAD - textX },
+    originalLabelPosition: { x: right, y: top + COPY_MARKER_BASELINE },
+    ruleY,
+    growth: ruleY - plainRuleY,
+  };
+}
+
+/**
+ * Fit a logo into its compartment, preserving its aspect ratio.
+ *
+ * Always a "contain" fit: the mark is scaled by whichever axis runs out first and
+ * then centred in the space left over, so it can never be stretched, cropped, or
+ * pushed against the compartment's border. A wide logo ends up narrower than the
+ * compartment and a tall one shorter than it; neither is distorted, and neither
+ * is sized by anything except its own pixels.
+ *
+ * Returns null for a logo with no usable pixels, or one too small to read, rather
+ * than emitting a zero-sized or smeared draw call.
+ */
+function fitLogoInBox(image: PdfImage, box: LogoRect): LogoPlacement | null {
   if (image.width <= 0 || image.height <= 0) return null;
 
-  const boxW = LOGO_STRIP_W - LOGO_PAD * 2;
-  const boxH = availableH - LOGO_PAD * 2;
-  if (boxW <= 0 || boxH <= 0) return null;
-  if (availableH < LOGO_MIN_H) return null;
+  const innerW = box.w - LOGO_BOX_PAD * 2;
+  const innerH = box.h - LOGO_BOX_PAD * 2;
+  if (innerW <= 0 || innerH < LOGO_MIN_H) return null;
 
-  const scale = Math.min(boxW / image.width, boxH / image.height);
+  const scale = Math.min(innerW / image.width, innerH / image.height);
   const w = image.width * scale;
   const h = image.height * scale;
 
   return {
-    x: slotX + (LOGO_STRIP_W - w) / 2,
-    y: slotTop + (availableH - h) / 2,
+    x: box.x + (box.w - w) / 2,
+    y: box.y + (box.h - h) / 2,
     w,
     h,
   };
@@ -459,19 +608,32 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
      call newPage(), which replaces the page this function would be drawing on. */
   const L = sheet.left;
   const R = sheet.right;
-
-  // Reserve the right-hand strip for the copy marker so a long seller name can
-  // never run underneath it. This is also the strip the logo occupies, which is
-  // why it is named rather than inlined: the seller block below wraps to it, and
-  // changing its value would re-wrap every seller on every invoice.
-  const HEAD_STRIP = LOGO_STRIP_W;
-  const bodyWidth = CONTENT_W - HEAD_STRIP;
   const top = sheet.y;
 
-  // --- copy marker, top right ----------------------------------------------
-  sheet.page.text(bill.label, R, top + 12, { font: "bold", size: T.copy, align: "right" });
+  /* Two layouts, and the choice between them is made ONCE, here, before anything
+     is drawn:
+
+       no logo  the header this renderer has always produced. The copy marker
+                reserves the right-hand strip, the seller block wraps to it, and
+                every coordinate below is the value it has always had. Nothing in
+                this branch is new, and nothing in it may change: an invoice with
+                no logo must still be the same document, byte for byte.
+
+       logo     the bordered letterhead. The copy marker moves ABOVE the border,
+                which frees the right-hand strip, and the seller block wraps to
+                what is left between the logo compartment and that freed strip.
+
+     The one thing both branches share is the drawing loop that follows, so the
+     seller block is typeset by identical code in both and cannot drift. */
+  /* Only the wrap width differs between the two layouts. The copy mark keeps the
+     same baseline in both: what changes is the border, which starts below it. */
+  const bodyWidth = logo ? companyTextWidth(L, R) : CONTENT_W - COPY_MARKER_RESERVE_W;
+  const labelX = R;
+  const labelY = top + COPY_MARKER_BASELINE;
 
   // --- seller identity, top left -------------------------------------------
+  // Wrapped before anything is drawn, because the logo layout's height depends on
+  // how tall this block turns out to be.
   const sellerLines: { text: string; bold: boolean; size: number }[] = [];
   if (bill.sellerName) sellerLines.push({ text: bill.sellerName, bold: true, size: T.sellerName });
   for (const text of [
@@ -488,46 +650,62 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
   }
 
   // Height of the seller block, measured before anything is drawn: the header
-  // rule sits a fixed 5pt below its last line, and a logo needs to know how much
-  // room is left above that rule before it can decide whether it fits.
+  // rule sits a fixed 5pt below its last line, and the letterhead box has to
+  // know how much room is left above that rule before it can decide its height.
   let blockHeight = 0;
   for (const line of sellerLines) blockHeight += line.bold ? 15 : 11;
 
+  /* --- the logo letterhead, measured --------------------------------------
+     Measured BEFORE the seller lines are drawn so the rule position it needs is
+     already known, and so the box, the compartment, the logo and the text can
+     never disagree about where anything is.
+
+     The header only ever grows, and only by the letterhead's own padding, and
+     never by more than LOGO_MAX_GROW. Everything below the rule is then moved
+     down by exactly that one amount, which is why nothing below the letterhead
+     is reflowed — only translated. */
   let ruleY = top + blockHeight + 5;
+  let textX = L;
+  let textTop = top;
 
-  /* --- invoice logo, in the reserved strip ---------------------------------
-     Placed BEFORE the seller lines are drawn so the rule position it needed is
-     already known, and so the two decisions cannot disagree.
-
-     The header only ever grows, and only when the seller block is too short to
-     leave a usable slot, and then by at most LOGO_MAX_GROW. On any invoice with
-     a normal seller block — which is to say every real one — the room above the
-     rule is already larger than LOGO_GOOD_H, `ruleY` keeps exactly the value it
-     has always had, and the logo appears without a single thing below it moving
-     by a point. */
-  const slotX = R - LOGO_STRIP_W;
-  const slotTop = top + LOGO_TOP_GAP;
   if (logo) {
-    const usable = ruleY - LOGO_BOTTOM_GAP - slotTop;
-    if (usable < LOGO_GOOD_H) ruleY += Math.min(LOGO_GOOD_H - usable, LOGO_MAX_GROW);
+    const layout = calculateLogoHeaderLayout({ top, left: L, right: R, blockHeight });
+    ruleY = layout.ruleY;
+    textX = layout.companyTextRect.x;
+    textTop = layout.companyTextRect.y;
+
+    // The outer letterhead box, then the compartment inside it. Drawn first so
+    // both sit under the logo and the text rather than over them.
+    sheet.page.rect(layout.outerHeader.x, layout.outerHeader.y, layout.outerHeader.w, layout.outerHeader.h, {
+      lineWidth: LETTERHEAD_BORDER_W,
+      stroke: true,
+    });
+    sheet.page.rect(layout.logoBox.x, layout.logoBox.y, layout.logoBox.w, layout.logoBox.h, {
+      lineWidth: LOGO_BOX_BORDER_W,
+      stroke: true,
+    });
+
+    const placement = fitLogoInBox(logo.image, layout.logoBox);
+    if (placement) {
+      sheet.page.image(logo.resource, placement.x, placement.y, placement.w, placement.h);
+    }
   }
 
-  const placement = logo ? fitLogo(logo.image, slotX, slotTop, ruleY - LOGO_BOTTOM_GAP - slotTop) : null;
-  if (placement) {
-    sheet.page.image(logo!.resource, placement.x, placement.y, placement.w, placement.h);
-  }
+  // --- copy marker, top right ----------------------------------------------
+  sheet.page.text(bill.label, labelX, labelY, { font: "bold", size: T.copy, align: "right" });
 
-  let y = top;
+  // --- the seller block ------------------------------------------------------
+  let y = textTop;
   for (const line of sellerLines) {
-    sheet.page.text(line.text, L, y + line.size, {
+    sheet.page.text(line.text, textX, y + line.size, {
       font: line.bold ? "bold" : "regular",
       size: line.size,
     });
     y += line.bold ? 15 : 11;
   }
 
-  // y and ruleY are computed from the same measurement, so this lands exactly
-  // where the reservation above decided it would.
+  // ruleY was computed from the same measurement the block above was drawn to, so
+  // this lands exactly where the layout decided it would.
   y = ruleY;
   sheet.page.line(L, y, R, y, 1.1);
   y += 5;

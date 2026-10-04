@@ -19,11 +19,12 @@
 //   node supabase/functions/_selftest/test-logo.ts
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readXlsx } from "../process-bill-upload/_shared/xlsx.ts";
-import { parseBills, COPY_LABEL, COPY_ORDER, type BillCopy } from "../process-bill-upload/_shared/parseBill.ts";
+import { parseBills, COPY_LABEL, COPY_ORDER, type BillCopy, type CopyKind } from "../process-bill-upload/_shared/parseBill.ts";
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
 import { decodePdfImage, deflate } from "../process-bill-upload/_shared/pdfImage.ts";
 // The client's own fit function, imported rather than re-implemented: a test that
@@ -90,6 +91,125 @@ function contentStream(pdf: string): string {
   const end = pdf.indexOf("\nendstream", at);
   if (at < 0 || end < 0) throw new Error("no content stream");
   return pdf.slice(at + 7, end);
+}
+
+/* ──────────────────────────────────────────────
+   Page geometry, and reading the letterhead back out
+   ────────────────────────────────────────────── */
+
+/**
+ * The page numbers the renderer works in, restated here so the assertions below
+ * can be written against the document's own margins rather than against whatever
+ * a stroke happens to measure.
+ */
+const PAGE_H = 841.89;
+const MARGIN_X = 30;
+const CONTENT_W = 535.28;
+const RIGHT_EDGE = MARGIN_X + CONTENT_W; // 565.28
+/** Below this the renderer is into the bottom margin, which is the footer's. */
+const CONTENT_BOTTOM = PAGE_H - 34;
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Every STROKED rectangle, in top-down coordinates.
+ *
+ * Stroke-only on purpose: the letterhead border and the logo compartment are both
+ * hairlines, while the filled rules and the tinted table headers elsewhere on the
+ * page are `f` or `f`+`S`. Requiring `re` immediately followed by `S` therefore
+ * picks out exactly the boxes that frame something and nothing else.
+ */
+function strokedRects(pdf: string): Box[] {
+  const out: Box[] = [];
+  for (const m of pdf.matchAll(/([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) re\nS/g)) {
+    const w = Number(m[3]);
+    const h = Number(m[4]);
+    out.push({ x: Number(m[1]), y: PAGE_H - Number(m[2]) - h, w, h });
+  }
+  return out;
+}
+
+/** Every stroked straight line, as a top-down segment. */
+function strokedLines(pdf: string): Box[] {
+  const out: Box[] = [];
+  for (const m of pdf.matchAll(/([\d.-]+) ([\d.-]+) m ([\d.-]+) ([\d.-]+) l S/g)) {
+    const x1 = Number(m[1]);
+    const x2 = Number(m[3]);
+    const y1 = PAGE_H - Number(m[2]);
+    const y2 = PAGE_H - Number(m[4]);
+    out.push({
+      x: Math.min(x1, x2),
+      y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1),
+      h: Math.abs(y2 - y1),
+    });
+  }
+  return out;
+}
+
+interface PlacedText {
+  size: number;
+  x: number;
+  /** The text's BASELINE, in top-down coordinates. */
+  y: number;
+  text: string;
+}
+
+/** Every drawn string, with the size and baseline it was set at. */
+function textPlacements(pdf: string): PlacedText[] {
+  const out: PlacedText[] = [];
+  const re = /\/F\d+ ([\d.-]+) Tf\n1 0 0 1 ([\d.-]+) ([\d.-]+) Tm\n\((.*?)\) Tj/g;
+  for (const m of pdf.matchAll(re)) {
+    out.push({ size: Number(m[1]), x: Number(m[2]), y: PAGE_H - Number(m[3]), text: m[4] });
+  }
+  return out;
+}
+
+/**
+ * The ink a left-aligned string occupies, generously.
+ *
+ * `y` is a baseline, so the glyphs sit above it. Helvetica-Bold's cap height is
+ * 718/1000 em and its descender 212/1000, and rounding both outwards keeps this a
+ * superset of the real ink — a box that clears this cannot clip anything.
+ */
+function inkBox(t: PlacedText): Box {
+  return { x: t.x, y: t.y - t.size * 0.72, w: Number.POSITIVE_INFINITY, h: t.size * 0.94 };
+}
+
+/** Two boxes overlap if their interiors intersect. */
+function overlaps(a: Box, b: Box): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/**
+ * The letterhead's two boxes, read back out of a finished page.
+ *
+ * Everything is identified by shape rather than by a hard-coded coordinate: the
+ * border is the one stroked rectangle that spans the full content width, and the
+ * compartment is the one strictly nested inside it. That way the test cannot pass
+ * by agreeing with the renderer about a literal — if the layout moved, these
+ * still find the boxes.
+ */
+function letterhead(pdf: string): { border: Box; compartment: Box | null } {
+  const all = strokedRects(pdf);
+  const border = all.find(
+    (b) => Math.abs(b.w - CONTENT_W) < 0.01 && Math.abs(b.x - MARGIN_X) < 0.01
+  );
+  if (!border) return { border: null as unknown as Box, compartment: null };
+  const inside = all.filter(
+    (b) =>
+      b !== border &&
+      b.x >= border.x - 0.01 &&
+      b.y >= border.y - 0.01 &&
+      b.x + b.w <= border.x + border.w + 0.01 &&
+      b.y + b.h <= border.y + border.h + 0.01
+  );
+  return { border, compartment: inside[0] ?? null };
 }
 
 /** A valid JPEG is only needed for its header here; the pixels pass through. */
@@ -231,6 +351,45 @@ console.log("\nno-logo renders carry nothing image-shaped");
   check(size === 8, "no-logo document still declares exactly 8 objects", `/Size ${size}`);
 }
 
+/* The letterhead redesign adds a border, a compartment and an image to the
+   header. None of that may reach a document with no logo — not one byte.
+
+   "Looks unchanged" is not a claim worth much here: shifting a baseline by a
+   point, dropping an empty dictionary, or renumbering an object all leave a
+   document that still looks right. So the bytes themselves are pinned. These are
+   the SHA-256 digests of the no-logo renderings as they stood before the logo
+   letterhead existed, taken from sheet 301 of `BILL 301 TO.xlsx` — a real
+   seller block with a name, descriptor, GST line, address and contact, which is
+   the fullest header anything in the fixtures produces. If a change to the
+   header, the type scale or the PDF writer perturbs a no-logo invoice by so much
+   as a byte, these fail and say which copy moved. */
+const NO_LOGO_DIGESTS: Record<CopyKind, string> = {
+  original: "b76c2e51c7eab106e986837760bac04639cfea9979188abd72ffefbfe0047812",
+  duplicate: "574ab94954e7500d6a738f9f767a8ae2c4fc4d4d0ce0b00fa0c555bedac046f0",
+  triplicate: "a27f092902cad94e2e992c7952a9e9d6904f88738f62df3de0103c5561a36ade",
+};
+
+console.log("\nno-logo renders are byte-identical to the pre-letterhead documents");
+{
+  for (const copy of COPY_ORDER) {
+    const bytes = renderBillDocument([found[copy]], COPY_LABEL[copy]);
+    const digest = createHash("sha256").update(Buffer.from(bytes)).digest("hex");
+    const want = NO_LOGO_DIGESTS[copy];
+    check(
+      digest === want,
+      `${COPY_LABEL[copy]}: sha256 matches the pinned pre-letterhead bytes`,
+      digest === want ? "" : `${bytes.length}B got ${digest.slice(0, 16)} want ${want.slice(0, 16)}`
+    );
+  }
+
+  // And the header of a no-logo invoice still has no frame of any kind: the border
+  // and the compartment are drawn only when a logo is present.
+  const rule = headerRuleY(latin1(renderBillDocument([ordinary], COPY_LABEL.original)));
+  const above = strokedRects(latin1(renderBillDocument([ordinary], COPY_LABEL.original)))
+    .filter((b) => b.y + b.h <= rule + 0.01);
+  check(above.length === 0, "no stroked rectangle anywhere in the no-logo header", `found ${above.length}`);
+}
+
 /* ──────────────────────────────────────────────
    2. The logo is a real image object
    ────────────────────────────────────────────── */
@@ -272,71 +431,419 @@ if (logoFlat) {
 }
 
 /* ──────────────────────────────────────────────
-   3. Placement: inside the strip, at its own ratio, moving nothing
+   3. The letterhead: a bordered box, a compartment, and no collisions
    ────────────────────────────────────────────── */
 
-console.log("\nthe logo sits in the header strip at its own aspect ratio");
+console.log("\nthe letterhead draws a border and a compartment around the logo");
 if (logoOpaque) {
   const plain = latin1(renderBillDocument([ordinary], COPY_LABEL.original));
   const marked = latin1(renderBillDocument([ordinary], COPY_LABEL.original, logoOpaque));
+  const rulePlain = headerRuleY(plain);
+  const ruleMarked = headerRuleY(marked);
+  const { border, compartment } = letterhead(marked);
 
+  /* --- the border ------------------------------------------------------- */
+  check(border !== null, "the letterhead border is drawn when a logo is present");
+  check(
+    Math.abs(border.x - MARGIN_X) < 0.01 && Math.abs(border.w - CONTENT_W) < 0.01,
+    "the border spans the full content width, margin to margin",
+    `x=${border.x} w=${border.w}`
+  );
+  check(border.y > 0, "the border sits below the top margin", `y=${border.y}`);
+  check(
+    border.y + border.h <= ruleMarked + 0.01,
+    "the border closes above the header rule",
+    `bottom=${(border.y + border.h).toFixed(2)} rule=${ruleMarked}`
+  );
+
+  /* --- the compartment -------------------------------------------------- */
+  check(compartment !== null, "the logo compartment is drawn inside the border");
+  check(
+    compartment.x > border.x && compartment.y > border.y &&
+      compartment.x + compartment.w < border.x + border.w &&
+      compartment.y + compartment.h < border.y + border.h,
+    "the compartment is strictly inside the border, on all four sides"
+  );
+  const padLeft = compartment.x - border.x;
+  const padRight = border.x + border.w - (compartment.x + compartment.w);
+  const padTop = compartment.y - border.y;
+  const padBottom = border.y + border.h - (compartment.y + compartment.h);
+  // The compartment is left-aligned, so only the left/top/bottom padding is the
+  // border's own margin — the space on the right is the company text's column,
+  // not padding. Those three must agree, or the box would look off-centre.
+  check(
+    Math.abs(padLeft - padTop) < 0.01 && Math.abs(padLeft - padBottom) < 0.01,
+    "the border's padding is even on the left, top and bottom",
+    `l=${padLeft} t=${padTop} b=${padBottom}`
+  );
+  check(padLeft > 0 && padTop > 0, "the padding is real clear space, not zero");
+  check(
+    padRight > padLeft * 4,
+    "the compartment leaves the rest of the letterhead for the company text",
+    `right=${padRight.toFixed(2)} left=${padLeft}`
+  );
+  // 18-25% of the letterhead width: a mark of that share reads as a letterhead
+  // rather than as an illustration dropped into the corner.
+  const share = (compartment.w / CONTENT_W) * 100;
+  check(
+    share >= 18 && share <= 25,
+    "the compartment is 18-25% of the letterhead width",
+    `${share.toFixed(1)}%`
+  );
+  check(
+    compartment.x < border.x + border.w / 2,
+    "the compartment is on the LEFT of the letterhead",
+    `x=${compartment.x} mid=${(border.x + border.w / 2).toFixed(2)}`
+  );
+
+  /* --- the logo sits inside the compartment ------------------------------ */
   const placed = imagePlacements(marked);
   check(placed.length === 1, "exactly one placement", `found ${placed.length}`);
   const p = placed[0];
-  const rulePlain = headerRuleY(plain);
-  const ruleMarked = headerRuleY(marked);
-
   check(p.resource === "Im0", "placed via the registered resource name");
+
   // The writer rounds coordinates to 3 decimals, which is its deliberate
   // byte-size optimisation, so the ratio cannot be bit-exact. What matters is
   // that it survives at all: a stretched logo is wrong by whole percent, and
   // this bound is three orders of magnitude below that.
   const wantRatio = 411 / 276;
   const ratioError = Math.abs(p.w / p.h - wantRatio) / wantRatio;
-  check(ratioError < 1e-4, "aspect ratio preserved, not stretched",
-    `relative error ${ratioError.toExponential(2)}`);
+  check(
+    ratioError < 1e-4,
+    "aspect ratio preserved, not stretched",
+    `relative error ${ratioError.toExponential(2)}`
+  );
 
-  // The strip the copy marker reserves: CONTENT_W - 110, right-aligned to 565.28.
-  check(p.x >= 455.28, "never left of the reserved strip", `x=${p.x.toFixed(2)}`);
-  check(p.x + p.w <= 565.28 + 1e-6, "never past the right margin", `right=${(p.x + p.w).toFixed(2)}`);
-  check(p.yTop >= 44, "below the copy marker", `yTop=${p.yTop.toFixed(2)}`);
-  check(p.yTop + p.h <= ruleMarked, "entirely above the header rule",
-    `bottom=${(p.yTop + p.h).toFixed(2)} rule=${ruleMarked}`);
-
-  check(Math.abs(ruleMarked - rulePlain) < 1e-9, "an ordinary header does not move",
-    `${rulePlain} -> ${ruleMarked}`);
-
-  // The strongest statement available: every operator from the header rule down
-  // is byte-identical, so the table, totals, words, columns, notes, signatures
-  // and footer are provably unmoved. The rule op itself is found by structure —
-  // the full-width line that closes the header — rather than by a hard-coded
-  // y, because the adaptive case deliberately moves it.
-  const afterRule = (stream: string): string => {
-    // One operator per line: `x1 y1 m x2 y2 l S`. The header rule is the one that
-    // runs the full content width, from the left margin to the right.
-    const lines = stream.split("\n");
-    const at = lines.findIndex((l) => l.endsWith(" l S") && /^30 [\d.]+ m 565\.28 [\d.]+ l S$/.test(l));
-    if (at < 0) throw new Error(`header rule operator not found in:\n${stream.slice(0, 400)}`);
-    return lines.slice(at).join("\n");
+  const inset = {
+    left: p.x - compartment.x,
+    right: compartment.x + compartment.w - (p.x + p.w),
+    top: p.yTop - compartment.y,
+    bottom: compartment.y + compartment.h - (p.yTop + p.h),
   };
   check(
-    afterRule(contentStream(plain)) === afterRule(contentStream(marked)),
-    "every operator from the header rule down is byte-identical"
+    inset.left > 0 && inset.right > 0 && inset.top > 0 && inset.bottom > 0,
+    "the logo never touches the compartment's border",
+    `l=${inset.left.toFixed(2)} r=${inset.right.toFixed(2)} t=${inset.top.toFixed(2)} b=${inset.bottom.toFixed(2)}`
+  );
+  // Centred on both axes: a mark that hugs one edge reads as misaligned.
+  check(
+    Math.abs(inset.left - inset.right) < 0.05,
+    "the logo is horizontally centred in its compartment",
+    `l=${inset.left.toFixed(2)} r=${inset.right.toFixed(2)}`
+  );
+  check(
+    Math.abs(inset.top - inset.bottom) < 0.05,
+    "the logo is vertically centred in its compartment",
+    `t=${inset.top.toFixed(2)} b=${inset.bottom.toFixed(2)}`
+  );
+
+  /* --- the company text is to the RIGHT of the compartment --------------- */
+  const headerTexts = textPlacements(marked).filter((t) => t.y <= ruleMarked + 0.01);
+  const seller = headerTexts.filter((t) => t.text !== "ORIGINAL");
+  check(seller.length > 0, "the seller block is still drawn");
+  const firstLine = seller[0];
+  check(
+    firstLine.x >= compartment.x + compartment.w,
+    "the company text starts to the right of the compartment",
+    `text x=${firstLine.x} compartment right=${compartment.x + compartment.w}`
+  );
+  check(
+    Math.abs(firstLine.x - (compartment.x + compartment.w) - 12) < 0.01,
+    "the gap between compartment and text is the designed clear space",
+    `gap=${(firstLine.x - (compartment.x + compartment.w)).toFixed(2)}pt`
+  );
+  check(
+    seller.every((t) => t.x >= compartment.x + compartment.w),
+    "every seller line starts right of the compartment, not just the first"
+  );
+  // Left-aligned, which is the requirement: the first line is flush with every
+  // other line's left edge, and the seller name is the strongest thing in it.
+  check(
+    seller.every((t) => Math.abs(t.x - firstLine.x) < 0.01),
+    "the company text is left-aligned, not centred",
+    `xs=${[...new Set(seller.map((t) => t.x))].join(",")}`
+  );
+  check(
+    Math.max(...seller.map((t) => t.size)) === firstLine.size &&
+      firstLine.size > Math.max(...seller.filter((t) => t !== firstLine).map((t) => t.size)),
+    "the seller's name is still the largest type in the letterhead",
+    `${firstLine.size}pt over ${Math.max(...seller.filter((t) => t !== firstLine).map((t) => t.size))}pt`
+  );
+
+  /* --- ORIGINAL is outside the border ------------------------------------ */
+  const mark = headerTexts.find((t) => t.text === "ORIGINAL");
+  check(mark !== undefined, "the copy marker is still drawn");
+  if (mark) {
+    check(
+      mark.y < border.y,
+      "ORIGINAL's baseline is ABOVE the border — outside the box",
+      `baseline=${mark.y} border top=${border.y}`
+    );
+    // Caps have no descender, so the ink stops at the baseline. The gap between
+    // the two is the clearance a reader actually sees.
+    const clearance = border.y - mark.y;
+    check(clearance >= 6, "there is clear space between ORIGINAL and the border", `${clearance.toFixed(2)}pt`);
+    // Ink from the top of the sheet: printers cannot reach the first few
+    // millimetres, and the mark must not be the thing that gets shaved off.
+    const inkFromTop = mark.y - mark.size * 0.72;
+    check(
+      inkFromTop >= 14,
+      "ORIGINAL's ink keeps clear of the unprintable top margin",
+      `${inkFromTop.toFixed(2)}pt from the sheet edge`
+    );
+    check(
+      Math.abs(mark.x + mark.text.length * mark.size * 0.5 - RIGHT_EDGE) < 40 &&
+        mark.x <= RIGHT_EDGE,
+      "ORIGINAL is right-aligned to the content edge",
+      `x=${mark.x} right edge=${RIGHT_EDGE}`
+    );
+  }
+
+  /* --- nothing collides -------------------------------------------------- */
+  if (mark) {
+    const markInk = inkBox(mark);
+    check(
+      !overlaps(markInk, border),
+      "ORIGINAL does not overlap the letterhead border",
+      `ink ${markInk.y.toFixed(2)}..${(markInk.y + markInk.h).toFixed(2)} vs border ${border.y}..${(border.y + border.h).toFixed(2)}`
+    );
+    check(
+      !overlaps(markInk, compartment),
+      "ORIGINAL does not overlap the logo compartment"
+    );
+  }
+  /* The logo and the company text are the two things most likely to collide, and
+     the collision that matters is horizontal: the seller block is left-aligned,
+     so its ink starts at its x and runs rightwards. If the logo's right edge is
+     clear of that x, no seller line can reach it — which is a stronger statement
+     than testing the rendered glyph boxes, because it holds for the longest line
+     too rather than for whatever happened to be longest on this fixture. */
+  const logoBox = { x: p.x, y: p.yTop, w: p.w, h: p.h };
+  check(
+    p.x + p.w <= firstLine.x,
+    "the logo's right edge stops short of where the company text begins",
+    `logo right=${(p.x + p.w).toFixed(2)} text x=${firstLine.x}`
+  );
+  check(
+    seller.every((t) => !overlaps(logoBox, inkBox(t))),
+    "no seller line's ink overlaps the logo"
+  );
+  check(
+    !overlaps(logoBox, { ...compartment, x: compartment.x + compartment.w, w: 0 }),
+    "the logo does not spill out of the compartment's right edge",
+    `logo right=${(p.x + p.w).toFixed(2)} compartment right=${(compartment.x + compartment.w).toFixed(2)}`
+  );
+  const gapToText = firstLine.x - (compartment.x + compartment.w);
+  check(gapToText > 0, "there is clear space between the logo and the company text", `${gapToText.toFixed(2)}pt`);
+  check(
+    seller.every((t) => !overlaps(inkBox(t), compartment)),
+    "no seller line intrudes into the logo compartment"
+  );
+
+  /* --- everything below the header moves as one block -------------------- */
+  const growth = ruleMarked - rulePlain;
+  check(growth > 0, "the bordered header is taller than the plain one", `${growth}pt`);
+
+  // The body's own strings, compared as multisets of (text, y) pairs. Index-by-
+  // index is meaningless here: the seller block re-wraps into an extra line, so
+  // every subsequent index shifts.
+  const below = (pdf: string, rule: number) =>
+    textPlacements(pdf)
+      .filter((t) => t.y > rule + 0.01 && t.y <= CONTENT_BOTTOM)
+      .map((t) => `${t.text}\u0000${t.y.toFixed(3)}`);
+  const shifted = (pdf: string, rule: number, by: number) =>
+    textPlacements(pdf)
+      .filter((t) => t.y > rule + 0.01 && t.y <= CONTENT_BOTTOM)
+      .map((t) => `${t.text}\u0000${(t.y - by).toFixed(3)}`);
+  const sortCount = (xs: string[]) => xs.sort();
+  const a = sortCount(shifted(marked, ruleMarked, growth));
+  const b = sortCount(below(plain, rulePlain));
+  check(
+    a.length === b.length && a.every((v, i) => v === b[i]),
+    "the whole body is the same strings, shifted down by exactly the header growth",
+    `${a.length} strings, growth ${growth}pt`
+  );
+
+  /* Text alone is not enough: the item table's rules, the GST table's outline and
+     the totals box are strokes, and a body that kept its words but redrew its
+     rules would still be a changed invoice. So the graphics are compared the same
+     way — every stroked rectangle and line below the header, shifted back by the
+     growth, must be the identical set. Read out of the raw content stream so the
+     comparison sees the operators the writer actually emitted. */
+  /* Rounded to the writer's own 3-decimal precision before comparing. Subtracting
+     the growth from a coordinate introduces representation error of its own —
+     479.2 comes back as 479.20000000000005 — and comparing those raw would fail on
+     arithmetic noise rather than on a difference anyone could see printed. */
+  const graphics = (pdf: string, rule: number, by: number): string[] => {
+    const stream = contentStream(pdf);
+    const boxes = [...strokedRects(stream), ...strokedLines(stream)].filter(
+      (b) => b.y > rule + 0.01
+    );
+    return boxes.map((b) => `${b.x.toFixed(3)} ${(b.y - by).toFixed(3)} ${b.w.toFixed(3)} ${b.h.toFixed(3)}`).sort();
+  };
+  const ga = graphics(marked, ruleMarked, growth);
+  const gb = graphics(plain, rulePlain, 0);
+  check(ga.length > 0, "the body draws strokes of its own", `${ga.length} rectangles and lines`);
+  check(
+    ga.length === gb.length && ga.every((v, i) => v === gb[i]),
+    "every rule and box below the header is the same, shifted by the growth",
+    ga.length === gb.length ? "" : `${ga.length} vs ${gb.length}`
+  );
+
+  // The footer is the one thing that must NOT move: it is anchored to the page,
+  // not to the flow, and a footer that slid down the sheet would change on every
+  // invoice that happened to carry a logo.
+  const footer = (pdf: string) =>
+    sortCount(textPlacements(pdf).filter((t) => t.y > CONTENT_BOTTOM).map((t) => `${t.text}\u0000${t.y.toFixed(3)}`));
+  const fa = footer(marked);
+  const fb = footer(plain);
+  check(fa.length > 0, "the footer is drawn", `${fa.length} strings`);
+  check(
+    fa.length === fb.length && fa.every((v, i) => v === fb[i]),
+    "the footer does not move at all",
+    fb.length === fa.length ? "" : `${fa.length} vs ${fb.length}`
   );
 }
 
-console.log("\nthe header grows only for a seller block that leaves no room");
+console.log("\nthe header is bounded, and no invoice is reflowed onto a second page");
 if (logoOpaque) {
+  // Growth must be non-negative: a logo may take room, never give it back.
   const plainRule = headerRuleY(latin1(renderBillDocument([sparse], COPY_LABEL.original)));
   const markedRule = headerRuleY(latin1(renderBillDocument([sparse], COPY_LABEL.original, logoOpaque)));
   const moved = markedRule - plainRule;
   check(moved >= 0, "the header is never shortened to fit a logo", `moved ${moved.toFixed(2)}pt`);
-  check(moved <= 30, "growth is capped so a page cannot be reflowed by a logo", `moved ${moved.toFixed(2)}pt`);
+  check(moved <= 60, "growth is capped", `moved ${moved.toFixed(2)}pt`);
 
-  const placed = imagePlacements(latin1(renderBillDocument([sparse], COPY_LABEL.original, logoOpaque)));
-  if (placed.length === 1) {
-    check(placed[0].x >= 455.28 && placed[0].x + placed[0].w <= 565.28 + 1e-6,
-      "still inside the strip after growing");
+  // A seller with nothing but a name gets a compartment a logo can actually be
+  // seen in, not one squeezed into the 20pt the plain header leaves.
+  const sparseMarked = latin1(renderBillDocument([sparse], COPY_LABEL.original, logoOpaque));
+  const sparseLh = letterhead(sparseMarked);
+  check(sparseLh.compartment !== null, "a name-only seller still gets a compartment");
+  if (sparseLh.compartment) {
+    check(
+      sparseLh.compartment.h >= 30,
+      "and the compartment is big enough to hold a legible mark",
+      `${sparseLh.compartment.h.toFixed(2)}pt tall`
+    );
+  }
+  const sparsePlaced = imagePlacements(sparseMarked);
+  check(sparsePlaced.length === 1, "and the logo is still drawn in it", `found ${sparsePlaced.length}`);
+  if (sparsePlaced.length === 1 && sparseLh.compartment) {
+    const sp = sparsePlaced[0];
+    check(
+      sp.x > sparseLh.compartment.x - 0.01 &&
+        sp.x + sp.w < sparseLh.compartment.x + sparseLh.compartment.w + 0.01,
+      "and it is still contained by it"
+    );
+  }
+
+  /* The bound that actually matters is pagination. Growth translates everything
+     below the rule, so the only damage it can do is push a block off the page —
+     and whether it does depends on how full each individual invoice is, not on
+     the seller block alone. So it is checked against every copy of every bill in
+     both fixture workbooks, each against its own no-logo page count. A logo is
+     allowed on an invoice that was already two pages — three of the twenty in
+     `BILL 301 TO.xlsx` are — but it may not turn a one-page invoice into two. */
+  const pageCount = (bytes: Uint8Array): number =>
+    (latin1(bytes).match(/\/Type \/Page[^s]/g) ?? []).length;
+  const regressed: string[] = [];
+  let checked = 0;
+  for (const file of ["SAMPLE.xlsx", "BILL 301 TO.xlsx"]) {
+    const wb = await readXlsx(readFileSync(resolve(REPO, file)));
+    for (const bill of parseBills(wb.sheets).bills) {
+      for (const copy of COPY_ORDER) {
+        const bc = bill[copy];
+        if (!bc) continue;
+        checked++;
+        const without = pageCount(renderBillDocument([bc], COPY_LABEL[copy]));
+        const withLogo = pageCount(renderBillDocument([bc], COPY_LABEL[copy], logoOpaque));
+        if (withLogo > without) {
+          regressed.push(`${file}/${bill.sheetName}/${COPY_LABEL[copy]} ${without}->${withLogo}`);
+        }
+      }
+    }
+  }
+  check(checked > 0, "every fixture copy was checked", `${checked} documents`);
+  check(
+    regressed.length === 0,
+    "no invoice is pushed onto a second page by its logo",
+    regressed.length ? regressed.join("; ") : `${checked} copies, no regression`
+  );
+}
+
+/* A logo arrives as whatever file the customer uploaded. The compartment is a
+   fixed box, so the fit has to be correct for every shape it might be handed —
+   not just for one particular logo. Each case below asserts the two properties
+   that together mean "not distorted": the drawn box has the same aspect ratio as
+   the source pixels, and it is contained by the compartment with clear space on
+   every side. */
+console.log("\nevery logo shape fits its compartment without distortion");
+{
+  const cases: [string, number, number][] = [
+    ["SAASTHA letterhead (411x276, the shape the box was drawn for)", 411, 276],
+    ["square (600x600)", 600, 600],
+    ["tall portrait (200x900)", 200, 900],
+    ["very wide banner (1600x200)", 1600, 200],
+    ["tiny (24x24)", 24, 24],
+  ];
+  for (const [label, w, h] of cases) {
+    const decoded = await decodePdfImage(syntheticJpeg(w, h));
+    if (!decoded) {
+      check(false, `${label}: decodes`);
+      continue;
+    }
+    const pdf = latin1(renderBillDocument([ordinary], COPY_LABEL.original, decoded));
+    const { compartment } = letterhead(pdf);
+    const placed = imagePlacements(pdf);
+    check(compartment !== null, `${label}: compartment present`);
+    check(placed.length === 1, `${label}: drawn once`, `found ${placed.length}`);
+    if (!compartment || placed.length !== 1) continue;
+    const p = placed[0];
+
+    const want = w / h;
+    const got = p.w / p.h;
+    check(
+      Math.abs(got - want) / want < 1e-3,
+      `${label}: aspect ratio preserved`,
+      `${w}x${h} -> ${p.w.toFixed(2)}x${p.h.toFixed(2)} (${want.toFixed(4)} vs ${got.toFixed(4)})`
+    );
+    const inside =
+      p.x >= compartment.x - 0.01 &&
+      p.yTop >= compartment.y - 0.01 &&
+      p.x + p.w <= compartment.x + compartment.w + 0.01 &&
+      p.yTop + p.h <= compartment.y + compartment.h + 0.01;
+    check(inside, `${label}: contained by the compartment with clearance`);
+    check(
+      p.h >= 12,
+      `${label}: not shrunk below legibility`,
+      `${p.h.toFixed(2)}pt tall`
+    );
+    // Containment is what proves the mark touched no edge: had it overflowed it
+    // would have been clipped, and had it been squeezed it would not have kept
+    // its ratio. Both are asserted above.
+    check(
+      p.h <= compartment.h && p.w <= compartment.w,
+      `${label}: never larger than the compartment in either axis`
+    );
+  }
+
+  // A transparent PNG must survive the same journey, soft mask and all.
+  const alphaWide = await decodePdfImage(await syntheticPng(900, 300, "ramp"));
+  if (alphaWide) {
+    const pdf = latin1(renderBillDocument([ordinary], COPY_LABEL.original, alphaWide));
+    const { compartment } = letterhead(pdf);
+    const placed = imagePlacements(pdf);
+    check(pdf.includes("/SMask"), "a transparent PNG keeps its soft mask");
+    check(compartment !== null && placed.length === 1, "a transparent PNG is placed once");
+    if (compartment && placed.length === 1) {
+      const p = placed[0];
+      const want = 900 / 300;
+      check(Math.abs(p.w / p.h - want) / want < 1e-3, "a transparent PNG keeps its ratio too");
+      check(
+        p.x >= compartment.x - 0.01 && p.x + p.w <= compartment.x + compartment.w + 0.01,
+        "a transparent PNG is contained by the compartment"
+      );
+    }
   }
 }
 
@@ -377,11 +884,32 @@ if (logoAlpha) {
     check(broken === 0, `${label}: all ${size - 1} xref offsets resolve`, `${resolved} ok, ${broken} broken`);
   }
 
-  // Adding image objects must not change the page count or the text.
-  const plainText = (s: string): string => (s.match(/\((.*?)\) Tj/g) ?? []).join("\n");
-  const a = latin1(renderBillDocument([ordinary], COPY_LABEL.original));
-  const b = latin1(renderBillDocument([ordinary], COPY_LABEL.original, logoAlpha));
-  check(plainText(a) === plainText(b), "every drawn string is identical with and without a logo");
+  /* The seller block is re-wrapped when a logo is present, because its column is
+     narrower — the compartment takes the left of the letterhead and the text
+     wraps to what is left. So the drawn strings are NOT identical between the two
+     documents, and pretending otherwise would be a test that can only pass if the
+     logo were removed. What has to hold is that the words are all still there, in
+     the same order, with none dropped, duplicated or reordered by the narrower
+     column. Whitespace is removed because it is exactly what re-wrapping moves. */
+  const words = (pdf: string, rule: number): string =>
+    textPlacements(pdf)
+      .filter((t) => t.y <= rule + 0.01)
+      .map((t) => t.text)
+      .join("")
+      .replace(/\s+/g, "");
+  const a = words(latin1(renderBillDocument([ordinary], COPY_LABEL.original)), headerRuleY(latin1(renderBillDocument([ordinary], COPY_LABEL.original))));
+  const b = words(latin1(renderBillDocument([ordinary], COPY_LABEL.original, logoAlpha)), headerRuleY(latin1(renderBillDocument([ordinary], COPY_LABEL.original, logoAlpha))));
+  check(a.length > 0, "the header draws words", `${a.length} characters`);
+  check(
+    a === b,
+    "the letterhead says exactly the same words with and without a logo",
+    a === b ? "" : `${a.length} vs ${b.length} characters`
+  );
+  check(
+    ordinary.sellerName.replace(/\s+/g, "") !== "" &&
+      b.includes(ordinary.sellerName.replace(/\s+/g, "")),
+    "including the seller's name, spelled the same"
+  );
 }
 
 /* ──────────────────────────────────────────────
