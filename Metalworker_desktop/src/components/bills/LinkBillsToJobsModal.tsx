@@ -30,6 +30,15 @@ interface Props {
   billId: string;
   /** Shown in the heading so the admin can see which invoice they are editing. */
   billLabel: string;
+  /**
+   * Which tab opens first. Defaults to Labour.
+   *
+   * The Bill Creator offers a separate button per job type — "Link Labour Jobs" and "Link
+   * With Material Jobs" — because an admin linking jobs is usually thinking of one kind
+   * and would otherwise open the dialog on the wrong tab, tick nothing they recognise, and
+   * conclude the jobs are missing. One dialog, two doors.
+   */
+  initialTab?: JobType;
   onClose: () => void;
   onLinked: (result: { linked: number; alreadyLinked: number }) => void;
 }
@@ -43,6 +52,7 @@ export default function LinkBillsToJobsModal({
   open,
   billId,
   billLabel,
+  initialTab = "labour",
   onClose,
   onLinked,
 }: Props) {
@@ -64,7 +74,7 @@ export default function LinkBillsToJobsModal({
     setSearch("");
     setPicked(new Set());
     setLinkedIds(new Set());
-    setTab("labour");
+    setTab(initialTab);
     setLoadError(null);
     setSaveError(null);
     setLoading(open);

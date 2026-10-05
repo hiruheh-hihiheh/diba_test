@@ -238,11 +238,44 @@ function cleanBank(value: unknown): BankDetails | null {
     }
     const part = entry as Partial<BankPart>;
     out[key] = {
-      label: clean(part.label, 60, "a bank label") ?? defaultBankLabel(key),
+      label: cleanBankLabel(part.label, key),
       value: clean(part.value, LIMITS.short, "a bank value") ?? "",
     };
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * A bank label, keeping the gap between it and its value.
+ *
+ * `bankLinesOf` rebuilds a printed bank line as `label + value`, and `parseBankLines`
+ * deliberately puts the whole gap INSIDE the label so that concatenation reproduces the
+ * workbook's line byte for byte. Trimming the label therefore deletes a character the
+ * invoice actually prints: "Bank Name: EXAMPLE BANK" becomes "Bank Name:EXAMPLE BANK",
+ * and every bank line loses the space after its colon.
+ *
+ * That is not a hypothetical. `applyPatch` is the only path a saved bank block takes, so
+ * any bill whose bank was edited — or any bill copied by the Bill Creator, which always
+ * resends the whole block — re-printed slightly narrower than the document it was
+ * generated from. The invoice is still correct, which is why it went unnoticed; it is
+ * just no longer the same invoice.
+ *
+ * So the label is bounded but NOT trimmed: leading and interior spacing is the
+ * workbook's, and only an all-whitespace or absent label falls back to this template's
+ * default. Over-long is still rejected rather than truncated, for the same reason every
+ * other field rejects: a shortened bank name is wrong in a way nobody notices.
+ */
+function cleanBankLabel(value: unknown, key: string): string {
+  if (value === null || value === undefined) return defaultBankLabel(key);
+  const s = String(value);
+  if (s.trim() === "") return defaultBankLabel(key);
+  if (s.length > 60) {
+    throw new EditError(
+      `A bank label is ${s.length} characters; the limit is 60. Shorten it before saving.`,
+      "bank_details"
+    );
+  }
+  return s;
 }
 
 /* ──────────────────────────────────────────────

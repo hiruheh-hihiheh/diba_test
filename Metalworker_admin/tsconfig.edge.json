@@ -42,5 +42,5 @@
       ]
     }
   },
-  "include": ["supabase/functions/process-bill-upload/**/*.ts", "supabase/functions/update-bill/**/*.ts", "supabase/functions/set-bill-logos/**/*.ts"]
+  "include": ["supabase/functions/process-bill-upload/**/*.ts", "supabase/functions/update-bill/**/*.ts", "supabase/functions/set-bill-logos/**/*.ts", "supabase/functions/create-bill/**/*.ts"]
 }

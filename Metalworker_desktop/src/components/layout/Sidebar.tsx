@@ -10,6 +10,7 @@ import {
   Package,
   Building2,
   FileText,
+  FilePlus2,
   Receipt,
   ImagePlus,
   PenTool,
@@ -87,6 +88,10 @@ const navSections: NavSection[] = [
     title: "DOCUMENTS",
     items: [
       { label: "Bills", icon: <Receipt size={20} />, path: "/bills" },
+      // How a bill gets made, next to the list of bills that exist. Both entry modes —
+      // blank, and blank with the Invoice Business Profile preloaded — and the copy flow
+      // are one screen reached three ways, so there is one entry rather than three.
+      { label: "Create Bill", icon: <FilePlus2 size={20} />, path: "/bills/create" },
       // The reusable letterheads invoices print. Nested under Bills because a logo
       // is only ever used through an invoice — on its own it is an asset, and the
       // "used on N bills" count on that screen only makes sense next to the bills.

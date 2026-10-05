@@ -9,9 +9,13 @@
 // separately. Deleting is per WORKBOOK, because the three PDFs and the invoice
 // rows only exist and die together — the confirmation says so in words.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   CalendarDays,
+  ChevronDown,
+  Copy,
+  FilePlus2,
   FileSpreadsheet,
   FileText,
   Filter,
@@ -25,6 +29,7 @@ import {
   SearchX,
   Trash2,
   UploadCloud,
+  UserRound,
   X,
 } from "lucide-react";
 
@@ -56,6 +61,7 @@ import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import Modal from "../components/ui/Modal";
 import IconButton from "../components/ui/IconButton";
+import AnchoredPopover from "../components/ui/AnchoredPopover";
 import Pagination from "../components/ui/Pagination";
 import SelectAllCheckbox, { selectionStats } from "../components/ui/SelectAllCheckbox";
 import BulkActionBar from "../components/ui/BulkActionBar";
@@ -85,6 +91,46 @@ const selectCls =
 const inputCls =
   "bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary";
 
+/**
+ * The three ways a bill starts, as links.
+ *
+ * The same three the creator's own entry screen offers, reached by URL rather than by
+ * being in the component — so this list is data, the entry screen is the thing it opens,
+ * and adding a fourth way to start a bill is a line here instead of a second set of
+ * buttons that can disagree about what "Copy" means.
+ *
+ * `needsExistingBill` is what makes the copy entry conditional. Hidden rather than
+ * disabled, because with no bills there is no bill to copy and a greyed-out control only
+ * raises the question of why.
+ */
+const CREATE_BILL_CHOICES: {
+  to: string;
+  label: string;
+  body: string;
+  icon: React.ReactNode;
+  needsExistingBill?: boolean;
+}[] = [
+  {
+    to: "/bills/create?mode=empty",
+    label: "Create New Bill",
+    body: "A blank bill. You fill in the customer, the line items and the taxes.",
+    icon: <FilePlus2 size={17} />,
+  },
+  {
+    to: "/bills/create?mode=profile",
+    label: "New Bill + Profile",
+    body: "The same bill, with your Invoice Business Profile already filled in.",
+    icon: <UserRound size={17} />,
+  },
+  {
+    to: "/bills/create?copy=pick",
+    label: "Copy Existing Bill",
+    body: "Start from a bill that already exists. The original is never changed.",
+    icon: <Copy size={17} />,
+    needsExistingBill: true,
+  },
+];
+
 export default function BillsPage() {
   const toast = useToast();
   const confirm = useConfirm();
@@ -110,6 +156,8 @@ export default function BillsPage() {
   const [facets, setFacets] = useState<BillJobFacet[]>([]);
 
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLButtonElement>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   /** The bill open in the editor, or null. Separate from the read-only detail view. */
   const [editId, setEditId] = useState<string | null>(null);
@@ -800,6 +848,53 @@ export default function BillsPage() {
             <UploadCloud size={17} />
             Upload workbook
           </button>
+
+          {/* A bill does not have to come from a workbook. This sits NEXT TO the upload
+              button rather than replacing it, because both are how a bill starts and
+              neither is more correct than the other — an admin creating one bill by hand
+              should not have to go looking somewhere else to find the button. */}
+          <div className="relative">
+            <button
+              ref={createMenuRef}
+              type="button"
+              onClick={() => setCreateMenuOpen((open) => !open)}
+              aria-expanded={createMenuOpen}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border hover:bg-surface-hover text-text text-sm font-bold transition-all cursor-pointer"
+            >
+              <FilePlus2 size={17} />
+              Create Bill
+              <ChevronDown size={15} className={createMenuOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+            </button>
+
+            <AnchoredPopover
+              open={createMenuOpen}
+              anchorRef={createMenuRef}
+              onClose={() => setCreateMenuOpen(false)}
+              ariaLabel="How to create a bill"
+              width={280}
+              className="p-1.5"
+            >
+              {/* `total`, not the number of rows on this page: a search that happens to
+                  match nothing must not make "Copy Existing Bill" disappear. It is the
+                  whole table that decides whether there is anything to copy. */}
+              {CREATE_BILL_CHOICES.filter(
+                (choice) => choice.needsExistingBill !== true || total > 0
+              ).map((choice) => (
+                <Link
+                  key={choice.to}
+                  to={choice.to}
+                  onClick={() => setCreateMenuOpen(false)}
+                  className="flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-surface-hover transition-colors"
+                >
+                  <span className="mt-0.5 text-primary shrink-0">{choice.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-text">{choice.label}</span>
+                    <span className="block text-xs text-text-muted">{choice.body}</span>
+                  </span>
+                </Link>
+              ))}
+            </AnchoredPopover>
+          </div>
         </div>
       </div>
 

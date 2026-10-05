@@ -17,6 +17,7 @@ import CompanyStockPage from "./pages/CompanyStock";
 import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
 import BillsPage from "./pages/Bills";
+import CreateBillPage from "./pages/CreateBill";
 import InvoiceLogosPage from "./pages/InvoiceLogos";
 import InvoiceSettingsPage from "./pages/InvoiceSettings";
 import FoldersPage from "./pages/Folders";
@@ -61,6 +62,11 @@ export default function App() {
 
                   {/* Phase 4 — Documents */}
                   <Route path="/bills" element={<BillsPage />} />
+                  {/* Creating a bill. Declared BEFORE the logos route because both are
+                      nested under /bills, and an entry screen with no query string is the
+                      state the page boots into - the mode it is in lives in the query, so
+                      arriving here with none puts the three entry choices up. */}
+                  <Route path="/bills/create" element={<CreateBillPage />} />
                   <Route path="/bills/logos" element={<InvoiceLogosPage />} />
                   {/* The company-level defaults: name, address, bank block, terms,
                       footer wording. Sits beside the Logo Library because both answer
