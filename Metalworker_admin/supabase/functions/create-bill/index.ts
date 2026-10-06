@@ -327,6 +327,25 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "The bill could not be checked." }, 400);
   }
 
+  /* ---- the totals the form displays ----------------------------------------
+     Read out of `computeBillValues` rather than recomputed, so the six figures the
+     admin sees beside their line items ARE the six figures the renderer is about to
+     print. A form that showed its own arithmetic would be a second answer to "what
+     does this invoice total", and the requirement says there is only one.
+
+     `cgst`/`sgst`/`igst`/`total_gst` matter as much as the two headline numbers: which
+     of the three taxes applies is decided from the base record's amounts, so a client
+     cannot work it out from the form alone and would otherwise have to show a blank
+     where the invoice is about to print a figure. */
+  const totals = {
+    amount_before_tax: Number(values.amount_before_tax ?? 0),
+    cgst: Number(values.cgst ?? 0),
+    sgst: Number(values.sgst ?? 0),
+    igst: Number(values.igst ?? 0),
+    total_gst: Number(values.total_gst ?? 0),
+    amount_after_tax: Number(values.amount_after_tax ?? 0),
+  };
+
   /* A copy's amount in words: keep the source's own wording when the money did not
      move, and regenerate it when it did, so the words and the figures can never
      disagree on the printed document. */
@@ -540,8 +559,8 @@ Deno.serve(async (req) => {
       bill_id: draftId,
       preview: true,
       status: row.status ?? "draft",
-      amount_after_tax: row.amount_after_tax ?? null,
       amount_in_words: row.amount_in_words ?? null,
+      ...totals,
       filename: `${safeBillToken(String(row.invoice_no ?? ""), String(row.sheet_name ?? ""))}_original.pdf`,
       pdf_base64: toBase64(models[0].bytes),
     });
@@ -565,8 +584,8 @@ Deno.serve(async (req) => {
       created,
       status: row.status ?? "draft",
       saved_at: write.updated_at,
-      amount_after_tax: row.amount_after_tax ?? null,
       amount_in_words: row.amount_in_words ?? null,
+      ...totals,
     });
   }
 
@@ -578,9 +597,9 @@ Deno.serve(async (req) => {
     patch,
     lineItems: storedItems,
     totals: {
-      amountBeforeTax: Number(values.amount_before_tax ?? 0),
-      totalGst: Number(values.total_gst ?? 0),
-      amountAfterTax: Number(values.amount_after_tax ?? 0),
+      amountBeforeTax: totals.amount_before_tax,
+      totalGst: totals.total_gst,
+      amountAfterTax: totals.amount_after_tax,
     },
   });
   if (blockers.length > 0) {
@@ -741,8 +760,8 @@ Deno.serve(async (req) => {
     created,
     status: "finalized",
     pdf_version: 1,
-    amount_after_tax: row.amount_after_tax ?? null,
     amount_in_words: row.amount_in_words ?? null,
+    ...totals,
     jobs_linked: jobsLinked,
     jobs_error: jobsError,
     folder_linked: folderLinked,

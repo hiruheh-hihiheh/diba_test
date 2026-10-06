@@ -10,7 +10,6 @@
 // other through their bundlers, and neither can import from a Deno edge function
 // directory. That is a real constraint, and a shared package across two applications is
 // not a trade worth making for this.
-//
 // What is not acceptable is the part where a real constraint becomes a real bug: two
 // copies of a function that maps a form onto a financial document, with nothing forcing
 // them to agree. A field added to one and forgotten in the other is a field an admin can
@@ -85,6 +84,36 @@ const MIRRORS = [
       }
       return undefined;
     },
+  },
+  {
+    /* Section I of the creator is "link jobs to this bill", and that relationship is not
+       optional to the feature: a bill with no job link is a valid bill, but an admin who
+       created one on their phone and then opened the app expecting to see it among their
+       jobs would find nothing, and would have no way to link it from there. So the data
+       access is mirrored too rather than the section being quietly dropped on mobile. */
+    name: "the Bill ↔ Job connection layer",
+    from: resolve(ADMIN, "src/services/billJobConnections.ts"),
+    to: resolve(DESKTOP, "src/services/billJobConnections.ts"),
+    /* Only the `supabase` import, for the reason given above. Line 1 is NOT rewritten
+       here, unlike the two Bill Creator modules: these two files predate the script and
+       carry the repo's own `// src/...` header, which happens to be identical in both
+       apps because both are at `src/`. Inventing a second header convention for two files
+       to satisfy a script would be the script deciding what the source looks like. */
+    fixLine: (index, line) =>
+      line === 'import { supabase } from "./supabase";'
+        ? 'import { supabase } from "../lib/supabase";'
+        : undefined,
+  },
+  {
+    /* Types, mirrored for the same reason as the layer above: `connectionCountLabel` is a
+       function, not a type, and it is what decides whether a screen reads "1 Bill" or
+       "1 Bills". Two copies of that string helper that drift apart is a visible defect on
+       one platform only, which is exactly the failure the script exists to prevent. */
+    name: "the Bill ↔ Job connection types",
+    from: resolve(ADMIN, "src/types/billJobConnections.ts"),
+    to: resolve(DESKTOP, "src/types/billJobConnections.ts"),
+    /* Nothing may differ at all. */
+    fixLine: () => undefined,
   },
 ];
 

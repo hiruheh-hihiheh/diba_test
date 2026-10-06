@@ -20,7 +20,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -90,6 +90,7 @@ export default function BillsScreen() {
   const [page, setPage] = useState(1);
 
   const [uploadOpen, setUploadOpen] = useState(false);
+const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   /** The bill open in the editor, or null. Separate from the read-only detail view. */
   const [editId, setEditId] = useState<string | null>(null);
@@ -641,9 +642,15 @@ export default function BillsScreen() {
 
         <View style={styles.toolbar}>
           <Button
+            title="+ Create Bill"
+            onPress={() => setCreateOpen(true)}
+            style={styles.toolbarMain}
+          />
+          <Button
             title="+ Upload workbook"
             onPress={() => setUploadOpen(true)}
-            style={styles.toolbarMain}
+            variant="ghost"
+            style={styles.toolbarSecondary}
           />
           <Pressable
             onPress={() => setShowFilters((v) => !v)}
@@ -1300,6 +1307,21 @@ export default function BillsScreen() {
         />
       )}
 
+      {/* How a bill comes into existence by hand. All three choices point at the SAME
+          creator screen; they differ only in what starts filled in, and the screen's own
+          footer says so. Copy is shown only when something exists to copy: an entry that
+          opens an empty list is a button that fails on every press. */}
+      {createOpen && (
+        <CreateBillChoiceSheet
+          hasBills={total > 0}
+          onClose={() => setCreateOpen(false)}
+          onChoose={(path) => {
+            setCreateOpen(false);
+            router.push(path as Href);
+          }}
+        />
+      )}
+
       {/* ── The bulk-assign picker ───────────────────────────────────── */}
       <LogoPickerModal
         visible={assignLogoOpen}
@@ -1466,6 +1488,76 @@ function bulkDeleteMessage(ids: string[], pageBills: Bill[], allMatching: boolea
   return `This will delete ${which}: ${sample}${rest}. Each one's three print copies (original, duplicate, triplicate), its line items and its folder links go with it. Any other invoice, including the rest of the same workbooks, is not affected. This cannot be undone.`;
 }
 
+/* ──────────────────────────────────────────────
+   How a bill comes into existence by hand
+   ────────────────────────────────────────────── */
+
+function CreateBillChoiceSheet({
+  hasBills,
+  onClose,
+  onChoose,
+}: {
+  /** Whether any bill exists at all, which is the copy choice's gate. */
+  hasBills: boolean;
+  onClose: () => void;
+  onChoose: (path: string) => void;
+}) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+
+  const choices: { title: string; body: string; onPress: () => void }[] = [
+    {
+      title: "Create New Bill",
+      body: "A blank bill, section by section.",
+      onPress: () => onChoose("/bill-create?mode=empty"),
+    },
+    {
+      title: "New Bill + Profile",
+      body: "The same blank bill, preloaded from your Invoice Business Profile.",
+      onPress: () => onChoose("/bill-create?mode=profile"),
+    },
+  ];
+  if (hasBills) {
+    choices.push({
+      title: "Copy Existing Bill",
+      body: "A new draft from a bill already in the list. The original is never changed.",
+      onPress: () => onChoose("/bill-create?mode=copy"),
+    });
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.backdrop}>
+        <View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>Create a bill</Text>
+          <Text style={styles.sheetSubtitle}>
+            All three produce the same bill and the same three PDFs — they differ only in
+            what starts filled in.
+          </Text>
+          {choices.map((choice) => (
+            <Pressable
+              key={choice.title}
+              style={({ pressed }) => [styles.createChoice, pressed && styles.pressed]}
+              onPress={choice.onPress}
+              accessibilityRole="button"
+            >
+              <Text style={styles.createChoiceTitle}>{choice.title}</Text>
+              <Text style={styles.createChoiceBody}>{choice.body}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            style={styles.createCancel}
+          >
+            <Text style={styles.createCancelText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 /**
  * A plain Modal wrapper so the upload panel gets the same chrome as the other
  * dialogs. Defined here rather than in `components/ui` because it is the only
@@ -1524,6 +1616,9 @@ const createStyles = (theme: AppTheme) =>
 
     toolbar: { flexDirection: "row", gap: theme.spacing.sm, marginBottom: theme.spacing.md },
     toolbarMain: { flex: 1 },
+    /* The upload button sits beside Create rather than above it: its own workbook is a
+       full-screen flow, and the toolbar should read as "add a bill" with two doors. */
+    toolbarSecondary: { flex: 1 },
     filterToggle: {
       minHeight: 50,
       paddingHorizontal: theme.spacing.md,
@@ -1930,6 +2025,36 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.textMuted,
       fontSize: theme.textSizes.sm,
       marginBottom: theme.spacing.md,
+    },
+    /* One door per entry mode in the create sheet. Named to read as a list of choices
+       rather than as rows inside a form, because that is what they are. */
+    createChoice: {
+      backgroundColor: theme.colors.surfaceSecondary,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.sm,
+    },
+    createChoiceTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "700",
+      marginBottom: 2,
+    },
+    createChoiceBody: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+    },
+    createCancel: {
+      alignSelf: "center",
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.lg,
+    },
+    createCancelText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "800",
     },
     /* The one definition of "locked while a bulk operation runs". Every control
        that reads `busy` applies this, so the screen never shows one button still

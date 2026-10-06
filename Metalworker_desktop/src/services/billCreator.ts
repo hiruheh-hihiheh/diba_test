@@ -128,10 +128,28 @@ export class CreatorError extends Error {
   }
 }
 
-export interface CreatorDraftRef {
+/**
+ * The six figures the form displays, straight from the server's own
+ * `computeBillValues`.
+ *
+ * NOT recomputed on the device. Which of CGST/SGST/IGST applies is decided from the base
+ * record's tax AMOUNTS rather than from anything in the form, so a client that worked it
+ * out for itself would have to reimplement that decision — the one rule the requirement
+ * says must not exist twice. `amount_before_tax` is here even though the form can sum its
+ * own lines, because showing two sources for the same number is how they start to differ.
+ */
+export interface CreatorTotals {
+  amount_before_tax: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  total_gst: number;
+  amount_after_tax: number;
+}
+
+export interface CreatorDraftRef extends CreatorTotals {
   bill_id: string;
   status: "draft" | "finalized";
-  amount_after_tax: number | null;
   amount_in_words: string | null;
 }
 
@@ -248,6 +266,14 @@ interface CreatorWireResponse {
   saved_at?: string;
   amount_after_tax?: number | null;
   amount_in_words?: string | null;
+  /* The six computed figures. Optional on the wire because a FAILED response carries no
+     totals at all, so the parser has to tolerate their absence even though a successful
+     one always has them. */
+  amount_before_tax?: number;
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  total_gst?: number;
   duplicates?: CreatorDuplicate[];
   duplicate_invoice_no?: CreatorDuplicate[] | null;
   pdf_base64?: string;
@@ -326,8 +352,28 @@ function draftRef(data: CreatorWireResponse, fallbackId: string | null): Creator
   return {
     bill_id: data.bill_id ?? fallbackId ?? "",
     status: data.status ?? "draft",
-    amount_after_tax: data.amount_after_tax ?? null,
     amount_in_words: data.amount_in_words ?? null,
+    /* Last, so the six figures come only from `readTotals` and cannot be half-set by a
+       stray key above it. */
+    ...readTotals(data),
+  };
+}
+
+/**
+ * The six figures, defaulted to zero when absent.
+ *
+ * Zero rather than null on purpose. A missing tax on an invoice is zero, not "unknown",
+ * and a form that printed "—" beside a CGST line the PDF is about to leave blank would
+ * read as a missing value rather than as an absent tax.
+ */
+function readTotals(data: CreatorWireResponse): CreatorTotals {
+  return {
+    amount_before_tax: data.amount_before_tax ?? 0,
+    cgst: data.cgst ?? 0,
+    sgst: data.sgst ?? 0,
+    igst: data.igst ?? 0,
+    total_gst: data.total_gst ?? 0,
+    amount_after_tax: data.amount_after_tax ?? 0,
   };
 }
 

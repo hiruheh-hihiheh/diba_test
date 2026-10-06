@@ -82,6 +82,7 @@ import {
   openCreatorPreview,
   previewCreatorDraft,
   saveCreatorDraft,
+  type CreatorDraftRef,
   type CreatorDuplicate,
 } from "../services/billCreator";
 import {
@@ -620,15 +621,17 @@ function CreatorForm({
     ]
   );
 
-  const applyServerTotals = useCallback((result: { amount_after_tax: number | null; amount_in_words: string | null }) => {
-    setServerTotals((previous) => ({
-      amount_before_tax: previous?.amount_before_tax ?? null,
-      cgst: previous?.cgst ?? null,
-      sgst: previous?.sgst ?? null,
-      igst: previous?.igst ?? null,
-      total_gst: previous?.total_gst ?? null,
+  /* The server's own figures, replaced wholesale rather than merged: keeping a previous
+     CGST while a new save has none would show a tax the invoice is no longer charging. */
+  const applyServerTotals = useCallback((result: CreatorDraftRef) => {
+    setServerTotals({
+      amount_before_tax: result.amount_before_tax,
+      cgst: result.cgst,
+      sgst: result.sgst,
+      igst: result.igst,
+      total_gst: result.total_gst,
       amount_after_tax: result.amount_after_tax,
-    }));
+    });
     setServerWords(result.amount_in_words);
   }, []);
 
