@@ -272,6 +272,8 @@ function CreatorForm({
 }) {
   const isCopy = mode === "copy";
 
+  const { theme } = useTheme();
+
   /* ── The form ────────────────────────────────────────────── */
 
   const [values, setValues] = useState<CreatorFormValues>({});
@@ -752,7 +754,7 @@ function CreatorForm({
     return (
       <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
         <View style={styles.centred}>
-          <ActivityIndicator size="large" color={themeColor(styles)} />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.note}>
             {isCopy ? "Reading the bill being copied…" : "Opening the bill creator…"}
           </Text>
@@ -1268,6 +1270,12 @@ function CreatorForm({
                     ", "
                   )} are substituted when the invoice prints.`
                 : `Your profile's payment window is ${profilePaymentDays} days, and {PAYMENT_DAYS} in a term prints as that number.`}
+              {paymentDaysFromTerms([
+                values.term_1 ?? "",
+                values.term_2 ?? "",
+                values.term_3 ?? "",
+              ]) !== null &&
+                " This bill's terms state their own window — what it was written to say, and it is left alone."}
             </Text>
           </Section>
 
@@ -1573,12 +1581,6 @@ function CreatorForm({
 /* ──────────────────────────────────────────────
    Small pieces
    ────────────────────────────────────────────── */
-
-function themeColor(_styles: Styles): string {
-  /* The only reason this exists is so the loading spinner does not need the theme
-     threaded through the whole component. Read from the style the caller built. */
-  return (_styles as unknown as { _spinnerColor?: string })._spinnerColor ?? "#E50914";
-}
 
 function EntryChoice({
   styles,
@@ -2092,8 +2094,3 @@ function createStyles(theme: AppTheme) {
     sheetTitle: { color: c.text, fontSize: theme.textSizes.md, fontWeight: "800" },
   });
 }
-
-/* Kept so the unused-import checker sees the one thing this file needs from creatorForm
-   that is only referenced in a type position above. */
-export type { CreatorSeed as CreatorFormSeed };
-void paymentDaysFromTerms;

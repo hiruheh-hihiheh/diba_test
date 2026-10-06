@@ -24,7 +24,7 @@
 // their line items. A copy that re-derived its source from a printed document would be a
 // second parser, and the differences between it and the stored data would be invisible.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -56,11 +56,18 @@ export interface BillSourcePickerSheetProps {
 
 type Styles = ReturnType<typeof createStyles>;
 
-export function BillSourcePickerSheet({
-  visible,
-  onClose,
-  onConfirm,
-}: BillSourcePickerSheetProps) {
+export function BillSourcePickerSheet(props: BillSourcePickerSheetProps) {
+  /* A shell that owns open/close and nothing else. When `visible` swings false the body
+     is unmounted; when it comes back the body mounts fresh with `chosen` null again.
+     That unmount is the reset: it works on EVERY dismissal path — the Close button, the
+     Android back gesture, and the confirm path that routes straight out of this dialog —
+     which is more than any per-field cleanup can promise, because a manual reset has to
+     be remembered at each exit and a missing one silently re-arms the stale choice. */
+  if (!props.visible) return null;
+  return <BillSourcePickerSheetBody {...props} />;
+}
+
+function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheetProps) {
   const { theme } = useTheme();
 
   const [search, setSearch] = useState("");
@@ -75,9 +82,10 @@ export function BillSourcePickerSheet({
 
   /* Search as the admin types, but not on every keystroke. 250ms is long enough to
      coalesce a fast typist into one request and short enough that it still feels like
-     typing — the same number the desktop picker uses, so the two feel identical. */
+     typing — the same number the desktop picker uses, so the two feel identical.
+     `visible` is not a dependency: the body only exists while the sheet is up, so every
+     run of this effect IS while visible. */
   useEffect(() => {
-    if (!visible) return;
     let live = true;
     const timer = setTimeout(
       () => {
@@ -110,22 +118,7 @@ export function BillSourcePickerSheet({
       live = false;
       clearTimeout(timer);
     };
-  }, [visible, search]);
-
-  /* Clearing on close is a real requirement, not tidiness: reopening already pointing at
-     the last bill somebody looked at is how an inattentive tap produces a copy of the
-     wrong invoice. Done here, in the one component that owns this dialog's state, rather
-     than in every caller that opens it. */
-  const close = useCallback(() => {
-    setChosen(null);
-    setSearch("");
-    setRows([]);
-    setCounts(new Map());
-    setTotal(0);
-    setError(null);
-    setLoading(false);
-    onClose();
-  }, [onClose]);
+  }, [search]);
 
   const chosenSummary = useMemo(() => {
     if (!chosen) return null;
@@ -137,15 +130,13 @@ export function BillSourcePickerSheet({
     };
   }, [chosen]);
 
-  if (!visible) return null;
-
   return (
-    <Modal visible animationType="slide" onRequestClose={close}>
+    <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Copy from a previous bill</Text>
           <Pressable
-            onPress={close}
+            onPress={onClose}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Close"
