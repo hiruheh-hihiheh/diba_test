@@ -18,8 +18,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -29,7 +28,6 @@ import type { Job, JobType } from "../../types/job";
 import { Input } from "../ui/Input";
 import { JobEditModal } from "./JobEditModal";
 import { JobDrawingModal } from "./JobDrawingModal";
-import { ThemeToggle } from "../ui/ThemeToggle";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 400;
@@ -143,26 +141,9 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
 
   const listHeader = (
     <View>
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-        >
-          <Text style={styles.backBtnText}>← Back</Text>
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle}>
-            {jobType === "labour" ? "Labour Jobs" : "With Material (BO)"}
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            {total} {total === 1 ? "Job" : "Jobs"}
-          </Text>
-        </View>
-        <ThemeToggle />
-      </View>
+      <Text style={styles.headerSubtitle}>
+        {total} {total === 1 ? "Job" : "Jobs"}
+      </Text>
 
       <Input
         placeholder="Search jobs..."
@@ -242,7 +223,7 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
   };
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <FlatList
         data={jobs}
         keyExtractor={(item) => item.id}
@@ -345,7 +326,7 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
         onClose={() => setDrawingModalJob(null)}
         job={drawingModalJob}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 

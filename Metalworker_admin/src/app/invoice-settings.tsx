@@ -37,15 +37,13 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -303,17 +301,17 @@ export default function InvoiceSettingsScreen() {
 
   if (busy) {
     return (
-      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.muted}>Loading the invoice business profile.</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -329,17 +327,6 @@ export default function InvoiceSettingsScreen() {
             />
           }
         >
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <Pressable
-              onPress={() => router.back()}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-              hitSlop={12}
-            >
-              <Text style={styles.back}>‹ Back</Text>
-            </Pressable>
-          </View>
           <Text style={styles.headerTitle}>Invoice Business Profile</Text>
           <Text style={styles.muted}>
             The details every invoice carries. A workbook&apos;s own value always wins
@@ -438,7 +425,7 @@ export default function InvoiceSettingsScreen() {
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 

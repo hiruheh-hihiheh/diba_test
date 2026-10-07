@@ -11,7 +11,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -147,9 +146,9 @@ export default function DispatchScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -165,7 +164,7 @@ export default function DispatchScreen() {
   const totalDispatches = filteredDispatches.length;
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -173,19 +172,10 @@ export default function DispatchScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>←</Text>
-          </Pressable>
-          <View style={styles.headerTitleContainer}>
-            <Text style={styles.headerTitle}>Dispatch Management</Text>
-            <Text style={styles.headerSubtitle}>
-              {totalDispatches} dispatches • {totalWorkers} workers
-            </Text>
-          </View>
-          <View style={styles.headerSpacer} />
-        </View>
+        {/* COUNT (the shell header carries the title now) */}
+        <Text style={[styles.headerSubtitle, styles.countCaption]}>
+          {totalDispatches} dispatches • {totalWorkers} workers
+        </Text>
 
         {/* SEARCH & FILTER */}
         <View style={styles.searchSection}>
@@ -388,7 +378,7 @@ export default function DispatchScreen() {
           )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -443,6 +433,9 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
     marginTop: 2,
+  },
+  countCaption: {
+    marginBottom: theme.spacing.md,
   },
   headerSpacer: {
     width: 40,

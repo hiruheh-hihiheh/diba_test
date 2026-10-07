@@ -11,8 +11,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -114,40 +112,26 @@ export default function StockOwnerScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.screen}>
+      <View style={styles.screen}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-          >
-            <Text style={styles.backBtnText}>← Back</Text>
-          </Pressable>
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>Stock by Owner</Text>
-            <Text style={styles.headerSubtitle}>
-              {stocks.length} Records
-            </Text>
-          </View>
-        </View>
+        {/* Count caption (shell header carries the title) */}
+        <Text style={[styles.headerSubtitle, styles.countCaption]}>
+          {stocks.length} Records
+        </Text>
 
         {/* Search + Add */}
         <Input
@@ -263,7 +247,7 @@ export default function StockOwnerScreen() {
         onSave={handleSave}
         editingItem={editingItem}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -298,6 +282,9 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
     marginTop: 2,
+  },
+  countCaption: {
+    marginBottom: theme.spacing.md,
   },
   spacer: { height: theme.spacing.lg },
   loadingContainer: {

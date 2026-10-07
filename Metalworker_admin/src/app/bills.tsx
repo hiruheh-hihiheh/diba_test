@@ -21,7 +21,6 @@ import {
   View,
 } from "react-native";
 import { router, type Href } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -599,46 +598,31 @@ const [createOpen, setCreateOpen] = useState(false);
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.screen}>
+      <View style={styles.screen}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-          >
-            <Text style={styles.backBtnText}>← Back</Text>
-          </Pressable>
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>Bills</Text>
-            <Text style={styles.headerSubtitle}>
-              {loading && !loadedOnce
-                ? "Loading…"
-                : filtered
-                ? `${total} ${total === 1 ? "bill matches" : "bills match"}`
-                : `${total} ${total === 1 ? "bill" : "bills"} from ${uploads.length} ${
-                    uploads.length === 1 ? "workbook" : "workbooks"
-                  }`}
-            </Text>
-          </View>
-        </View>
+        <Text style={[styles.headerSubtitle, styles.countCaption]}>
+          {loading && !loadedOnce
+            ? "Loading…"
+            : filtered
+            ? `${total} ${total === 1 ? "bill matches" : "bills match"}`
+            : `${total} ${total === 1 ? "bill" : "bills"} from ${uploads.length} ${
+                uploads.length === 1 ? "workbook" : "workbooks"
+              }`}
+        </Text>
 
         <View style={styles.toolbar}>
           <Button
@@ -1445,7 +1429,7 @@ const [createOpen, setCreateOpen] = useState(false);
         onConfirm={() => void handleBulkDelete()}
         onCancel={() => setBulkDeleteTarget(null)}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1612,6 +1596,10 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.textMuted,
       fontSize: theme.textSizes.sm,
       marginTop: 2,
+    },
+    /* Compact count caption shown in place of the old screen header. */
+    countCaption: {
+      marginBottom: theme.spacing.md,
     },
 
     toolbar: { flexDirection: "row", gap: theme.spacing.sm, marginBottom: theme.spacing.md },

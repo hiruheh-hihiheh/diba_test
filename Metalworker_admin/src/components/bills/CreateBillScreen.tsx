@@ -45,7 +45,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -126,7 +125,6 @@ export function CreateBillScreen(props: CreateBillScreenProps) {
         isAdmin={gate.status === "ok"}
         onChoose={props.onChooseMode}
         onChooseSource={props.onChooseSource}
-        onExit={props.onExit}
       />
     );
   }
@@ -153,14 +151,12 @@ function EntryScreen({
   isAdmin,
   onChoose,
   onChooseSource,
-  onExit,
 }: {
   styles: Styles;
   checking: boolean;
   isAdmin: boolean;
   onChoose: (mode: CreatorMode) => void;
   onChooseSource: (billId: string) => void;
-  onExit: () => void;
 }) {
   const [anyBillExists, setAnyBillExists] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -184,12 +180,8 @@ function EntryScreen({
   }, []);
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.entryBody}>
-        <Pressable onPress={onExit} hitSlop={10} accessibilityRole="button">
-          <Text style={styles.back}>‹ Bills</Text>
-        </Pressable>
-
         <Text style={styles.entryTitle}>Create a bill</Text>
         <Text style={styles.entrySub}>
           All three options produce the same bill, with the same Original, Duplicate and
@@ -247,7 +239,7 @@ function EntryScreen({
           onChooseSource(billId);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -752,20 +744,20 @@ function CreatorForm({
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
         <View style={styles.centred}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.note}>
             {isCopy ? "Reading the bill being copied…" : "Opening the bill creator…"}
           </Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (loadError) {
     return (
-      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
         <ScrollView contentContainerStyle={styles.entryBody}>
           <Pressable onPress={onBackToEntry} hitSlop={10} accessibilityRole="button">
             <Text style={styles.back}>‹ Back</Text>
@@ -775,12 +767,12 @@ function CreatorForm({
             <Text style={styles.note}>{loadError}</Text>
           </View>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -1574,7 +1566,7 @@ function CreatorForm({
           onCreate={() => void createFolder()}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

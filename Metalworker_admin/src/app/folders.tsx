@@ -12,7 +12,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -246,7 +245,7 @@ export default function FoldersScreen() {
   /* ── Render ── */
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <DragDropProvider
         onDrop={handleDrop}
         onDragStart={() => setIsDragActive(true)}
@@ -259,25 +258,19 @@ export default function FoldersScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         >
-          {/* ── Header ── */}
-          <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
-              <Text style={styles.backBtnText}>← Back</Text>
-            </Pressable>
-            <View style={styles.headerRow}>
-              <View style={styles.headerInfo}>
-                <Text style={styles.headerTitle}>Folders</Text>
-                <Text style={styles.headerSubtitle}>
-                  {folders.length} Folders · {allItems.length} Items
-                </Text>
-              </View>
-              <Pressable
-                style={styles.newFolderBtn}
-                onPress={() => setShowCreateModal(true)}
-              >
-                <Text style={styles.newFolderBtnText}>+ New Folder</Text>
-              </Pressable>
+          {/* ── Title row: count + primary action (shell header carries the title) ── */}
+          <View style={styles.headerRow}>
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerSubtitle}>
+                {folders.length} Folders · {allItems.length} Items
+              </Text>
             </View>
+            <Pressable
+              style={styles.newFolderBtn}
+              onPress={() => setShowCreateModal(true)}
+            >
+              <Text style={styles.newFolderBtnText}>+ New Folder</Text>
+            </Pressable>
           </View>
 
           {authChecking || loading ? (
@@ -542,7 +535,7 @@ export default function FoldersScreen() {
           if (deletingFolderId === null) setPendingDelete(null);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -24,8 +24,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -234,28 +233,23 @@ export default function InvoiceLogosScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.screen}>
+      <View style={styles.screen}>
         <ActivityIndicator color={theme.colors.primary} />
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button">
-          <Text style={styles.backBtnText}>← Back</Text>
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle}>Logo Library</Text>
-          <Text style={styles.headerSubtitle}>
-            {logos.length === 0
-              ? "Reusable letterheads for your invoices"
-              : `${logos.length} ${logos.length === 1 ? "logo" : "logos"} · ${totalAssignments} ${
-                  totalAssignments === 1 ? "bill" : "bills"
-                } carrying one`}
-          </Text>
-        </View>
+    <View style={styles.screen}>
+      {/* Count caption (shell header carries the title) */}
+      <View style={styles.countCaptionWrap}>
+        <Text style={styles.headerSubtitle}>
+          {logos.length === 0
+            ? "Reusable letterheads for your invoices"
+            : `${logos.length} ${logos.length === 1 ? "logo" : "logos"} · ${totalAssignments} ${
+                totalAssignments === 1 ? "bill" : "bills"
+              } carrying one`}
+        </Text>
       </View>
 
       <ScrollView
@@ -471,7 +465,7 @@ export default function InvoiceLogosScreen() {
           void load(true);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -491,6 +485,11 @@ const createStyles = (theme: AppTheme) =>
     headerInfo: { gap: 2 },
     headerTitle: { color: theme.colors.text, fontSize: theme.textSizes.xl, fontWeight: "800" },
     headerSubtitle: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm },
+    countCaptionWrap: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xs,
+    },
     content: { padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xl },
     center: { paddingVertical: theme.spacing.xl, alignItems: "center", gap: theme.spacing.sm },
     centerBackdrop: {
