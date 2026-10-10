@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -35,31 +36,34 @@ export default function FolderDetailScreen() {
   // an active admin session.
   if (authChecking) {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
         <View style={styles.errorContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!folderId) {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Folder not found.</Text>
           <Pressable onPress={() => router.back()}>
             <Text style={styles.backBtnText}>← Go Back</Text>
           </Pressable>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
-      {/* ── Folder name (shell header carries the back button + title) ── */}
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      {/* ── Fixed Header ── */}
       <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Text style={styles.backBtnText}>← Back to Folders</Text>
+        </Pressable>
         <View style={styles.headerRow}>
           <View style={styles.folderIconWrap}>
             <Text style={styles.folderIcon}>📁</Text>
@@ -72,7 +76,7 @@ export default function FolderDetailScreen() {
 
       {/* ── Folder Contents (manages its own scroll + drag-drop) ── */}
       <FolderContents folderId={folderId} />
-    </View>
+    </SafeAreaView>
   );
 }
 

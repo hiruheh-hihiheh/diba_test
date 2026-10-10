@@ -10,6 +10,9 @@ import {
   Text,
   View,
 } from "react-native";
+import { router } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
@@ -181,27 +184,38 @@ export default function GroupDrawingsScreen() {
 
   if (authChecking) {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Count caption (shell header carries the title) */}
-        <View style={styles.countCaption}>
-          <Text style={styles.headerSubtitle}>
-            {groups.length} Groups
-          </Text>
+        <View style={styles.header}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={8}
+          >
+            <Text style={styles.backBtnText}>← Back</Text>
+          </Pressable>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle}>Group Drawing</Text>
+            <Text style={styles.headerSubtitle}>
+              {groups.length} Groups
+            </Text>
+          </View>
         </View>
 
         <Button
@@ -310,7 +324,7 @@ export default function GroupDrawingsScreen() {
           fetchPhotos={() => fetchDrawingGroupPhotos(viewingItem.id)}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -345,9 +359,6 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
     marginTop: 2,
-  },
-  countCaption: {
-    marginBottom: theme.spacing.md,
   },
   spacer: { height: theme.spacing.lg },
   loadingContainer: {
