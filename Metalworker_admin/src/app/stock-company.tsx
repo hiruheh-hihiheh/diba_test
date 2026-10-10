@@ -11,8 +11,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -113,40 +111,26 @@ export default function StockCompanyScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.screen}>
+      <View style={styles.screen}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-          >
-            <Text style={styles.backBtnText}>← Back</Text>
-          </Pressable>
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>Stock by Company</Text>
-            <Text style={styles.headerSubtitle}>
-              {stocks.length} Records
-            </Text>
-          </View>
-        </View>
+        {/* Count caption — the shell header owns the page title. */}
+        <Text style={styles.countCaption}>
+          {stocks.length === 1 ? "1 record" : `${stocks.length} records`}
+        </Text>
 
         {/* Search + Add */}
         <Input
@@ -266,7 +250,7 @@ export default function StockCompanyScreen() {
         onSave={handleSave}
         editingItem={editingItem}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -279,28 +263,10 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
   },
-  header: {
-    marginBottom: theme.spacing.lg,
-  },
-  backBtn: {
-    marginBottom: theme.spacing.sm,
-    alignSelf: "flex-start",
-  },
-  backBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  headerInfo: {},
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xl,
-    fontWeight: "800",
-  },
-  headerSubtitle: {
+  countCaption: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    marginTop: 2,
+    marginBottom: theme.spacing.sm,
   },
   spacer: { height: theme.spacing.lg },
   loadingContainer: {

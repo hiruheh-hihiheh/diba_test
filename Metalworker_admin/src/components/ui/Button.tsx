@@ -1,3 +1,4 @@
+// src/components/ui/Button.tsx
 import React, { useMemo } from "react";
 import {
   ActivityIndicator,
@@ -11,12 +12,20 @@ import {
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonSize = "sm" | "md";
+
 interface ButtonProps {
   title: string;
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: "primary" | "ghost";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  /** Optional leading glyph (emoji) shown before the label. */
+  icon?: string;
+  /** Stretch to fill the container width. */
+  fullWidth?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -26,14 +35,32 @@ export function Button({
   loading = false,
   disabled = false,
   variant = "primary",
+  size = "md",
+  icon,
+  fullWidth = false,
   style,
 }: ButtonProps) {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const unavailable = disabled || loading;
+
+  const bgStyle =
+    variant === "primary"
+      ? { backgroundColor: theme.colors.primary }
+      : variant === "danger"
+      ? { backgroundColor: theme.colors.danger }
+      : { backgroundColor: "transparent" };
+
   const textColor =
-    variant === "ghost" ? theme.colors.text : theme.colors.primaryButtonText;
+    variant === "primary" || variant === "danger"
+      ? theme.colors.primaryButtonText
+      : theme.colors.text;
+
+  const borderColor =
+    variant === "secondary" || variant === "ghost"
+      ? theme.colors.border
+      : undefined;
 
   return (
     <Pressable
@@ -44,20 +71,26 @@ export function Button({
       accessibilityState={{ disabled: unavailable, busy: loading }}
       style={({ pressed }) => [
         styles.base,
-        variant === "primary" ? styles.primary : styles.ghost,
-        pressed && styles.pressed,
+        size === "sm" && styles.sm,
+        fullWidth && styles.fullWidth,
+        bgStyle,
+        borderColor ? { borderWidth: 1, borderColor } : null,
+        pressed && !unavailable && styles.pressed,
+        pressed && !unavailable && { transform: [{ scale: 0.98 }] },
         unavailable && styles.disabled,
         style,
       ]}
     >
       {loading ? (
         <ActivityIndicator color={textColor} size="small" />
-      ) : null}
+      ) : (
+        icon ? <Text style={[styles.icon, { color: textColor }]}>{icon}</Text> : null
+      )}
       <Text
         style={[
           styles.text,
-          variant === "ghost" && styles.ghostText,
-          loading && styles.textWhileLoading,
+          { color: textColor },
+          size === "sm" && styles.textSm,
         ]}
       >
         {loading ? `${title}…` : title}
@@ -77,15 +110,17 @@ const createStyles = (theme: AppTheme) =>
       gap: theme.spacing.sm,
       paddingHorizontal: theme.spacing.md,
     },
-    primary: { backgroundColor: theme.colors.primary },
-    ghost: {
-      backgroundColor: "transparent",
-      borderWidth: 1,
-      borderColor: theme.colors.border,
+    sm: {
+      minHeight: 40,
+      paddingHorizontal: theme.spacing.md,
+      borderRadius: theme.radius.sm,
+    },
+    fullWidth: {
+      width: "100%",
     },
     pressed: { opacity: 0.85 },
     disabled: { opacity: 0.5 },
-    text: { color: theme.colors.primaryButtonText, fontSize: theme.textSizes.md, fontWeight: "600" },
-    ghostText: { color: theme.colors.text },
-    textWhileLoading: { opacity: 0.9 },
+    icon: { fontSize: 16 },
+    text: { fontSize: theme.textSizes.md, fontWeight: "600" },
+    textSm: { fontSize: theme.textSizes.sm },
   });

@@ -12,7 +12,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -246,7 +245,7 @@ export default function FoldersScreen() {
   /* ── Render ── */
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <DragDropProvider
         onDrop={handleDrop}
         onDragStart={() => setIsDragActive(true)}
@@ -259,25 +258,19 @@ export default function FoldersScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         >
-          {/* ── Header ── */}
-          <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
-              <Text style={styles.backBtnText}>← Back</Text>
+          {/* Count caption + new-folder action — the shell header owns the
+              page title and back button. */}
+          <View style={styles.headerRow}>
+            <Text style={styles.countCaption}>
+              {folders.length === 1 ? "1 folder" : `${folders.length} folders`} ·{" "}
+              {allItems.length === 1 ? "1 item" : `${allItems.length} items`}
+            </Text>
+            <Pressable
+              style={styles.newFolderBtn}
+              onPress={() => setShowCreateModal(true)}
+            >
+              <Text style={styles.newFolderBtnText}>+ New Folder</Text>
             </Pressable>
-            <View style={styles.headerRow}>
-              <View style={styles.headerInfo}>
-                <Text style={styles.headerTitle}>Folders</Text>
-                <Text style={styles.headerSubtitle}>
-                  {folders.length} Folders · {allItems.length} Items
-                </Text>
-              </View>
-              <Pressable
-                style={styles.newFolderBtn}
-                onPress={() => setShowCreateModal(true)}
-              >
-                <Text style={styles.newFolderBtnText}>+ New Folder</Text>
-              </Pressable>
-            </View>
           </View>
 
           {authChecking || loading ? (
@@ -542,7 +535,7 @@ export default function FoldersScreen() {
           if (deletingFolderId === null) setPendingDelete(null);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -557,34 +550,17 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
   },
-  header: {
-    marginBottom: theme.spacing.lg,
-  },
-  backBtn: {
-    marginBottom: theme.spacing.sm,
-  },
-  backBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
   headerRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
-  headerInfo: {
-    flex: 1,
-  },
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xl,
-    fontWeight: "800",
-  },
-  headerSubtitle: {
+  countCaption: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    marginTop: 2,
+    flex: 1,
   },
   newFolderBtn: {
     paddingHorizontal: theme.spacing.md,
@@ -593,7 +569,7 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     backgroundColor: theme.colors.primary,
   },
   newFolderBtnText: {
-    color: "#FFF",
+    color: theme.colors.primaryButtonText,
     fontSize: theme.textSizes.sm,
     fontWeight: "700",
   },

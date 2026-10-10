@@ -1,6 +1,6 @@
 // src/components/ui/ConfirmDialog.tsx
-import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -38,6 +38,29 @@ export function ConfirmDialog({
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  // Subtle scale-in so the dialog feels sprung rather than snapped.
+  const scale = useRef(new Animated.Value(0.92)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (visible) {
+      scale.setValue(0.92);
+      opacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          friction: 8,
+          tension: 80,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: theme.motion.fast,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible, scale, opacity, theme.motion.fast]);
+
   return (
     <Modal
       visible={visible}
@@ -47,7 +70,9 @@ export function ConfirmDialog({
       onRequestClose={busy ? undefined : onCancel}
     >
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        <Animated.View
+          style={[styles.card, { opacity, transform: [{ scale }] }]}
+        >
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
           <View style={styles.actions}>
@@ -80,7 +105,7 @@ export function ConfirmDialog({
               </Text>
             </Pressable>
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -90,7 +115,7 @@ const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
     backdrop: {
       flex: 1,
-      backgroundColor: "rgba(0,0,0,0.55)",
+      backgroundColor: theme.colors.overlay,
       alignItems: "center",
       justifyContent: "center",
       padding: theme.spacing.lg,
@@ -98,11 +123,12 @@ const createStyles = (theme: AppTheme) =>
     card: {
       width: "100%",
       maxWidth: 420,
-      backgroundColor: theme.colors.surface,
+      backgroundColor: theme.colors.surfaceRaised,
       borderRadius: theme.radius.lg,
       borderWidth: 1,
       borderColor: theme.colors.border,
       padding: theme.spacing.lg,
+      ...theme.elevation.raised,
     },
     title: {
       color: theme.colors.text,

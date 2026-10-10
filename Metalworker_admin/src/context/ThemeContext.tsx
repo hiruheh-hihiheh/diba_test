@@ -15,6 +15,8 @@ import {
   spacing,
   radius,
   textSizes,
+  motion,
+  elevation,
   type AppTheme,
 } from "../constants/theme";
 
@@ -79,6 +81,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       spacing,
       radius,
       textSizes,
+      motion,
+      elevation,
     }),
     [themeMode]
   );

@@ -11,8 +11,6 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
-
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
@@ -184,51 +182,39 @@ export default function GroupDrawingsScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.screen}>
+      <View style={styles.screen}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-          >
-            <Text style={styles.backBtnText}>← Back</Text>
-          </Pressable>
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle}>Group Drawing</Text>
-            <Text style={styles.headerSubtitle}>
-              {groups.length} Groups
-            </Text>
-          </View>
+        {/* Count caption + new group */}
+        <View style={styles.headerRow}>
+          <Text style={styles.countCaption}>
+            {groups.length === 1 ? "1 group" : `${groups.length} groups`}
+          </Text>
+          <Button
+            title="+ Create Drawing Group"
+            size="sm"
+            onPress={() => {
+              setEditingItem(null);
+              setEditingPhotos([]);
+              setShowForm(true);
+            }}
+          />
         </View>
 
-        <Button
-          title="+ Create Drawing Group"
-          onPress={() => {
-            setEditingItem(null);
-            setEditingPhotos([]);
-            setShowForm(true);
-          }}
-        />
-
         <View style={styles.spacer} />
-
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -324,7 +310,7 @@ export default function GroupDrawingsScreen() {
           fetchPhotos={() => fetchDrawingGroupPhotos(viewingItem.id)}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -337,30 +323,19 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
   },
-  header: {
-    marginBottom: theme.spacing.lg,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
-  backBtn: {
-    marginBottom: theme.spacing.sm,
-    alignSelf: "flex-start",
-  },
-  backBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  headerInfo: {},
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.xl,
-    fontWeight: "800",
-  },
-  headerSubtitle: {
+  countCaption: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    marginTop: 2,
+    flex: 1,
   },
-  spacer: { height: theme.spacing.lg },
+  spacer: { height: theme.spacing.md },
   loadingContainer: {
     paddingVertical: theme.spacing.xl * 2,
     alignItems: "center",

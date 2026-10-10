@@ -42,10 +42,18 @@ import { applyBusinessProfile, type BusinessProfile } from "./businessProfile.ts
 
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
-const MARGIN_X = 30;
+/*
+ * The content inset comes from the reference invoice (SEW/316/2026-27), which is
+ * 595.5×842.25 and starts its content at x = 29.37. Reproducing that layout means
+ * taking the same inset on this 595.28-wide page. CONTENT_W is the reference's
+ * printable span, kept as a literal because the two pages are not exactly the
+ * same size: 2×29.37 ≠ 595.28−535.28, so the right edge lands at 29.37+535.28 =
+ * 564.65, 0.63pt further in than the old 30pt margin put it.
+ */
+const MARGIN_X = 29.37;
 const MARGIN_TOP = 26;
 const MARGIN_BOTTOM = 34;
-const CONTENT_W = PAGE_W - 2 * MARGIN_X; // 535.28
+const CONTENT_W = 535.28;
 const CONTENT_BOTTOM = PAGE_H - MARGIN_BOTTOM;
 
 /**
@@ -96,22 +104,143 @@ const T = {
   footer: 7.5,
 } as const;
 
-/* Line-item table columns. The three numeric columns are right-aligned.
- *
- * Widths are derived from the usable A4 width rather than chosen to look nice, so
- * the table always ends exactly on the right margin and no column can be pushed
- * off the page by a wider font. The two free-text columns absorb the slack:
- * DESCRIPTION is by far the longest string on the sheet and HSN CODE is a fixed
- * eight-digit code that must never wrap or clip. */
-const COL_SR = 30;
-const COL_DESC = 218;
-const COL_HSN = 66;
-const COL_UOM = 38;
-const COL_QTY = 46;
-const COL_RATE = 66;
-const COL_AMT = CONTENT_W - (COL_SR + COL_DESC + COL_HSN + COL_UOM + COL_QTY + COL_RATE);
-const HEADER_H = 19;
+/* ──────────────────────────────────────────────
+   Reference layout
+   ──────────────────────────────────────────────
+   Everything below the header is matched to `final_original_dibesh.pdf`
+   (SEW/316/2026-27). Its page is 595.5×842.25 against our 595.28×841.89, so its
+   x coordinates are used as-is and its y coordinates as distances from the page
+   top. The one measured fact the whole layout rests on is the BASELINE MODEL:
+   for a text span the PDF reports as a bounding box, the baseline the glyphs were
+   set on is `bboxTop + ratio × size`, with a ratio of 0.931 for roman and 0.968
+   for bold. Verified five ways against the reference raster (grid label, totals
+   label, total-quantity digit, footer, seller name). */
+const ROMAN_BASELINE_RATIO = 0.931;
+const BOLD_BASELINE_RATIO = 0.968;
+function refBaseline(bboxTop: number, size: number, bold: boolean): number {
+  return bboxTop + (bold ? BOLD_BASELINE_RATIO : ROMAN_BASELINE_RATIO) * size;
+}
+
+/* Line-item table columns, from the reference's own template. The table is NOT
+ * flush to MARGIN_X: the reference starts it at x 34.56 and ends it at x 570.24
+ * (535.68 wide, 0.4 wider than CONTENT_W). The three numeric columns are
+ * right-aligned. */
+const TABLE_X = 34.56;
+const TABLE_W = 535.68;
+const COL_SR = 29.76; //  34.56 ->  64.32
+const COL_DESC = 217.92; //  64.32 -> 282.24
+const COL_HSN = 66.24; // 282.24 -> 348.48
+const COL_UOM = 37.92; // 348.48 -> 386.40
+const COL_QTY = 46.08; // 386.40 -> 432.48
+const COL_RATE = 65.76; // 432.48 -> 498.24
+const COL_AMT = 72.0; // 498.24 -> 570.24
+const HEADER_H = 19.2;
 const CELL_PAD = 4;
+/** The table header's title baseline, measured from the header box top. */
+const TABLE_HEAD_BASE = 11.5;
+/** The table body's first-line baseline, measured from the row top. */
+const TABLE_BASE = 10.25;
+/** Line pitch inside a wrapped description. */
+const TABLE_LEADING = 10.5;
+/** Row top pad (10.25) + bottom pad (9.07); a one-line row is this tall. */
+const TABLE_ROW_PAD = 19.32;
+/** Last row bottom -> the closing rule above the total-quantity box. */
+const TABLE_CLOSE_GAP = 3.36;
+/** Row bottom -> total-quantity box bottom (rule gap + box height). */
+const TABLE_TQ_STRIP = 22.62;
+const TQ_X = 34.37;
+const TQ_W = 535.67; // -> 570.04
+const TQ_H = 16.38;
+const TQ_LABEL_X = 68.73;
+const TQ_VALUE_R = 428.87;
+const TQ_DIV1 = 386.4;
+const TQ_DIV2 = 433.44;
+const TQ_BASE = 9.33; // box top -> baseline
+
+/* Parties section. All distances are from `sheet.y`, the parties top
+ * (150.24 + headerGrowth in the no-logo case). */
+/** Where the reference's parties section starts, measured from the page top. */
+const PARTIES_TOP = 150.24;
+const PARTIES_GRID_X = 245.75;
+const PARTIES_GRID_W = 321.54; // -> 567.29
+const PARTIES_GRID_SLOTS = 7;
+const PARTIES_ROW_H = 14.47;
+const PARTIES_GRID_BASE = 10.315; // top -> slot-0 baseline
+const PARTIES_LABEL_X = 248.82;
+const PARTIES_VALUE_R = 457.53;
+const PARTIES_DATE_X = 466.56;
+const PARTIES_DATE_R = 558.73;
+const PARTIES_DIV_LABEL = 337.86;
+const PARTIES_DIV_DATE = 462.88;
+const PARTIES_LABEL_SIZE = 8.6;
+const PARTIES_VALUE_SIZE = 9;
+const PARTIES_DATE_SIZE = 10;
+const PARTIES_TO_TRANSPORT = 103.54;
+const TRANSPORT_H = 16.44;
+const TRANSPORT_DIV1 = 402.21;
+const TRANSPORT_DIV2 = 462.88;
+const TRANSPORT_BASE = 10.67; // transport top -> baseline
+const TRANSPORT_VEHICLE_X = 407.84;
+const TRANSPORT_VEHICLE_VALUE_X = 467.79;
+const PARTIES_TO_RCPT_RULE = 119.52;
+const RCPT_X = 31.68;
+const RCPT_R = 239.52;
+const RCPT_TEXT_X = 35.01;
+const RCPT_BASE = 17.12; // parties top -> first baseline
+const RCPT_PITCH = 13.0;
+const PARTIES_TO_TABLE = 131.04; // parties top -> table header top
+
+/* Closing band. Page-anchored, and drawn only on the page the table finished
+ * on. `BAND_TOP` is the totals band's top in the no-logo case; a logo adds
+ * `headerGrowth`. */
+const BAND_TOP = 525;
+const TOTALS_X = 284.16;
+const TOTALS_W = 274.56; // -> 558.72
+const TOTALS_LABEL_X = 288.08;
+const TOTALS_VALUE_R = 554.95;
+const TOTALS_RATE_R = 458.46;
+const TOTALS_DIV_X = 462.24;
+const TOTALS_DIV_TOP = 4.92;
+const TOTALS_DIV_BOTTOM = 129.24;
+const TOTALS_RULE0 = 20.28; // band top -> first row rule
+const TOTALS_RULE_PITCH = 15.5;
+const TOTALS_TEXT0 = 8.92; // band top -> row-0 label bbox top
+const TOTALS_TEXT_PITCH = 15.0;
+const TOTALS_VALUE0 = 8.88; // band top -> row-0 value bbox top
+const TOTALS_RATE0 = 25.54; // band top -> row-1 rate bbox top
+/** Divider between the grand-total row's rules, and the box they bound. */
+const TOTALS_GRAND_FROM = 4;
+const TOTALS_GRAND_TO = 5;
+const BANK_RULE_Y = 535.65;
+const BANK_X = 29.37;
+const BANK_R = 243.37;
+const BANK_HEAD_X = 31.12;
+const BANK_HEAD_TOP = 540.09;
+const BANK_ROW_X = 30.71;
+const BANK_ROW0 = 552.09;
+const BANK_ROW_PITCH = 9.75;
+const BANK_NOTE_GAP = 9.0;
+const WORDS_TOP = 653.93;
+const WORDS_H = 22.11; // -> 676.04
+const WORDS_X = 24.41;
+const WORDS_R = 560.36;
+const WORDS_TEXT_X = 28.66;
+const WORDS_TEXT_TOP = 659.33;
+const TERMS_HEAD_TOP = 676.86;
+const TERMS_HEAD_SIZE = 11.4;
+const TERMS_BODY_SIZE = 12.4;
+const TERMS_RULE_X = 21.07;
+const TERMS_RULE_R = 558.75;
+const TERMS_RULE_TOP = 738.61; // -> 739.87 (1.26 thick)
+const TERMS_RULE_THICKNESS = 1.26;
+/** Signature rules, from the reference's own drawing coordinates. */
+const SIG_LEFT_X = 38.1;
+const SIG_RIGHT_X = 305.84;
+const SIG_RULE_W = 235.73;
+/** Rule -> first signature line baseline. */
+const SIG_TEXT_OFFSET = 9.4;
+/** The page footer's baseline. */
+const FOOTER_BASELINE = 822.09;
 
 /* ──────────────────────────────────────────────
    Formatting
@@ -318,7 +447,7 @@ function layoutRuns(runs: Run[], maxWidth: number, size: number): Run[][] {
 }
 
 /* ──────────────────────────────────────────────
-   Invoice logo — the bordered letterhead
+   Invoice logo — the compact free letterhead
    ────────────────────────────────────────────── */
 
 /**
@@ -328,85 +457,53 @@ function layoutRuns(runs: Run[], maxWidth: number, size: number): Run[][] {
  * (`bodyWidth = CONTENT_W - COPY_MARKER_RESERVE_W`), and the seller block wraps
  * to that width, so no seller line can ever reach past x = 455.28.
  *
- * With a logo the mark moves ABOVE the letterhead box instead, which frees that
- * strip, so the logo path does not reserve anything on the right. The no-logo
- * path is left exactly as it was: it is the document every existing invoice is,
- * and it must not gain or lose a point.
+ * With a logo the mark keeps the SAME right-aligned position and the SAME
+ * baseline; only the seller block moves right, beside the logo. Its wider column
+ * (`right - LOGO_TEXT_X`) is what keeps the logo from lengthening the header:
+ * the block can only wrap to fewer lines than the plain one, never more.
  */
 const COPY_MARKER_RESERVE_W = 110;
-
-/**
- * Why these numbers
- *
- *   LETTERHEAD_BORDER_W / LOGO_BOX_BORDER_W
- *     Both hairlines. The outer box is the letterhead, the inner box is a
- *     compartment inside it, so the inner one is drawn a shade lighter to keep
- *     the nesting legible at A4 without either line reading as a rule.
- *   LETTERHEAD_PAD
- *     Internal padding of the outer box. This is what costs the page its
- *     vertical budget: the box must clear the seller block above AND below it,
- *     so it is 2 * LETTERHEAD_PAD taller than the text it surrounds.
- *   LOGO_BOX_PAD
- *     The gap between the compartment's border and the logo inside it, so the
- *     mark never touches the line that frames it.
- *   LOGO_BOX_W_RATIO
- *     The compartment's share of the letterhead width. 0.21 sits inside the
- *     18-25% band a letterhead mark occupies, and is taken from CONTENT_W so it
- *     scales with the page rather than being a literal.
- *   LOGO_BOX_GAP
- *     Clear space between the compartment and the company text, so the two read
- *     as separate elements rather than as one crowded row.
- *   LOGO_BOX_IDEAL_H
- *     The compartment height a letterhead mark wants. It is a FLOOR, not a
- *     target: a seller block with no address gets a box this tall rather than a
- *     letterhead-sized one squeezed into 20pt.
- *   LETTERHEAD_MARK_BAND / LETTERHEAD_MARK_CLEARANCE
- *     The band the copy marker lives in, and the clear space left under it. The
- *     mark is deliberately OUTSIDE the border by design, so it needs a band of
- *     its own. The band is added ABOVE the box rather than taken out of the
- *     page margin, which is the point worth stating: it puts the mark at exactly
- *     the baseline it has always had (COPY_MARKER_BASELINE below `top`, ~30pt of
- *     ink clearance from the top of the sheet). Lifting it into the top margin
- *     instead would also leave the border at `top`, but it would set the mark's
- *     ink about 3mm from the paper edge, inside the unprintable margin of plenty
- *     of printers. A mark that gets shaved off in print is worse than a page that
- *     is a few points longer, so the page pays.
- *   LOGO_MAX_GROW
- *     The most the header may be lengthened, and it is the budget that keeps the
- *     one-page invoice a one-page invoice. Growth is a pure vertical translation
- *     of everything below the rule, so what it can break is pagination. The
- *     value is not a guess: `_selftest/test-logo.ts` asserts that every copy of
- *     every fixture workbook has the SAME page count with and without a logo.
- *     The number below is the largest growth the fixtures tolerate with room to
- *     spare, not a target the layout aims at.
- *   LOGO_MIN_H
- *     Below this the logo is not drawn at all, though the letterhead box is
- *     still drawn. A mark squeezed under an eighth of an inch reads as a
- *     printing fault, and an invoice with a legible header and no mark is a far
- *     better outcome than one with a smear where the letterhead should be.
- */
-const LETTERHEAD_BORDER_W = 0.8;
-const LETTERHEAD_PAD = 7;
-const LOGO_BOX_BORDER_W = 0.6;
-const LOGO_BOX_PAD = 5;
-const LOGO_BOX_W_RATIO = 0.21;
-const LOGO_BOX_GAP = 12;
-const LOGO_BOX_IDEAL_H = 44;
-const LOGO_MAX_GROW = 60;
-const LOGO_MIN_H = 12;
 
 /** Where the copy mark's baseline sits, with or without a logo. */
 const COPY_MARKER_BASELINE = 12;
 
-/** Clear space between the copy mark's baseline and the letterhead's top edge. */
-const LETTERHEAD_MARK_CLEARANCE = 8;
-
 /**
- * The band the copy marker occupies: its own baseline, plus the clear space kept
- * under it before the border begins. Derived rather than stated, so moving the
- * mark can never quietly close the gap it is supposed to have.
+ * The logo letterhead, copied from the reference invoice (SEW/316/2026-27).
+ *
+ * The reference does NOT box its letterhead. The mark sits free at the left of
+ * the page, a thin vertical rule separates it from the seller block, and the
+ * seller's name and address start to the right of that rule. There is no outer
+ * border and no inner compartment. The measurements below are the reference's
+ * own drawing coordinates, used as they stand:
+ *
+ *   logo box     (14.60, 5.24)  111.14 tall   — the mark's own square placement
+ *   separator    x = 119.23,    y 27.92 .. 104.34, hairline
+ *   seller text  x = 123.99,    first baseline at the page's top margin
+ *
+ * The logo is fitted inside its box preserving aspect ratio ("contain"), so a
+ * mark of any shape is neither stretched nor cropped. The box's right edge is
+ * pulled in to the separator (14.60 + 104.63 = 119.23) so a mark can never
+ * collide with the rule or with the seller block, and the rule is drawn AFTER
+ * the image so a mark that happens to reach it cannot hide it.
  */
-const LETTERHEAD_MARK_BAND = COPY_MARKER_BASELINE + LETTERHEAD_MARK_CLEARANCE;
+const LOGO_BOX_X = 14.6;
+const LOGO_BOX_TOP = 5.24;
+const LOGO_BOX_W = 104.63; // right edge lands exactly on the separator rule
+const LOGO_BOX_H = 111.14;
+
+/** Clear space kept inside the box, so the mark never touches its edges. */
+const LOGO_PAD = 2;
+/** Below this the mark reads as a printing fault, so it is not drawn at all. */
+const LOGO_MIN_H = 12;
+
+/** The hairline rule between the logo and the seller block. */
+const LOGO_RULE_X = 119.23;
+const LOGO_RULE_TOP = 27.92;
+const LOGO_RULE_BOTTOM = 104.34;
+const LOGO_RULE_W = 0.75;
+
+/** Where the seller block starts when a logo is present. */
+const LOGO_TEXT_X = 123.99;
 
 /** A rectangle in the page's own top-down coordinate space. */
 interface LogoRect {
@@ -416,7 +513,7 @@ interface LogoRect {
   h: number;
 }
 
-/** Where a logo ended up inside its compartment. Same space as `LogoRect`. */
+/** Where a logo ended up inside its box. Same space as `LogoRect`. */
 interface LogoPlacement {
   x: number;
   y: number;
@@ -425,116 +522,22 @@ interface LogoPlacement {
 }
 
 /**
- * The complete geometry of a logo letterhead, measured once.
+ * Fit a logo into the letterhead box, preserving its aspect ratio.
  *
- * Every number the header draws with comes from here, so the border, the
- * compartment, the logo, the company text and the copy marker cannot disagree
- * about where anything is. Returning them together — rather than letting
- * `renderHeader` recompute each one from the others — is what makes the
- * non-overlap properties checkable: the tests compare these rectangles against
- * each other instead of re-deriving the layout and hoping it agrees.
+ * Always a "contain" fit: the mark is scaled by whichever axis runs out first
+ * and then centred in the space left over, so it can never be stretched,
+ * cropped, or pushed against the box's edge. A wide logo ends up shorter than
+ * the box and a tall one narrower; neither is distorted, and neither is sized
+ * by anything except its own pixels.
+ *
+ * Returns null for a logo with no usable pixels, or one too small to read,
+ * rather than emitting a zero-sized or smeared draw call.
  */
-interface LogoHeaderLayout {
-  /** The outer hairline box around the whole letterhead. */
-  outerHeader: LogoRect;
-  /** The inner compartment, left aligned inside `outerHeader`. */
-  logoBox: LogoRect;
-  /** Where the company text starts, and how wide it may wrap. */
-  companyTextRect: { x: number; y: number; w: number };
-  /** Where ORIGINAL / DUPLICATE / TRIPLICATE goes: above the border. */
-  originalLabelPosition: { x: number; y: number };
-  /** The full-width rule that closes the header. */
-  ruleY: number;
-  /** How far `ruleY` moved from where it would be with no logo. */
-  growth: number;
-}
-
-/** The compartment's width, taken from the page rather than hard-coded. */
-function logoBoxWidth(): number {
-  return Math.round(CONTENT_W * LOGO_BOX_W_RATIO);
-}
-
-/**
- * The width the company text may wrap to, which depends only on the page and the
- * compartment's width — never on how tall the text turns out to be.
- *
- * That independence is what makes the layout measurable in one pass: the seller
- * block is wrapped first at this width, measured, and only then does the box
- * height follow from the measurement. Were the width derived from the height,
- * the two would be mutually recursive and no deterministic answer would exist.
- */
-function companyTextWidth(left: number, right: number): number {
-  const textLeft = left + LETTERHEAD_PAD + logoBoxWidth() + LOGO_BOX_GAP;
-  return right - LETTERHEAD_PAD - textLeft;
-}
-
-/**
- * Lay out the logo letterhead.
- *
- * `blockHeight` is the measured height of the seller block, which the caller has
- * already wrapped at `companyTextWidth(left, right)`.
- *
- * The box is anchored to `boxTop`, which is the header top pushed down by the
- * copy mark's band. Nothing is anchored to `top` instead, because `top` is also
- * where the mark's baseline is measured from: if the box started there the mark
- * would have nowhere to sit outside it.
- *
- * HEIGHT. The box wants `blockHeight + 2 * LETTERHEAD_PAD` — the text, plus
- * padding above and below — and normally gets exactly that. It is clamped at two
- * ends: a floor of `LOGO_BOX_IDEAL_H + 2 * LETTERHEAD_PAD`, so a seller block
- * with almost no detail still gets a compartment a logo can be seen in; and a
- * ceiling derived from LOGO_MAX_GROW, so the page can never be lengthened by
- * more than that however short the seller block is. Past the ceiling the
- * compartment shrinks — the letterhead gives up height, never the page's
- * one-page budget.
- */
-function calculateLogoHeaderLayout(opts: {
-  top: number;
-  left: number;
-  right: number;
-  blockHeight: number;
-}): LogoHeaderLayout {
-  const { top, left, right, blockHeight } = opts;
-
-  const boxTop = top + LETTERHEAD_MARK_BAND;
-  const naturalH = blockHeight + LETTERHEAD_PAD * 2;
-  const floorH = LOGO_BOX_IDEAL_H + LETTERHEAD_PAD * 2;
-  const plainRuleY = top + blockHeight + 5;
-  const ceilingH = plainRuleY + LOGO_MAX_GROW - boxTop - 5;
-  const outerH = Math.max(Math.min(naturalH, ceilingH), Math.min(floorH, ceilingH));
-  const ruleY = boxTop + outerH + 5;
-
-  const boxX = left + LETTERHEAD_PAD;
-  const boxW = logoBoxWidth();
-  const textX = boxX + boxW + LOGO_BOX_GAP;
-
-  return {
-    outerHeader: { x: left, y: boxTop, w: right - left, h: outerH },
-    logoBox: { x: boxX, y: boxTop + LETTERHEAD_PAD, w: boxW, h: outerH - LETTERHEAD_PAD * 2 },
-    companyTextRect: { x: textX, y: boxTop + LETTERHEAD_PAD, w: right - LETTERHEAD_PAD - textX },
-    originalLabelPosition: { x: right, y: top + COPY_MARKER_BASELINE },
-    ruleY,
-    growth: ruleY - plainRuleY,
-  };
-}
-
-/**
- * Fit a logo into its compartment, preserving its aspect ratio.
- *
- * Always a "contain" fit: the mark is scaled by whichever axis runs out first and
- * then centred in the space left over, so it can never be stretched, cropped, or
- * pushed against the compartment's border. A wide logo ends up narrower than the
- * compartment and a tall one shorter than it; neither is distorted, and neither
- * is sized by anything except its own pixels.
- *
- * Returns null for a logo with no usable pixels, or one too small to read, rather
- * than emitting a zero-sized or smeared draw call.
- */
-function fitLogoInBox(image: PdfImage, box: LogoRect): LogoPlacement | null {
+function fitLogoInBox(image: PdfImage): LogoPlacement | null {
   if (image.width <= 0 || image.height <= 0) return null;
 
-  const innerW = box.w - LOGO_BOX_PAD * 2;
-  const innerH = box.h - LOGO_BOX_PAD * 2;
+  const innerW = LOGO_BOX_W - LOGO_PAD * 2;
+  const innerH = LOGO_BOX_H - LOGO_PAD * 2;
   if (innerW <= 0 || innerH < LOGO_MIN_H) return null;
 
   const scale = Math.min(innerW / image.width, innerH / image.height);
@@ -542,8 +545,8 @@ function fitLogoInBox(image: PdfImage, box: LogoRect): LogoPlacement | null {
   const h = image.height * scale;
 
   return {
-    x: box.x + (box.w - w) / 2,
-    y: box.y + (box.h - h) / 2,
+    x: LOGO_BOX_X + (LOGO_BOX_W - w) / 2,
+    y: LOGO_BOX_TOP + (LOGO_BOX_H - h) / 2,
     w,
     h,
   };
@@ -561,6 +564,20 @@ class Sheet {
   readonly doc: PdfDocument;
   page: PdfPage;
   y = MARGIN_TOP;
+
+  /**
+   * How far the header rule moved below its no-logo position. Set by
+   * `renderHeader`, then read back by every block that anchors to the sheet
+   * rather than flowing after the table — the totals band, the bank block, the
+   * amount-in-words box and the terms. Those blocks must move WITH the header
+   * when a logo lengthens it, because the logo lengthens everything above them;
+   * only the signatures and the footer stay truly anchored to the page.
+   *
+   * The compact letterhead's column is wider than the plain header's, so the
+   * seller block cannot wrap to more lines and this stays 0; the mechanism is
+   * kept because a future header change may legitimately add height.
+   */
+  headerGrowth = 0;
 
   constructor(title: string, subject: string) {
     this.doc = new PdfDocument({ title, subject });
@@ -620,76 +637,79 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
                 this branch is new, and nothing in it may change: an invoice with
                 no logo must still be the same document, byte for byte.
 
-       logo     the bordered letterhead. The copy marker moves ABOVE the border,
-                which frees the right-hand strip, and the seller block wraps to
-                what is left between the logo compartment and that freed strip.
+       logo     the compact free letterhead. The copy marker keeps its place and
+                baseline; the seller block starts beside the logo instead of at
+                the margin, and a thin rule separates the two.
 
      The one thing both branches share is the drawing loop that follows, so the
      seller block is typeset by identical code in both and cannot drift. */
-  /* Only the wrap width differs between the two layouts. The copy mark keeps the
-     same baseline in both: what changes is the border, which starts below it. */
-  const bodyWidth = logo ? companyTextWidth(L, R) : CONTENT_W - COPY_MARKER_RESERVE_W;
+  /* Only the wrap width differs between the two layouts, and the logo's is
+     WIDER: with a logo the seller block starts at LOGO_TEXT_X (123.99) rather
+     than at the margin, so it reaches the same right edge over fewer required
+     wraps. The copy mark keeps the same baseline in both. */
+  const bodyWidth = logo ? R - LOGO_TEXT_X : CONTENT_W - COPY_MARKER_RESERVE_W;
   const labelX = R;
   const labelY = top + COPY_MARKER_BASELINE;
 
   // --- seller identity, top left -------------------------------------------
   // Wrapped before anything is drawn, because the logo layout's height depends on
   // how tall this block turns out to be.
-  const sellerLines: { text: string; bold: boolean; size: number }[] = [];
-  if (bill.sellerName) sellerLines.push({ text: bill.sellerName, bold: true, size: T.sellerName });
-  for (const text of [
-    bill.sellerDescriptor,
-    bill.sellerTaxLine,
-    bill.sellerAddress,
-    bill.sellerContact,
-  ]) {
-    if (!text) continue;
-    const size = T.sellerBody;
-    for (const line of wrapText(text, bodyWidth, "regular", size)) {
-      sellerLines.push({ text: line, bold: false, size });
+  const wrapSeller = (width: number): { text: string; bold: boolean; size: number }[] => {
+    const lines: { text: string; bold: boolean; size: number }[] = [];
+    if (bill.sellerName) lines.push({ text: bill.sellerName, bold: true, size: T.sellerName });
+    for (const text of [
+      bill.sellerDescriptor,
+      bill.sellerTaxLine,
+      bill.sellerAddress,
+      bill.sellerContact,
+    ]) {
+      if (!text) continue;
+      const size = T.sellerBody;
+      for (const line of wrapText(text, width, "regular", size)) {
+        lines.push({ text: line, bold: false, size });
+      }
     }
-  }
+    return lines;
+  };
+  const lineHeight = (line: { bold: boolean }) => (line.bold ? 15 : 10.84);
+  const sellerLines = wrapSeller(bodyWidth);
 
   // Height of the seller block, measured before anything is drawn: the header
-  // rule sits a fixed 5pt below its last line, and the letterhead box has to
-  // know how much room is left above that rule before it can decide its height.
+  // rule sits a fixed 2.5pt below its last line (the reference leaves ~2.5pt of
+  // clearance, not the 5pt an earlier layout used), and the letterhead box has
+  // to know how much room is left above that rule before it can decide its
+  // height.
   let blockHeight = 0;
-  for (const line of sellerLines) blockHeight += line.bold ? 15 : 11;
+  for (const line of sellerLines) blockHeight += lineHeight(line);
 
-  /* --- the logo letterhead, measured --------------------------------------
-     Measured BEFORE the seller lines are drawn so the rule position it needs is
-     already known, and so the box, the compartment, the logo and the text can
-     never disagree about where anything is.
+  // The same block at the NO-LOGO wrap width. Because the logo's column is
+  // wider, `blockHeight` can only be equal to or less than this — never more —
+  // so the header rule below can never be pushed lower by a logo. If a future
+  // change ever made the logo column narrower, this second measurement is the
+  // floor that keeps the rule where the plain header puts it.
+  let plainBlockHeight = 0;
+  for (const line of wrapSeller(CONTENT_W - COPY_MARKER_RESERVE_W)) plainBlockHeight += lineHeight(line);
 
-     The header only ever grows, and only by the letterhead's own padding, and
-     never by more than LOGO_MAX_GROW. Everything below the rule is then moved
-     down by exactly that one amount, which is why nothing below the letterhead
-     is reflowed — only translated. */
-  let ruleY = top + blockHeight + 5;
-  let textX = L;
-  let textTop = top;
+  /* --- where the header rule lands ----------------------------------------
+     Taken as the lower of the logo-width block's rule and the plain header's,
+     so a logo can never raise the rule (which would move everything above the
+     parties up) and a run of short seller lines can never drop it either. In
+     practice the two are equal, which is what keeps `headerGrowth` at zero and
+     the parties, table and closing band on the reference's own grid. */
+  const plainRuleY = top + plainBlockHeight + 2.5;
+  const ruleY = logo ? Math.max(top + blockHeight + 2.5, plainRuleY) : top + blockHeight + 2.5;
+  const textX = logo ? LOGO_TEXT_X : L;
+  const textTop = top;
 
   if (logo) {
-    const layout = calculateLogoHeaderLayout({ top, left: L, right: R, blockHeight });
-    ruleY = layout.ruleY;
-    textX = layout.companyTextRect.x;
-    textTop = layout.companyTextRect.y;
-
-    // The outer letterhead box, then the compartment inside it. Drawn first so
-    // both sit under the logo and the text rather than over them.
-    sheet.page.rect(layout.outerHeader.x, layout.outerHeader.y, layout.outerHeader.w, layout.outerHeader.h, {
-      lineWidth: LETTERHEAD_BORDER_W,
-      stroke: true,
-    });
-    sheet.page.rect(layout.logoBox.x, layout.logoBox.y, layout.logoBox.w, layout.logoBox.h, {
-      lineWidth: LOGO_BOX_BORDER_W,
-      stroke: true,
-    });
-
-    const placement = fitLogoInBox(logo.image, layout.logoBox);
+    /* The mark first, then the separator rule ON TOP of it, so a mark that
+       happens to reach the rule cannot hide it. Nothing is boxed: the rule
+       beside a free-standing logo IS the letterhead. */
+    const placement = fitLogoInBox(logo.image);
     if (placement) {
       sheet.page.image(logo.resource, placement.x, placement.y, placement.w, placement.h);
     }
+    sheet.page.line(LOGO_RULE_X, LOGO_RULE_TOP, LOGO_RULE_X, LOGO_RULE_BOTTOM, LOGO_RULE_W);
   }
 
   // --- copy marker, top right ----------------------------------------------
@@ -702,7 +722,7 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
       font: line.bold ? "bold" : "regular",
       size: line.size,
     });
-    y += line.bold ? 15 : 11;
+    y += line.bold ? 15 : 10.84;
   }
 
   // ruleY was computed from the same measurement the block above was drawn to, so
@@ -712,7 +732,9 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
   y += 5;
 
   // --- boxed TAX INVOICE heading -------------------------------------------
-  const headingH = 26;
+  // 26.9pt tall rather than 26 so that box bottom + the parties gap lands on the
+  // reference's 150.24pt row grid top.
+  const headingH = 26.9;
   sheet.page.rect(L, y, CONTENT_W, headingH, { lineWidth: 1.2, stroke: true });
   sheet.page.text("TAX INVOICE", (L + R) / 2, y + 18, {
     font: "bold",
@@ -734,7 +756,7 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
   const jobLabel = formatJobKind(bill.jobKind);
   if (jobLabel) {
     const badgeSize = T.badge;
-    const padX = 8;
+    const padX = 8.5;
     const badgeTextW = measureText(jobLabel, "bold", badgeSize);
     const badgeW = badgeTextW + padX * 2;
     const badgeH = 15;
@@ -749,7 +771,14 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
     sheet.page.text(jobLabel, badgeX + padX, badgeY + 10.6, { font: "bold", size: badgeSize });
   }
 
-  sheet.y = y + headingH + 12;
+  /* Header done. The box-to-parties gap alone would put the parties where the
+     seller block happens to end; the reference puts them at 150.24 regardless.
+     Holding them there — never higher than the box allows — keeps the whole
+     body below (table, totals, terms, signatures) on the reference's grid. A
+     logo lengthens the header, and every anchored block below adds the same
+     `growth`, so the relationship survives the logo layout unchanged. */
+  sheet.headerGrowth = ruleY - plainRuleY;
+  sheet.y = Math.max(y + headingH + 9.8, PARTIES_TOP + sheet.headerGrowth);
 }
 
 /* ──────────────────────────────────────────────
@@ -762,199 +791,172 @@ interface LeftLine {
   size: number;
 }
 
+interface RefGridRow {
+  label: string;
+  value: string;
+  date: string | null;
+  hasDate: boolean;
+}
+
 /**
- * The invoice's reference block, flattened to the label/value rows the PDF draws.
+ * The invoice's reference block, one entry per row the PDF draws.
  *
- * Normally this is just the parser's `referenceRows` in source order, with each
- * row's `Date:` cell expanded into its own line beneath it. A source row that had
- * a `Date:` sub-cell but no date still produces the date line, because the
- * template's shape includes it.
+ * Normally this is the parser's `referenceRows` in source order, each carrying
+ * its value AND its `Date:` cell — the reference prints the date on the same line
+ * as the row, in a cell of its own, so the two are not split into separate rows.
+ * A row with a `Date:` cell but no date still records `hasDate`, because the
+ * template's shape includes the label even when the date is blank.
  *
  * The fallback exists for a sheet whose reference block could not be read at all:
  * the invoice number and the fields the parser holds directly are then printed so
  * the grid is never empty. It is a floor, not a filter — nothing is ever removed
  * from `referenceRows` because its value is blank.
  */
-function referenceGrid(bill: BillCopy): { label: string; value: string }[] {
-  const out: { label: string; value: string }[] = [];
+function referenceGrid(bill: BillCopy): RefGridRow[] {
+  const out: RefGridRow[] = [];
 
   for (const ref of bill.referenceRows) {
-    out.push({ label: ref.label, value: ref.value ?? "" });
-    if (ref.hasDateCell) {
-      out.push({ label: `${ref.label.replace(/\s*No\.?$/i, "")} Date`, value: ref.date ? prettyDate(ref.date) : "" });
-    }
+    out.push({
+      label: ref.label,
+      value: ref.value ?? "",
+      date: ref.date ? prettyDate(ref.date) : null,
+      hasDate: ref.hasDateCell,
+    });
   }
 
   if (out.length > 0) return out;
 
   // No reference block was read. Print what the parser does hold rather than
   // dropping the section.
-  out.push({ label: "Invoice No.", value: bill.invoiceNo ?? "" });
-  if (bill.invoiceDate) out.push({ label: "Invoice Date", value: prettyDate(bill.invoiceDate) });
-  out.push({ label: "Our Challan No.", value: bill.ourChallanNo ?? "" });
-  if (bill.ourChallanDate) out.push({ label: "Challan Date", value: prettyDate(bill.ourChallanDate) });
+  out.push({
+    label: "Invoice No.",
+    value: bill.invoiceNo ?? "",
+    date: bill.invoiceDate ? prettyDate(bill.invoiceDate) : null,
+    hasDate: true,
+  });
+  out.push({
+    label: "Our Challan No.",
+    value: bill.ourChallanNo ?? "",
+    date: bill.ourChallanDate ? prettyDate(bill.ourChallanDate) : null,
+    hasDate: true,
+  });
   return out;
 }
 
 function renderParties(sheet: Sheet, bill: BillCopy): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
-  const L = sheet.left;
-  const R = sheet.right;
   const top = sheet.y;
 
-  const gridW = 250;
-  const leftW = CONTENT_W - gridW - 12;
-  const gridX = R - gridW;
+  const rows = referenceGrid(bill);
+  /* The grid is a FIXED 7-slot template, like the workbook it comes from: a bill
+     with fewer reference rows leaves the extra slots blank rather than shortening
+     the box, which is what keeps the transport, the recipient rule and the table
+     below at their reference positions. A bill with more rows grows the box by
+     exactly the extra rows and pushes everything below it down with it. */
+  const usedSlots = rows.length + 1; // + the PLACE OF SUPPLY row
+  const slots = Math.max(PARTIES_GRID_SLOTS, usedSlots);
+  const extra = (slots - PARTIES_GRID_SLOTS) * PARTIES_ROW_H;
+  const gridH = slots * PARTIES_ROW_H;
 
-  /* ---- left column: who is being billed ----------------------------------
-   *
-   * The company name and each ADDRESS LINE are separate entries, so the invoice
-   * shows the address with the line breaks the workbook gave it:
-   *
-   *     M/s. Example Cookers Ltd.,
-   *     C-21,22 "U" Road,
-   *     Example Industrial Estate,
-   *     Example City - 000 001.
-   *
-   * Joining them into one string and letting it wrap would be a different
-   * document — it would break in the middle of "Example Industrial Estate," and
-   * would silently re-flow if the box were ever resized. A long line still wraps,
-   * which is what the wrap pass below is for; it just prefers the source's breaks.
-   */
-  const leftLines: LeftLine[] = [];
-  if (bill.recipientHeading) leftLines.push({ text: bill.recipientHeading, bold: true, size: T.metaLabel + 0.4 });
-  if (bill.partyName) leftLines.push({ text: bill.partyName, bold: true, size: 9.6 });
-  for (const line of bill.partyAddress) {
-    if (line.trim() !== "") leftLines.push({ text: line, bold: false, size: T.metaValue });
+  const transportTop = top + PARTIES_TO_TRANSPORT + extra;
+  const rcptRuleY = top + PARTIES_TO_RCPT_RULE + extra;
+  const tableTop = top + PARTIES_TO_TABLE + extra;
+
+  /* ---- right column: the document reference grid ------------------------- */
+  sheet.page.rect(PARTIES_GRID_X, top, PARTIES_GRID_W, gridH, { lineWidth: 1.5, stroke: true });
+  for (let k = 1; k < slots; k++) {
+    const y = top + k * PARTIES_ROW_H;
+    sheet.page.line(PARTIES_GRID_X, y, PARTIES_GRID_X + PARTIES_GRID_W, y, 0.75);
   }
-  if (bill.partyGstNo) {
-    leftLines.push({ text: `Party's GST No. ${bill.partyGstNo}`, bold: false, size: T.metaValue });
-  }
-  if (bill.placeOfSupply || bill.state || bill.stateCode) {
-    const bits = [
-      bill.placeOfSupply ? `Place of Supply: ${bill.placeOfSupply}` : null,
-      bill.state ? `State: ${bill.state}` : null,
-      bill.stateCode ? `State Code: ${bill.stateCode}` : null,
-    ].filter((b): b is string => b !== null);
-    leftLines.push({ text: bits.join("    "), bold: false, size: T.metaValue });
-  }
+  sheet.page.line(PARTIES_DIV_LABEL, top, PARTIES_DIV_LABEL, top + gridH, 0.75);
+  sheet.page.line(PARTIES_DIV_DATE, top, PARTIES_DIV_DATE, top + gridH, 0.75);
 
-  // Wrap first, then draw, so the box is exactly as tall as its contents.
-  const leftWrapped: string[][] = [];
-  let leftHeight = 0;
-  for (const line of leftLines) {
-    const wrapped = wrapText(line.text, leftW - 10, line.bold ? "bold" : "regular", line.size);
-    leftWrapped.push(wrapped);
-    leftHeight += wrapped.length * (line.size + 2.4) + 1.8;
-  }
-  leftHeight = Math.max(leftHeight + 6, 28);
-
-  /* ---- right column: document references ---------------------------------
-   *
-   * The grid is built from the source's own reference rows, NOT from a filtered
-   * list of the values that happen to be filled in. That distinction is the whole
-   * point: a blank `Your Challan No.` or `Eway Bill No.` is still a row of this
-   * invoice, with a label, a border and an empty value cell, and the rows below it
-   * must not move up to fill the gap. The previous renderer dropped such rows,
-   * which made the PDF shorter than the workbook and lost the invoice's shape.
-   *
-   * Each source row prints as a label / value pair, and where the source carried
-   * a `Date:` cell that date gets its own row too — again always, blank or not.
-   */
-  const pairs: { label: string; value: string }[] = [];
-  for (const ref of referenceGrid(bill)) {
-    pairs.push({ label: ref.label, value: ref.value });
-  }
-
-  const rowH = 14.5;
-  const gridH = pairs.length * rowH;
-
-  /* Transport sits BELOW the reference grid, inside the right-hand column, because
-   * that is where the invoice's metadata lives and that is where the template
-   * prints it (column D, under "Eway Bill No."). It used to be drawn in the
-   * recipient block on the left, which put "Transporter: VEHICLE" inside the
-   * Details of Recipient box — a different document from the one the workbook is.
-
-     The block is emitted whenever EITHER field is present, so a workbook with a
-     transporter but no vehicle, or the reverse, still shows the row. An empty value
-     draws nothing and keeps its label, which is the same rule the reference grid
-     follows and for the same reason. */
-  const transportLines: { label: string; value: string | null }[] = [];
-  if (bill.transporterMode !== null || bill.vehicleNumber !== null) {
-    transportLines.push({ label: "Transporter:", value: bill.transporterMode });
-    transportLines.push({ label: "Vehicle No.:", value: bill.vehicleNumber });
-  }
-  const transportGap = transportLines.length > 0 ? 6 : 0;
-  const transportH = transportLines.length * rowH;
-  const rightH = gridH + transportGap + transportH;
-
-  const sectionH = Math.max(leftHeight, rightH);
-
-  sheet.reserve(sectionH + 12);
-
-  // Recipient block. Drawn at the full section height so its box lines up with
-  // the reference grid beside it rather than stopping short of it.
-  sheet.page.rect(L, top, leftW, sectionH, { lineWidth: 0.5, stroke: true });
-  let ly = top + 5;
-  leftWrapped.forEach((lines, i) => {
-    const line = leftLines[i];
-    for (const text of lines) {
-      sheet.page.text(text, L + 5, ly + line.size, {
-        font: line.bold ? "bold" : "regular",
-        size: line.size,
-      });
-      ly += line.size + 2.4;
+  /* Every row shares ONE baseline (the label's), which is at most 1pt from the
+     value's own bbox-derived baseline in the reference; text() ignores an empty
+     string, so a blank cell keeps its border and reads as an empty field rather
+     than as a dash or a zero. */
+  const drawGridRow = (i: number, label: string, value: string, date: string | null): void => {
+    const base = top + PARTIES_GRID_BASE + i * PARTIES_ROW_H;
+    sheet.page.text(label, PARTIES_LABEL_X, base, { font: "bold", size: PARTIES_LABEL_SIZE });
+    if (value !== "") {
+      sheet.page.text(value, PARTIES_VALUE_R, base, { size: PARTIES_VALUE_SIZE, align: "right" });
     }
-    ly += 1.8;
-  });
-
-  // Reference grid. Top-aligned with the recipient box rather than vertically
-  // centred against it, because the transport block now hangs below it and a
-  // centred grid would leave the two blocks' internal rules unaligned.
-  const gridTop = top;
-  sheet.page.rect(gridX, gridTop, gridW, gridH, { lineWidth: 0.6, stroke: true });
-  /* The label column is measured from the longest label rather than fixed, so a
-     long one ("Purchase Order No.") cannot run into the value column — which is
-     the "label/value overlap" failure. It is still bounded so a pathological
-     label cannot squeeze the values out of the grid entirely. */
-  const labelW = Math.min(
-    gridW * 0.5,
-    Math.max(80, ...pairs.map((p) => measureText(p.label, "bold", T.metaLabel) + 2 * CELL_PAD + 6))
-  );
-  pairs.forEach((pair, i) => {
-    const rowY = gridTop + i * rowH;
-    if (i > 0) sheet.page.line(gridX, rowY, gridX + gridW, rowY, 0.4);
-    sheet.page.text(pair.label, gridX + CELL_PAD, rowY + 10, { font: "bold", size: T.metaLabel });
-    sheet.page.line(gridX + labelW, rowY, gridX + labelW, rowY + rowH, 0.4);
-    /* A blank value draws nothing at all: `sheet.page.text` ignores an empty string, so
-       the cell keeps its border and its space and reads as an empty field rather
-       than as a dash, a zero or a missing row. */
-    if (pair.value !== "") {
-      sheet.page.text(pair.value, gridX + gridW - CELL_PAD, rowY + 10, {
-        size: T.metaValue,
-        align: "right",
-      });
+    sheet.page.text("Date :", PARTIES_DATE_X, base, { font: "bold", size: PARTIES_DATE_SIZE });
+    if (date) {
+      sheet.page.text(date, PARTIES_DATE_R, base, { size: PARTIES_VALUE_SIZE, align: "right" });
     }
-  });
+  };
 
-  /* Transport, directly under the grid, in the same column and the same row
-     rhythm. Boxed as one small block rather than ruled row by row, so it reads as
-     a caption pair attached to the metadata above it instead of as two more
-     numbered rows of the reference grid. */
-  if (transportLines.length > 0) {
-    const tTop = gridTop + gridH + transportGap;
-    sheet.page.rect(gridX, tTop, gridW, transportH, { lineWidth: 0.5, stroke: true });
-    transportLines.forEach((line, i) => {
-      const rowY = tTop + i * rowH;
-      sheet.page.text(line.label, gridX + CELL_PAD, rowY + 10, { font: "bold", size: T.metaLabel });
-      if (line.value !== null && line.value !== "") {
-        sheet.page.text(line.value, gridX + CELL_PAD + 78, rowY + 10, { size: T.metaValue });
-      }
+  rows.forEach((row, i) => drawGridRow(i, row.label, row.value, row.hasDate ? row.date : null));
+
+  /* PLACE OF SUPPLY follows the source rows, exactly where the reference puts it
+     after "E-way Bill No.". The state code shares the row, in the date cell. */
+  const posBase = top + PARTIES_GRID_BASE + rows.length * PARTIES_ROW_H;
+  sheet.page.text("PLACE OF SUPPLY", PARTIES_LABEL_X, posBase, { font: "bold", size: PARTIES_LABEL_SIZE });
+  if (bill.placeOfSupply) {
+    sheet.page.text(bill.placeOfSupply, PARTIES_VALUE_R, posBase, { size: PARTIES_VALUE_SIZE, align: "right" });
+  }
+  if (bill.stateCode !== null && bill.stateCode !== undefined) {
+    sheet.page.text(`STATE CODE: ${bill.stateCode}`, PARTIES_DATE_X, posBase, {
+      font: "bold",
+      size: PARTIES_DATE_SIZE,
     });
   }
 
-  sheet.y = top + sectionH + 14;
+  /* ---- transport, directly under the grid -------------------------------- */
+  if (bill.transporterMode !== null || bill.vehicleNumber !== null) {
+    sheet.page.rect(PARTIES_GRID_X + 0.09, transportTop, PARTIES_GRID_W + 0.63, TRANSPORT_H, {
+      lineWidth: 1.5,
+      stroke: true,
+    });
+    sheet.page.line(TRANSPORT_DIV1, transportTop, TRANSPORT_DIV1, transportTop + TRANSPORT_H, 0.75);
+    sheet.page.line(TRANSPORT_DIV2, transportTop, TRANSPORT_DIV2, transportTop + TRANSPORT_H, 0.75);
+    const base = transportTop + TRANSPORT_BASE;
+    const modeLabel = "Mode of  Transport:";
+    sheet.page.text(modeLabel, PARTIES_LABEL_X, base, { font: "bold", size: PARTIES_LABEL_SIZE });
+    if (bill.transporterMode) {
+      const labelW = measureText(modeLabel, "bold", PARTIES_LABEL_SIZE);
+      sheet.page.text(bill.transporterMode, PARTIES_LABEL_X + labelW + 3, base, { size: PARTIES_VALUE_SIZE });
+    }
+    sheet.page.text("Vehicle No.:", TRANSPORT_VEHICLE_X, base, { font: "bold", size: PARTIES_LABEL_SIZE });
+    if (bill.vehicleNumber) {
+      sheet.page.text(bill.vehicleNumber, TRANSPORT_VEHICLE_VALUE_X, base, { size: PARTIES_VALUE_SIZE });
+    }
+  }
+
+  /* ---- left column: who is being billed ----------------------------------
+   *
+   * The company name and each ADDRESS LINE stay separate entries, so the invoice
+   * shows the address with the line breaks the workbook gave it; a long line
+   * still wraps. Only the FOOT of the block is ruled — the reference has no box
+   * around the recipient, just a rule under it.
+   */
+  const leftLines: LeftLine[] = [];
+  if (bill.recipientHeading) leftLines.push({ text: bill.recipientHeading, bold: true, size: 9 });
+  if (bill.partyName) leftLines.push({ text: bill.partyName, bold: true, size: 9.6 });
+  for (const line of bill.partyAddress) {
+    if (line.trim() !== "") leftLines.push({ text: line, bold: false, size: 9 });
+  }
+  if (bill.partyGstNo) {
+    leftLines.push({ text: `Party's GST No. ${bill.partyGstNo}`, bold: true, size: 9 });
+  }
+  if (bill.state || bill.stateCode !== null) {
+    const bits: string[] = [];
+    if (bill.state) bits.push(`State: ${bill.state}`);
+    if (bill.stateCode !== null && bill.stateCode !== undefined) bits.push(`State Code: ${bill.stateCode}`);
+    leftLines.push({ text: bits.join("      "), bold: false, size: 9 });
+  }
+
+  sheet.page.line(RCPT_X, rcptRuleY, RCPT_R, rcptRuleY, 0.75);
+  leftLines.forEach((line, i) => {
+    sheet.page.text(line.text, RCPT_TEXT_X, top + RCPT_BASE + i * RCPT_PITCH, {
+      font: line.bold ? "bold" : "regular",
+      size: line.size,
+    });
+  });
+
+  sheet.y = tableTop;
 }
 
 /* ──────────────────────────────────────────────
@@ -993,10 +995,10 @@ function tableGeometry(x: number): TableGeometry {
 
 function drawTableHeader(page: PdfPage, geo: TableGeometry, y: number): void {
   // geo.sr is the table's left edge, so the box always spans the full width.
-  page.rect(geo.sr, y, CONTENT_W, HEADER_H, { lineWidth: 0.7, stroke: true });
+  page.rect(geo.sr, y, TABLE_W, HEADER_H, { lineWidth: 0.7, stroke: true });
   for (const col of TABLE_COLS) {
     if (col.key === "sr") continue;
-    page.line(geo[col.key], y, geo[col.key], y + HEADER_H, 0.4);
+    page.line(geo[col.key], y, geo[col.key], y + HEADER_H, 0.5);
   }
   /* Each heading is drawn at a size that fits its own column rather than at one
      fixed size. "DESCRIPTION" and "QUANTITY" are far wider than the narrow UOM and
@@ -1010,35 +1012,32 @@ function drawTableHeader(page: PdfPage, geo: TableGeometry, y: number): void {
     page.text(
       col.title,
       col.align === "right" ? geo[col.key] + col.w - CELL_PAD : geo[col.key] + CELL_PAD,
-      y + HEADER_H - 6,
+      y + TABLE_HEAD_BASE,
       { font: "bold", size, align: col.align }
     );
   }
 }
 
-/** The table always starts at the left margin; recover it from any column. */
-function sheet_left(page: PdfPage, geo: TableGeometry): number {
-  void page;
-  return geo.sr;
-}
-
-const TABLE_LEADING = T.tableCell + 2.4;
-
 function itemHeight(item: BillLineItem): number {
   const lines = wrapText(item.description, COL_DESC - 2 * CELL_PAD, "regular", T.tableCell);
-  // Padding above the first baseline and more below the last, so the descender of
-  // the last line stays inside the cell border however tall the row grows.
-  return Math.max(HEADER_H, lines.length * TABLE_LEADING + 8);
+  // Row top pad (10.25) + one line pitch per extra description line + bottom pad
+  // (9.07): the descender of the last line stays inside the cell however tall the
+  // row grows.
+  return TABLE_ROW_PAD + (lines.length - 1) * TABLE_LEADING;
 }
 
 function drawTableRow(page: PdfPage, geo: TableGeometry, item: BillLineItem, y: number, h: number): void {
-  page.rect(geo.sr, y, CONTENT_W, h, { lineWidth: 0.4, stroke: true });
+  /* Body rows carry only their LEFT edge, the column dividers and the bottom
+     rule. The reference leaves the right side of the table open and each row's
+     top is the previous row's bottom. */
+  page.line(geo.sr, y, geo.sr, y + h, 0.5);
   for (const col of TABLE_COLS) {
     if (col.key === "sr") continue;
-    page.line(geo[col.key], y, geo[col.key], y + h, 0.4);
+    page.line(geo[col.key], y, geo[col.key], y + h, 0.5);
   }
+  page.line(TABLE_X, y + h, TABLE_X + TABLE_W, y + h, 0.5);
 
-  const baseY = y + 12.5;
+  const baseY = y + TABLE_BASE;
   const rightEdge = (key: keyof TableGeometry, w: number): number => geo[key] + w - CELL_PAD;
 
   /* Every cell is drawn, always. An absent value is an EMPTY cell inside its own
@@ -1073,133 +1072,37 @@ function drawTableRow(page: PdfPage, geo: TableGeometry, item: BillLineItem, y: 
 }
 
 /* ──────────────────────────────────────────────
-   Measuring the blocks that close an invoice
+   Signature block geometry
    ──────────────────────────────────────────────
-   Every block below the line-item table is measured BEFORE the table is drawn, so
-   the table's page-break decision can take them into account.
-
-   The reason is pagination quality, not correctness. The table used to break
-   against a fixed guess at the space needed below it. A bill that overflowed by
-   one or two rows therefore pushed those rows onto a fresh page and left the
-   totals, the amount in words, the bank block, the terms, the certification note
-   and the signatures behind on a page of their own — a nearly empty sheet. The
-   requirement is that a long invoice may flow onto a second page, which is fine;
-   what is not fine is a second page holding two orphan rows and nothing else.
-
-   With the true trailing height known up front, the table breaks early enough that
-   the closing blocks stay with it and both pages carry real content.
-
-   Each measure function is the single source of truth for its block: the renderer
-   uses the same number to place the block that the reservation used to reserve it,
-   so the two can never disagree. */
-
-const COL_GAP = 14;
-const COLUMN_LEADING = T.columnBody + 2;
-const NOTE_LEADING = 10;
-const SIG_LEADING = 10.2;
-const SIG_RULE_OFFSET = 16;
+   Everything below the table is anchored to the sheet rather than measured and
+   reserved in flow, so the old block-height functions are gone: the table now
+   breaks against the fixed band top instead. What remains is the signature
+   block's own distances. */
+const SIG_LEADING = 9.76;
 /**
- * How far the signature block is shifted LEFT of the content margin.
+ * Clearance between whatever the last drawn content was and the signature rule.
  *
- * Measured, not guessed: the reference invoice's two signature rules sit at x 38.1 and
- * x 305.8, ours at 46.0 and 313.6 — a translation of 7.8pt with the rules the same
- * length (235.7 vs 235.6) and the same 32pt gap between them. So the block keeps its
- * geometry and moves as one piece; the columns stay `CONTENT_W / 2` wide apart.
+ * The rule is anchored to the foot of the sheet, but the closing blocks above it
+ * (the totals band, the words and the terms) move down with the header when a
+ * logo lengthens it — so on a logo page the closing rule can reach into the
+ * space the anchored rule and its text used to leave. A 6pt clearance is the
+ * minimum that keeps the ink apart; the rule is pushed below it only by that
+ * much and never by the block's own height.
  */
-const SIG_BLOCK_DX = -8;
+const SIG_FLOW_GAP = 6;
 /**
  * Distance from the page's bottom edge to the signature RULES.
  *
- * The block used to follow the content flow, which left a wide blank band between the
- * signatures and the footer line on any bill shorter than a full page — about 127pt on
- * the reference's own layout, against 20pt in the template it is meant to match.
- * Anchoring to the foot of the sheet closes that. It is anchored on the RULE rather than
- * on the block's bottom edge because the block's height varies with how many
- * designations the workbook supplies, and the rule is the line that has to land in the
- * same place on every bill.
+ * Anchored on the RULE rather than on the block's bottom edge because the block's
+ * height varies with how many designations the workbook supplies, and the rule is
+ * the line that has to land in the same place on every bill.
  */
 const SIG_RULE_FROM_BOTTOM = 59.25;
-const TOTAL_ROW_H = 15.5;
-const TOTAL_BLOCK_TAIL = 14;
-const TOTAL_LABEL_W = 178;
-const TOTAL_VALUE_W = 96;
-/**
- * How far the totals block is shifted LEFT of the content margin.
- *
- * The reference draws it at x 284.5–558.6 and we draw at 291.3–565.3. The widths already
- * agree (274.1 vs 274.0), so this is a pure translation of the whole block, not a resize.
- */
-const TOTALS_INSET = 6.7;
-/** The "Total Quantity" rule-and-figure strip that closes the table. */
-const TOTAL_QTY_H = 32;
-const REF_ROW_H = 14.5;
-
-function wordsHeight(bill: BillCopy): number {
-  if (!bill.amountInWords) return 0;
-  const lines = wrapText(
-    `Total Invoice Amount in Words: - ${bill.amountInWords}`,
-    CONTENT_W - 10,
-    "bold",
-    T.words
-  );
-  return lines.length * (T.words + 2.6) + 10 + 12;
-}
-
-function columnsHeight(bill: BillCopy): number {
-  const blocks = [
-    { lines: bill.bankLines, emphasise: false },
-    { lines: bill.termsLines, emphasise: true },
-  ];
-  if (blocks.every((b) => b.lines.length === 0)) return 0;
-  const colW = (CONTENT_W - COL_GAP) / 2;
-  /* The terms column is measured through `layoutRuns`, the same function the
-     renderer draws it with, so the emphasized window — which is measured in a
-     LARGER font than the rest of the line — is accounted for in the height. A
-     plain `wrapText` here would under-measure that line and the block below it
-     would be drawn on top of the terms. */
-  const body = blocks.map((block) =>
-    block.lines.reduce((sum, line) => {
-      const visual = block.emphasise
-        ? layoutRuns(splitEmphasis(line), colW, T.columnBody).length
-        : wrapText(line, colW, "regular", T.columnBody).length;
-      return sum + visual * COLUMN_LEADING;
-    }, 0)
-  );
-  return Math.max(...body) + 6 + 12;
-}
-
-function notesHeight(bill: BillCopy): number {
-  const { notes } = splitFooter(bill);
-  if (notes.length === 0) return 0;
-  const lines = notes.flatMap((n) => wrapText(n, CONTENT_W, "regular", T.note));
-  return lines.length * NOTE_LEADING + 12 + 4;
-}
-
-function signaturesHeight(bill: BillCopy): number {
-  const { supplierLines } = splitFooter(bill);
-  const receiverLines = bill.signatureLines.length > 0 ? bill.signatureLines : ["(Receivers Signature)"];
-  const colW = CONTENT_W / 2;
-  const measure = (lines: string[]): number =>
-    lines.reduce(
-      (sum, l) => sum + wrapText(l, colW - 2 * SIG_RULE_OFFSET, "regular", T.signature).length * SIG_LEADING,
-      0
-    );
-  const bodyH = Math.max(measure(supplierLines), measure(receiverLines), 10);
-  return SIG_RULE_OFFSET + bodyH + 4 + 8;
-}
-
-/** Everything the invoice prints below its line-item table, plus the gaps. */
-function trailingHeight(bill: BillCopy): number {
-  const totals = totalRows(bill).length * TOTAL_ROW_H + TOTAL_BLOCK_TAIL;
-  return (
-    TOTAL_QTY_H + totals + wordsHeight(bill) + columnsHeight(bill) + notesHeight(bill) + signaturesHeight(bill)
-  );
-}
 
 function renderTable(sheet: Sheet, bill: BillCopy): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
-  const geo = tableGeometry(sheet.left);
+  const geo = tableGeometry(TABLE_X);
 
   // A bill with no line items is still a bill: draw the empty table so the
   // document keeps its shape instead of silently losing the section.
@@ -1208,21 +1111,21 @@ function renderTable(sheet: Sheet, bill: BillCopy): void {
       ? bill.lineItems
       : [{ srNo: null, description: "", hsnCode: null, uom: null, quantity: null, rate: null, amount: null }];
 
-  /* Only the LAST page has to hold the closing blocks, so the trailing height is
-     reserved while the table is being laid out. Breaking one row earlier than
-     strictly necessary is invisible; orphaning half an invoice onto an otherwise
-     blank sheet is not. */
-  const trailing = trailingHeight(bill);
+  /* The closing band is anchored at BAND_TOP, so the table must finish — its
+     rows, the closing rule and the total-quantity box — before that. Breaking a
+     row one step early is invisible; overprinting the totals is not. A logo
+     lengthens the header, so the band, and therefore the limit, move down too. */
+  const bandTop = BAND_TOP + sheet.headerGrowth;
+  const limit = bandTop - TABLE_TQ_STRIP;
 
   drawTableHeader(sheet.page, geo, sheet.y);
   sheet.y += HEADER_H;
 
   for (const item of items) {
     const h = itemHeight(item);
-    // Keep each row whole; on overflow start a page and repeat the header so
-    // the columns stay identifiable. The first page keeps room for the totals and
-    // everything below them.
-    if (sheet.y + h > CONTENT_BOTTOM - trailing) {
+    // Keep each row whole; on overflow start a page and repeat the header so the
+    // columns stay identifiable.
+    if (sheet.y + h > limit) {
       sheet.newPage();
       drawTableHeader(sheet.page, geo, sheet.y);
       sheet.y += HEADER_H;
@@ -1232,17 +1135,20 @@ function renderTable(sheet: Sheet, bill: BillCopy): void {
   }
 
   // --- total quantity, on the table's own baseline -------------------------
-  sheet.y += 3;
-  sheet.page.line(sheet.left, sheet.y, sheet.right, sheet.y, 0.6);
-  sheet.y += 3;
-  sheet.page.text("Total Quantity", geo.desc + CELL_PAD, sheet.y + 12, { font: "bold", size: T.totalLabel });
-  sheet.page.text(cellQty(bill.totalQuantity), geo.qty + COL_QTY - CELL_PAD, sheet.y + 12, {
+  sheet.y += TABLE_CLOSE_GAP;
+  sheet.page.line(TABLE_X, sheet.y, TABLE_X + TABLE_W, sheet.y, 0.6);
+  const tqTop = sheet.y + (TABLE_TQ_STRIP - TABLE_CLOSE_GAP - TQ_H);
+  sheet.page.rect(TQ_X, tqTop, TQ_W, TQ_H, { lineWidth: 1.0, stroke: true });
+  sheet.page.line(TQ_DIV1, tqTop, TQ_DIV1, tqTop + TQ_H, 0.5);
+  sheet.page.line(TQ_DIV2, tqTop, TQ_DIV2, tqTop + TQ_H, 0.5);
+  const tqBase = tqTop + TQ_BASE;
+  sheet.page.text("Total Quantity", TQ_LABEL_X, tqBase, { font: "bold", size: T.totalLabel });
+  sheet.page.text(cellQty(bill.totalQuantity), TQ_VALUE_R, tqBase, {
     font: "bold",
     size: T.totalLabel,
     align: "right",
   });
-  sheet.page.line(geo.qty, sheet.y, geo.qty, sheet.y + 16, 0.4);
-  sheet.y += 16 + 10;
+  sheet.y = tqTop + TQ_H;
 }
 /* ──────────────────────────────────────────────
    Totals
@@ -1269,17 +1175,17 @@ function totalRows(bill: BillCopy): TotalRow[] {
   return [
     { label: "Total Amount Before Tax", value: money(bill.amountBeforeTax) },
     {
-      label: "ADD:  CGST",
+      label: "ADD: CGST",
       value: money(bill.cgst),
       rate: taxRateLabel(bill.cgstRate, bill.cgst, bill.amountBeforeTax),
     },
     {
-      label: "ADD:  SGST",
+      label: "ADD: SGST",
       value: money(bill.sgst),
       rate: taxRateLabel(bill.sgstRate, bill.sgst, bill.amountBeforeTax),
     },
     {
-      label: "ADD:  IGST",
+      label: "ADD: IGST",
       value: money(bill.igst),
       rate: taxRateLabel(bill.igstRate, bill.igst, bill.amountBeforeTax),
     },
@@ -1294,45 +1200,45 @@ function totalRows(bill: BillCopy): TotalRow[] {
 }
 
 function renderTotals(sheet: Sheet, bill: BillCopy): void {
-  /* `sheet.page` is read at each draw site, never captured here: reserve() can
-     call newPage(), which replaces the page this function would be drawing on. */
   const rows = totalRows(bill);
-  const labelW = TOTAL_LABEL_W;
-  const valueW = TOTAL_VALUE_W;
-  const x = sheet.right - labelW - valueW - TOTALS_INSET;
-  const rowH = TOTAL_ROW_H;
+  const bandTop = BAND_TOP + sheet.headerGrowth;
+  const page = sheet.page;
 
-  sheet.reserve(rows.length * rowH + TOTAL_BLOCK_TAIL);
-  const top = sheet.y;
+  // The label/value divider runs the full height of the band.
+  page.line(TOTALS_DIV_X, bandTop + TOTALS_DIV_TOP, TOTALS_DIV_X, bandTop + TOTALS_DIV_BOTTOM, 0.5);
+
+  /* Eight row rules, but the boxed grand-total row's own two edges ARE rules 4
+     and 5: they are drawn as the box below rather than as loose lines. */
+  for (let i = 0; i < rows.length; i++) {
+    if (i === TOTALS_GRAND_FROM || i === TOTALS_GRAND_TO) continue;
+    const ruleY = bandTop + TOTALS_RULE0 + i * TOTALS_RULE_PITCH;
+    page.line(TOTALS_X, ruleY, TOTALS_X + TOTALS_W, ruleY, 0.5);
+  }
+  const grandTop = bandTop + TOTALS_RULE0 + TOTALS_GRAND_FROM * TOTALS_RULE_PITCH;
+  const grandH = (TOTALS_GRAND_TO - TOTALS_GRAND_FROM) * TOTALS_RULE_PITCH;
+  page.rect(TOTALS_X, grandTop, TOTALS_W, grandH, { lineWidth: 1.0, stroke: true });
 
   rows.forEach((row, i) => {
-    const y = top + i * rowH;
-    if (row.boxed) {
-      sheet.page.rect(x, y, labelW + valueW, rowH, { lineWidth: 0.9, stroke: true });
-    } else {
-      sheet.page.line(x, y + rowH, x + labelW + valueW, y + rowH, 0.35);
-    }
-    sheet.page.text(row.label, x + CELL_PAD, y + 10.8, { font: row.bold ? "bold" : "regular", size: T.totalLabel });
+    const bold = row.bold === true;
+    const labelBase = refBaseline(bandTop + TOTALS_TEXT0 + i * TOTALS_TEXT_PITCH, T.totalLabel, bold);
+    page.text(row.label, TOTALS_LABEL_X, labelBase, { font: bold ? "bold" : "regular", size: T.totalLabel });
     if (row.rate) {
-      sheet.page.text(row.rate, x + labelW - CELL_PAD, y + 10.6, {
+      // The rate sits on rows 1..3, i.e. one step below its TOTALS_RATE0 origin.
+      const rateBase = refBaseline(bandTop + TOTALS_RATE0 + (i - 1) * TOTALS_TEXT_PITCH, T.totalRate, false);
+      page.text(row.rate, TOTALS_RATE_R, rateBase, {
         size: T.totalRate,
         align: "right",
-        color: [0.35, 0.35, 0.35],
+        color: [0x53 / 255, 0x55 / 255, 0x56 / 255],
       });
     }
-    sheet.page.line(x + labelW, y, x + labelW, y + rowH, 0.35);
     /* An empty value leaves its cell blank rather than printing a dash, so a
        template row with nothing in it still reads as an empty field. */
     if (row.value !== "") {
-      sheet.page.text(row.value, x + labelW + valueW - CELL_PAD, y + 10.8, {
-        font: "bold",
-        size: row.bold ? T.totalGrand : T.totalValue,
-        align: "right",
-      });
+      const size = bold ? T.totalGrand : T.totalValue;
+      const valueBase = refBaseline(bandTop + TOTALS_VALUE0 + i * TOTALS_TEXT_PITCH, size, true);
+      page.text(row.value, TOTALS_VALUE_R, valueBase, { font: "bold", size, align: "right" });
     }
   });
-
-  sheet.y = top + rows.length * rowH + TOTAL_BLOCK_TAIL;
 }
 
 /* ──────────────────────────────────────────────
@@ -1341,22 +1247,23 @@ function renderTotals(sheet: Sheet, bill: BillCopy): void {
 
 function renderWords(sheet: Sheet, bill: BillCopy): void {
   if (!bill.amountInWords) return;
-  /* `sheet.page` is read at each draw site, never captured here: reserve() can
-     call newPage(), which replaces the page this function would be drawing on. */
-  const size = T.words;
-  const lines = wrapText(`Total Invoice Amount in Words: - ${bill.amountInWords}`, CONTENT_W - 10, "bold", size);
-  const gap = size + 2.6;
-  // Same measurement the reservation used, so the box cannot end up a different
-  // height from the space that was held for it.
-  const h = wordsHeight(bill) - 12;
-
-  sheet.reserve(h + 12);
-  const top = sheet.y;
-  sheet.page.rect(sheet.left, top, CONTENT_W, h, { lineWidth: 0.5, stroke: true });
+  const top = WORDS_TOP + sheet.headerGrowth;
+  const lines = wrapText(
+    `Total Invoice Amount in Words: - ${bill.amountInWords}`,
+    WORDS_R - WORDS_TEXT_X,
+    "bold",
+    T.words
+  );
+  /* An L, not a box: the reference rules the left edge and the foot only. */
+  sheet.page.line(WORDS_X, top, WORDS_X, top + WORDS_H, 0.5);
+  sheet.page.line(WORDS_X, top + WORDS_H, WORDS_R, top + WORDS_H, 0.5);
+  const base0 = refBaseline(top + (WORDS_TEXT_TOP - WORDS_TOP), T.words, true);
   lines.forEach((line, i) => {
-    sheet.page.text(line, sheet.left + CELL_PAD, top + 7 + size + i * gap, { font: "bold", size });
+    sheet.page.text(line, WORDS_TEXT_X, base0 + i * (T.words + 2.6), { font: "bold", size: T.words });
   });
-  sheet.y = top + h + 12;
+  /* The words box is content the signature block must clear if a logo has pushed
+     it down. `renderColumns` continues the maximum from here. */
+  sheet.y = Math.max(sheet.y, top + WORDS_H);
 }
 
 /* ──────────────────────────────────────────────
@@ -1364,66 +1271,79 @@ function renderWords(sheet: Sheet, bill: BillCopy): void {
    ────────────────────────────────────────────── */
 
 function renderColumns(sheet: Sheet, bill: BillCopy): void {
-  /* `sheet.page` is read at each draw site, never captured here: reserve() can
-     call newPage(), which replaces the page this function would be drawing on. */
-  const blocks = [
-    { x: sheet.left, heading: "Bank Details", lines: bill.bankLines, emphasise: false },
-    {
-      x: sheet.left + (CONTENT_W + COL_GAP) / 2,
-      heading: "Terms & Conditions",
-      lines: bill.termsLines,
-      emphasise: true,
-    },
-  ];
-  if (blocks.every((b) => b.lines.length === 0)) return;
+  const page = sheet.page;
+  const growth = sheet.headerGrowth;
+  const { notes } = splitFooter(bill);
 
-  const colW = (CONTENT_W - COL_GAP) / 2;
-  const size = T.columnBody;
-  const gap = COLUMN_LEADING;
-  const headingH = 14;
+  /* The lowest ink this pass draws. The signature block reads it so its anchored
+     rule cannot be overprinted by the closing rule when a logo has pushed the
+     whole closing stack down. Seeded from `sheet.y`, which by now is the words
+     box's foot (or the table's, when there are no words). */
+  let bottom = sheet.y;
 
-  sheet.reserve(columnsHeight(bill));
-  const top = sheet.y;
-  // `columnsHeight` measured the same thing, so the reserved space and the drawn
-  // height are the same number by construction.
-  const height = columnsHeight(bill) - 12;
-
-  for (const block of blocks) {
-    if (block.lines.length === 0) continue;
-    sheet.page.text(block.heading, block.x, top + 9.5, { font: "bold", size: T.columnHead });
-    sheet.page.line(block.x, top + 13, block.x + colW, top + 13, 0.5);
-    let y = top + headingH;
-    for (const line of block.lines) {
-      if (!block.emphasise) {
-        for (const wrapped of wrapText(line, colW, "regular", size)) {
-          sheet.page.text(wrapped, block.x, y + size, { size });
-          y += gap;
-        }
-        continue;
-      }
-      /* Mixed-style line. Every run of a visual line shares ONE baseline, so the
-         larger bold window sits in the sentence rather than above or below it,
-         and the row keeps the height of the surrounding text. */
-      for (const visual of layoutRuns(splitEmphasis(line), colW, size)) {
-        let x = block.x;
-        for (const run of visual) {
-          if (run.text !== "") {
-            sheet.page.text(run.text, x, y + size, {
-              font: run.emph ? "bold" : "regular",
-              size: run.emph ? size + EMPH_SIZE_DELTA : size,
-            });
-            x += measurePdfText(run.text, {
-              font: run.emph ? "bold" : "regular",
-              size: run.emph ? size + EMPH_SIZE_DELTA : size,
-            });
-          }
-        }
-        y += gap;
+  /* ---- bank details, top left -------------------------------------------- */
+  if (bill.bankLines.length > 0 || notes.length > 0) {
+    const ruleY = BANK_RULE_Y + growth;
+    page.line(BANK_X, ruleY, BANK_R, ruleY, 0.5);
+  }
+  if (bill.bankLines.length > 0) {
+    page.text("Bank Details", BANK_HEAD_X, refBaseline(BANK_HEAD_TOP + growth, T.columnHead, true), {
+      font: "bold",
+      size: T.columnHead,
+    });
+    bill.bankLines.forEach((line, i) => {
+      const base = refBaseline(BANK_ROW0 + i * BANK_ROW_PITCH + growth, T.columnBody, false);
+      page.text(line, BANK_ROW_X, base, { size: T.columnBody });
+      bottom = Math.max(bottom, base);
+    });
+  }
+  /* The certification note is not a section of its own here: the reference
+     prints it directly under the bank rows, in the same narrow column. */
+  if (notes.length > 0) {
+    const lastRow = BANK_ROW0 + Math.max(bill.bankLines.length - 1, 0) * BANK_ROW_PITCH;
+    let y = refBaseline(lastRow + BANK_NOTE_GAP + growth, T.note, false);
+    for (const note of notes) {
+      for (const wrapped of wrapText(note, BANK_R - BANK_ROW_X, "regular", T.note)) {
+        page.text(wrapped, BANK_ROW_X, y, { size: T.note, color: [0x2b / 255, 0x2e / 255, 0x30 / 255] });
+        bottom = Math.max(bottom, y);
+        y += T.note + 2.2;
       }
     }
   }
 
-  sheet.y = top + height + 12;
+  /* ---- terms, full width below the words box ----------------------------- */
+  if (bill.termsLines.length === 0) {
+    sheet.y = bottom;
+    return;
+  }
+  const headTop = TERMS_HEAD_TOP + growth;
+  const headBase = refBaseline(headTop, TERMS_HEAD_SIZE, true);
+  page.text("Terms & Conditions", BANK_X, headBase, { font: "bold", size: TERMS_HEAD_SIZE });
+
+  let y = headBase + 13.79;
+  let lastBase = y;
+  const wrapW = WORDS_R - BANK_X;
+  for (const line of bill.termsLines) {
+    /* Mixed-style line. Every run of a visual line shares ONE baseline, so the
+       larger bold window sits in the sentence rather than above or below it. */
+    for (const visual of layoutRuns(splitEmphasis(line), wrapW, TERMS_BODY_SIZE)) {
+      let x = BANK_X;
+      for (const run of visual) {
+        if (run.text !== "") {
+          const size = run.emph ? TERMS_BODY_SIZE + EMPH_SIZE_DELTA : TERMS_BODY_SIZE;
+          page.text(run.text, x, y, { font: run.emph ? "bold" : "regular", size });
+          x += measurePdfText(run.text, { font: run.emph ? "bold" : "regular", size });
+        }
+      }
+      lastBase = y;
+      y += 15.2;
+    }
+  }
+  /* The reference closes the terms with a filled rule (21.07–558.75 at
+     738.61–739.87); a 1.26pt line centred on 739.24 is the same ink. */
+  const ruleY = lastBase + (TERMS_RULE_TOP + TERMS_RULE_THICKNESS / 2 - 732.09);
+  page.line(TERMS_RULE_X, ruleY, TERMS_RULE_R, ruleY, TERMS_RULE_THICKNESS);
+  sheet.y = Math.max(bottom, ruleY);
 }
 
 /* ──────────────────────────────────────────────
@@ -1481,27 +1401,6 @@ function splitFooter(bill: BillCopy): { notes: string[]; supplierLines: string[]
   return { notes, supplierLines };
 }
 
-function renderNotes(sheet: Sheet, bill: BillCopy): void {
-  const { notes } = splitFooter(bill);
-  if (notes.length === 0) return;
-  /* `sheet.page` is read at each draw site, never captured here: reserve() can
-     call newPage(), which replaces the page this function would be drawing on. */
-  const size = T.note;
-  const gap = NOTE_LEADING;
-  const lines = notes.flatMap((n) => wrapText(n, CONTENT_W, "regular", size));
-
-  // Measured by `notesHeight`, so the reserved space and the drawn height agree.
-  const h = notesHeight(bill) - 16;
-
-  sheet.reserve(h + 12);
-  let y = sheet.y;
-  for (const line of lines) {
-    sheet.page.text(line, sheet.left, y + size, { size, color: [0.2, 0.2, 0.2] });
-    y += gap;
-  }
-  sheet.y = y + 4;
-}
-
 function renderSignatures(sheet: Sheet, bill: BillCopy): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
@@ -1509,44 +1408,28 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
   const { supplierLines } = splitFooter(bill);
   const receiverLines = bill.signatureLines.length > 0 ? bill.signatureLines : ["(Receivers Signature)"];
 
-  // Measure both blocks so the two rules sit on one line.
-  const colW = CONTENT_W / 2;
-  const ruleOffset = SIG_RULE_OFFSET;
-  // Same measurement the reservation used.
-  const bodyH = signaturesHeight(bill) - ruleOffset - 4 - 8;
-  const boxH = ruleOffset + bodyH + 4;
-
-  /* Reserve FIRST, in flow, so the page-break policy still sees the space the block
-     needs at the point the content actually reaches. Then place the block as low as it
-     will go on this page. Doing it the other way round would let the anchor push the
-     block past the foot of a page that was already full. */
-  sheet.reserve(boxH + 8);
-  const flowTop = sheet.y + 6;
-  const anchorTop = PAGE_H - SIG_RULE_FROM_BOTTOM - ruleOffset;
-  /* Never later than the flow position (that is where the content left off) and never
-     low enough to run past the content area (a tall block, or one landing on an already
-     full page, simply stays where the flow put it). */
-  const top = Math.max(flowTop, Math.min(anchorTop, CONTENT_BOTTOM - boxH));
-  const lineY = top + ruleOffset;
+  /* The block is anchored on the RULE rather than on its bottom edge: the height
+     varies with how many designations the workbook supplies, but the rule is the
+     line that has to land in the same place on every bill. It never rises above
+     the foot anchor, and a longer header can push the closing blocks down into
+     that anchor — in which case the rule drops just far enough to clear them
+     rather than overprinting the terms' closing rule. */
+  const anchorLineY = PAGE_H - SIG_RULE_FROM_BOTTOM;
+  const lineY = Math.max(anchorLineY, sheet.y + SIG_FLOW_GAP);
 
   const drawColumn = (x: number, lines: string[], align: "left" | "right"): void => {
-    sheet.page.line(x + ruleOffset, lineY, x + colW - ruleOffset, lineY, 0.6);
-    let y = lineY + 3;
+    sheet.page.line(x, lineY, x + SIG_RULE_W, lineY, 0.6);
+    let y = lineY + SIG_TEXT_OFFSET;
     for (const line of lines) {
-      for (const wrapped of wrapText(line, colW - 2 * ruleOffset, "regular", size)) {
-        sheet.page.text(wrapped, align === "right" ? x + colW - ruleOffset : x + ruleOffset, y + size, {
-          size,
-          align,
-        });
+      for (const wrapped of wrapText(line, SIG_RULE_W, "regular", size)) {
+        sheet.page.text(wrapped, align === "right" ? x + SIG_RULE_W : x, y, { size, align });
         y += SIG_LEADING;
       }
     }
   };
 
-  drawColumn(sheet.left + SIG_BLOCK_DX, supplierLines, "left");
-  drawColumn(sheet.left + colW + SIG_BLOCK_DX, receiverLines, "right");
-
-  sheet.y = top + boxH;
+  drawColumn(SIG_LEFT_X, supplierLines, "left");
+  drawColumn(SIG_RIGHT_X, receiverLines, "right");
 }
 
 /* ──────────────────────────────────────────────
@@ -1644,7 +1527,6 @@ export function renderBillDocument(
     renderTotals(sheet, bill);
     renderWords(sheet, bill);
     renderColumns(sheet, bill);
-    renderNotes(sheet, bill);
     renderSignatures(sheet, bill);
     for (let p = firstPage; p < sheet.doc.pageCount; p++) {
       pageOwner[p] = bill.invoiceNo ?? "Bill";
@@ -1657,11 +1539,11 @@ export function renderBillDocument(
   sheet.doc.getPages().forEach((page, i) => {
     // `page` here is the loop's own page, deliberately not `sheet.page`: this
     // pass has to stamp EVERY page, not the one the last bill happened to end on.
-    page.text("E & O.E", MARGIN_X, PAGE_H - 18, { size: T.footer, color: [0.3, 0.3, 0.3] });
+    page.text("E & O.E", MARGIN_X, FOOTER_BASELINE, { size: T.footer, color: [0.3, 0.3, 0.3] });
     page.text(
       `${copyLabel}   |   ${pageOwner[i] ?? ""}   |   Page ${i + 1} of ${total}`,
       MARGIN_X + CONTENT_W,
-      PAGE_H - 18,
+      FOOTER_BASELINE,
       { size: T.footer, align: "right", color: [0.3, 0.3, 0.3] }
     );
   });

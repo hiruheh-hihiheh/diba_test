@@ -30,8 +30,18 @@ import { measureText } from "../process-bill-upload/_shared/fontMetrics.ts";
 
 const PW = 595.28;
 const PH = 841.89;
-const FOOTER_Y = PH - 18; // footer baseline
+const FOOTER_Y = 822.09; // footer baseline (the reference's)
 const CONTENT_BOTTOM = PH - 34; // body must stay above the footer band
+/**
+ * The top of the anchored closing band (the totals, bank, words and terms
+ * blocks).
+ *
+ * Below the item table the reference leaves ~160pt of deliberate white space
+ * before that band. It is a fixed part of the design, not a formatting slip, so
+ * the internal-gap walk stops here: the space ABOVE the band is intentional and
+ * measuring it would report every short invoice as a bug.
+ */
+const BAND_TOP = 525;
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const outDir = resolve(HERE, "out");
@@ -217,13 +227,14 @@ function audit(filePath: string, label: string): void {
       ...rects.map((r) => r.yTop + r.h)
     );
 
-    /* The signature block is ANCHORED to the foot of the sheet, so the whitespace above
-       it is deliberate and grows with how short the invoice is. Walking the baselines
-       straight through would count that space as an internal gap and report the design
-       itself as a formatting bug on every short bill, which is why this walked all the
-       way down before. The walk now stops at the signature rules — the two long
-       horizontals in the band just above the footer. `contentEnd` above still counts
-       them, because they really are content, and the block is still drawn in the map. */
+    /* The signature block is ANCHORED to the foot of the sheet, and the closing band
+       above it is anchored too, so the white space around them is deliberate and
+       grows with how short the invoice is. Walking the baselines straight through
+       would count that space as an internal gap and report the design itself as a
+       formatting bug on every short bill. The walk stops at the anchored closing
+       band's top (the space below the table is intentional) — and never past the
+       signature rules. `contentEnd` above still counts everything, because it really
+       is content, and the block is still drawn in the map. */
     const sigBandTop = CONTENT_BOTTOM - 60;
     const sigYs = lines
       .filter(
@@ -235,11 +246,12 @@ function audit(filePath: string, label: string): void {
       )
       .map((l) => PH - l.y1);
     const sigTop = sigYs.length ? Math.min(...sigYs) : Number.POSITIVE_INFINITY;
+    const gapStop = Math.min(sigTop, BAND_TOP);
     let biggestGap = 0;
     let gapAt = 0;
     let prev = 0;
     for (const b of baselines) {
-      if (b >= sigTop - 0.01) break;
+      if (b >= gapStop - 0.01) break;
       if (b - prev > biggestGap) {
         biggestGap = b - prev;
         gapAt = prev;

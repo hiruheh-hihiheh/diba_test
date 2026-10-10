@@ -28,7 +28,6 @@ import {
 } from "../services/admin";
 import { fetchSystemCounts, type SystemCounts } from "../services/counts";
 import { fetchAdminDispatches } from "../services/dispatch";
-import { supabase } from "../services/supabase";
 import type { Profile } from "../types/profile";
 import type { Dispatch } from "../types/dispatch";
 
@@ -37,7 +36,6 @@ import { Input } from "../components/ui/Input";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { notify } from "../utils/notify";
 import {
-  DashboardHeader,
   StatGrid,
   DispatchSection,
   WorkerSection,
@@ -124,8 +122,6 @@ export default function DashboardScreen() {
     null
   );
   const [deletingWorkerId, setDeletingWorkerId] = useState<string | null>(null);
-
-  const adminUsername = session?.user.email?.split("@")[0] ?? "admin";
 
   /*
     ============================
@@ -533,48 +529,19 @@ export default function DashboardScreen() {
 
   /*
     ============================
-    LOGOUT
-    ============================
-  */
-  async function handleLogout() {
-    try {
-      const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        notify("Logout Failed", error.message);
-        return;
-      }
-
-      setWorkers([]);
-      setDispatches([]);
-
-      router.dismissAll();
-      router.replace("/login");
-    } catch (error) {
-      notify(
-        "Logout Failed",
-        error instanceof Error
-          ? error.message
-          : "Unable to logout. Please try again."
-      );
-    }
-  }
-
-  /*
-    ============================
     RENDER
     ============================
   */
   if (sessionLoading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -582,8 +549,6 @@ export default function DashboardScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <DashboardHeader adminUsername={adminUsername} onLogout={handleLogout} />
-
         <StatGrid
           userStats={userStats}
           dispatchStats={dispatchStats}
@@ -814,7 +779,7 @@ export default function DashboardScreen() {
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

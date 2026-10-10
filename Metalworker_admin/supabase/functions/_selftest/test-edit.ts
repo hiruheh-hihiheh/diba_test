@@ -306,11 +306,12 @@ if (labour) {
   const has = (s: string): boolean => raw.includes(`(${s.replace(/([()\\])/g, "\\$1")})`);
   check(has("M/s. Example Cookers Ltd.,"), "the PDF prints the company name");
   for (const line of o.partyAddress) check(has(line), "the PDF prints the address line", line);
-  check(has("Transporter:"), "the transporter label is present");
-  check(has("VEHICLE"), "the transporter value is present");
+  check(has("Mode of  Transport:"), "the transport mode label is present");
+  check(has("VEHICLE"), "the transport mode value is present");
   check(has("Vehicle No.:"), "the vehicle label is present");
   check(has("MH 00 EX 0000"), "the vehicle value is present");
-  check(has("Eway Bill No.") && has("Eway Bill Date"), "the empty e-way rows are still printed");
+  check(has("Eway Bill No."), "the empty e-way row is still printed");
+  check(has("Date :"), "the reference grid's date column is printed");
   check(has("40 DAYS"), "the emphasized payment window is printed");
   check(pageCount(pdf) === 1, "and it all fits on one A4 page", `${pageCount(pdf)} pages`);
 }

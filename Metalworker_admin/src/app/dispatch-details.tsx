@@ -13,7 +13,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -175,15 +174,15 @@ export default function DispatchDetailsScreen() {
 
   if (authChecking || loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer} edges={["top", "left", "right"]}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (error || !dispatch) {
     return (
-      <SafeAreaView style={styles.errorContainer} edges={["top", "left", "right"]}>
+      <View style={styles.errorContainer}>
         <Text style={styles.errorText}>{error || "Dispatch not found"}</Text>
         <View style={styles.errorActions}>
           {dispatchId ? (
@@ -195,7 +194,7 @@ export default function DispatchDetailsScreen() {
             <Text style={styles.retryBtnText}>Go Back</Text>
           </Pressable>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -214,7 +213,7 @@ export default function DispatchDetailsScreen() {
   ];
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <KeyboardAvoidingView
         style={styles.keyboard}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -223,17 +222,6 @@ export default function DispatchDetailsScreen() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {/* HEADER */}
-          <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
-              <Text style={styles.backText}>←</Text>
-            </Pressable>
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle}>Dispatch Details</Text>
-            </View>
-            <View style={styles.headerSpacer} />
-          </View>
-
           {/* PHOTO */}
           {dispatch.photo_url ? (
             <Image
@@ -476,7 +464,7 @@ export default function DispatchDetailsScreen() {
         onConfirm={performDelete}
         onCancel={() => setConfirmDeleteVisible(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -527,41 +515,6 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
   content: {
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
-  },
-
-  /* HEADER */
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.xl,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backText: {
-    color: theme.colors.primary,
-    fontSize: 20,
-    fontWeight: "600",
-  },
-  headerTitleContainer: {
-    flex: 1,
-    alignItems: "center",
-  },
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-  },
-  headerSpacer: {
-    width: 40,
   },
 
   /* DISPATCH PHOTO */

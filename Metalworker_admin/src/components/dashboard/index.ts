@@ -1,5 +1,4 @@
 // src/components/dashboard/index.ts
-export { DashboardHeader } from "./DashboardHeader";
 export {
   StatGrid,
   StatCard,

@@ -18,7 +18,10 @@ import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts
 const REPO = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../..");
 const workbook = process.argv[2] ?? resolve(REPO, "BILL 301 TO.xlsx");
 const PAGE_W = 595.28;
-const MARGIN_X = 30;
+/* The content margin, matched to the reference. The amount-in-words text hangs
+   just left of it (28.66) as it does in the reference, so the check's own ±1
+   tolerance is what admits it. */
+const MARGIN_X = 29.37;
 
 let failures = 0;
 const check = (ok: boolean, label: string, detail = "") => {

@@ -11,7 +11,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -147,9 +146,9 @@ export default function DispatchScreen() {
 
   if (authChecking) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -165,7 +164,7 @@ export default function DispatchScreen() {
   const totalDispatches = filteredDispatches.length;
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -173,19 +172,10 @@ export default function DispatchScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>←</Text>
-          </Pressable>
-          <View style={styles.headerTitleContainer}>
-            <Text style={styles.headerTitle}>Dispatch Management</Text>
-            <Text style={styles.headerSubtitle}>
-              {totalDispatches} dispatches • {totalWorkers} workers
-            </Text>
-          </View>
-          <View style={styles.headerSpacer} />
-        </View>
+        {/* Count caption — the shell header owns the page title. */}
+        <Text style={styles.countCaption}>
+          {totalDispatches} dispatches • {totalWorkers} workers
+        </Text>
 
         {/* SEARCH & FILTER */}
         <View style={styles.searchSection}>
@@ -388,7 +378,7 @@ export default function DispatchScreen() {
           )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -408,44 +398,10 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     paddingBottom: theme.spacing.xl,
   },
 
-  /* HEADER */
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.xl,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backText: {
-    color: theme.colors.primary,
-    fontSize: 20,
-    fontWeight: "600",
-  },
-  headerTitleContainer: {
-    flex: 1,
-    alignItems: "center",
-  },
-  headerTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-  },
-  headerSubtitle: {
+  countCaption: {
     color: theme.colors.textMuted,
     fontSize: theme.textSizes.sm,
-    marginTop: 2,
-  },
-  headerSpacer: {
-    width: 40,
+    marginBottom: theme.spacing.lg,
   },
 
   /* SEARCH & FILTER */
