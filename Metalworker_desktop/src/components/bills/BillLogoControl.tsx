@@ -56,6 +56,14 @@ export function BillLogoControl({ billId, initialState = null, onChanged }: Bill
   const [loading, setLoading] = useState(initialState === null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * What the in-flight operation is, so the busy button names it.
+   *
+   * "Assigning logo…" vs "Removing logo…" matters on a tax document: it is the
+   * difference between the letterhead appearing and a printed mark being taken off,
+   * and a generic "Working…" names neither.
+   */
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
 
   /* A caller that already had the bill row has `logo_id` but not the logo's NAME,
      because names live in another table that the bills query does not join. That
@@ -105,6 +113,7 @@ export function BillLogoControl({ billId, initialState = null, onChanged }: Bill
 
   async function apply(logoId: string | null) {
     setBusy(true);
+    setBusyLabel(logoId === null ? "Removing logo…" : "Assigning logo…");
     try {
       /* No progress callback here: this is one bill, so there is no batch to report
          progress across, and a percentage over a single re-print would be theatre.
@@ -141,6 +150,7 @@ export function BillLogoControl({ billId, initialState = null, onChanged }: Bill
       toast.error(err instanceof Error ? err.message : "The logo could not be changed.");
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }
 
@@ -194,7 +204,7 @@ export function BillLogoControl({ billId, initialState = null, onChanged }: Bill
           {busy ? (
             <>
               <Loader2 size={14} className="animate-spin mr-1.5 inline" />
-              Working…
+              {busyLabel ?? "Working…"}
             </>
           ) : hasLogo ? (
             "Change Logo"

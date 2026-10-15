@@ -9,7 +9,7 @@
 // separately. Deleting is per WORKBOOK, because the three PDFs and the invoice
 // rows only exist and die together — the confirmation says so in words.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -20,7 +20,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, type Href } from "expo-router";
+import { router, useFocusEffect, type Href } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -211,6 +211,30 @@ const [createOpen, setCreateOpen] = useState(false);
     return () => clearTimeout(timer);
   }, [load, search]);
 
+  /* The list is a STACK screen: returning from the Logo Library (or any pushed
+     screen) leaves these rows mounted, so a logo assigned elsewhere would keep
+     showing the previous state until a manual pull. `useFocusEffect` reloads on
+     every return.
+     The FIRST focus is skipped because the debounced effect above already loads
+     on mount. The callback is keyed on an EMPTY dep list, and reads the latest
+     `load` through a ref, rather than depending on `load` directly: `load`'s
+     identity changes with every filter, so depending on it would refetch on each
+     keystroke on top of the debounced load. */
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+  const skippedFirstFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!skippedFirstFocus.current) {
+        skippedFirstFocus.current = true;
+        return;
+      }
+      void loadRef.current(true);
+    }, [])
+  );
+
   const selectedBills = useMemo(
     () => bills.filter((b) => selected.includes(b.id)),
     [bills, selected]
@@ -376,9 +400,29 @@ const [createOpen, setCreateOpen] = useState(false);
   }
 
   async function applyLogoToSelection(ids: string[], logoId: string | null) {
+    if (ids.length === 0 || logoBusy) return;
     setLogoBusy(true);
+
+    /* The same full-screen loading state the bulk delete uses, driven by the real
+       re-print counts the server reports — never a timer. `total` starts at the
+       selection size and is corrected to `assigned` on the first callback, because
+       bills that already carried the logo come back as `unchanged` and are never
+       re-printed: counting them would park the bar short of the end. */
+    setBulk({
+      title: logoId ? "Assigning logo" : "Removing logo",
+      subtitle: `${ids.length} ${ids.length === 1 ? "bill" : "bills"} selected`,
+      progressLabel: "Re-printing",
+      progress: { done: 0, total: ids.length },
+    });
+
     try {
-      const result = await applyLogoToBills(ids, logoId);
+      const result = await applyLogoToBills(ids, logoId, (p) => {
+        setBulk((prev) =>
+          prev
+            ? { ...prev, progress: { done: p.reprinted, total: Math.max(p.assigned, 1) } }
+            : prev
+        );
+      });
       if (!result.ok) {
         notify(
           logoId ? "The logo could not be assigned" : "The logo could not be removed",
@@ -397,7 +441,11 @@ const [createOpen, setCreateOpen] = useState(false);
         setSelected([]);
       }
 
-      void load(true);
+      /* AWAITED, so the list has actually incorporated the new logo before the
+         loading state comes down. The old fire-and-forget `void load(true)` let the
+         overlay clear first, leaving the row reading as unchanged for a beat — which
+         is exactly the "it didn't work, refresh the page" confusion. */
+      await load(true);
 
       if (result.failures.length > 0) {
         notify(
@@ -427,6 +475,7 @@ const [createOpen, setCreateOpen] = useState(false);
       );
     } finally {
       setLogoBusy(false);
+      setBulk(null);
     }
   }
 
@@ -1352,16 +1401,20 @@ const [createOpen, setCreateOpen] = useState(false);
           setDetailId(null);
           setEditId(bill.id);
         }}
+        onChanged={() => void load(true)}
       />
 
       {/* Editing re-prints this bill's three documents from the saved values, so the
           list reloads afterwards: the amount, the copy row and the download links
-          all have to show the new version. */}
+          all have to show the new version. `onChanged` covers the logo, which is
+          written immediately and is NOT part of "Save": closing the editor without
+          saving still has to leave the list row showing the logo it now carries. */}
       {editId && (
         <BillEditScreen
           billId={editId}
           onClose={() => setEditId(null)}
           onSaved={() => void load(true)}
+          onChanged={() => void load(true)}
         />
       )}
 

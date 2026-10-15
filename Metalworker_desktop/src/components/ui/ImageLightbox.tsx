@@ -11,9 +11,9 @@
 //
 // Keyboard: Escape closes, ArrowLeft / ArrowRight step through the set.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Images } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Images, Loader2, ImageOff } from "lucide-react";
 
 export interface LightboxImage {
   id: string;
@@ -96,7 +96,17 @@ export default function ImageLightbox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, images.length]);
 
+  /* Which image has finished decoding, tracked by url rather than by a boolean
+     plus an effect: when the viewer steps to a different image the comparison
+     below turns "loading" back on by itself, so there is no state reset to get
+     wrong and no set-state-in-effect. */
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
   if (!open || !current) return null;
+
+  const imgLoading = loadedUrl !== current.url && failedUrl !== current.url;
+  const imgFailed = failedUrl === current.url;
 
   return createPortal(
     <div
@@ -134,9 +144,24 @@ export default function ImageLightbox({
 
       {/* Image area */}
       <div
-        className="flex-1 min-h-0 flex items-center justify-center gap-2 px-2 sm:px-4 pb-2"
+        className="relative flex-1 min-h-0 flex items-center justify-center gap-2 px-2 sm:px-4 pb-2"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Shown while the current image is still decoding, or if it fails, so
+            the stage is never a blank rectangle. `absolute inset-0` avoids a
+            translate, which would fight the spinner's own rotation. */}
+        {imgLoading && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <Loader2 size={34} className="text-white/70 animate-spin" aria-hidden="true" />
+          </div>
+        )}
+        {imgFailed && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/80 pointer-events-none">
+            <ImageOff size={34} />
+            <p className="text-sm font-medium">This image could not be loaded.</p>
+          </div>
+        )}
+
         {images.length > 1 && (
           <button
             type="button"
@@ -150,9 +175,15 @@ export default function ImageLightbox({
         )}
 
         <img
+          key={current.url}
           src={current.url}
           alt={current.label}
-          className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+          decoding="async"
+          onLoad={() => setLoadedUrl(current.url)}
+          onError={() => setFailedUrl(current.url)}
+          className={`max-w-full max-h-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
+            imgLoading || imgFailed ? "opacity-0" : "opacity-100"
+          }`}
         />
 
         {images.length > 1 && (

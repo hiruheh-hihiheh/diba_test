@@ -59,8 +59,18 @@ const BULK_CONFIRM_THRESHOLD = 50;
 interface BillLogoAssignModalProps {
   logo: InvoiceLogo | null;
   onClose: () => void;
-  /** Called after the assignment is written, with how many bills changed. */
-  onApplied: (assigned: number) => void;
+  /**
+   * Called once the assignment is written, with how many bills changed and whether
+   * any of them could not be re-printed.
+   *
+   * Reached on a PARTIAL success too: some bills genuinely changed, so the caller's
+   * counts and rows are stale even though the operation was not clean. The caller
+   * decides whether to close — a partial keeps this dialog open on its report.
+   *
+   * Awaitable, so this dialog's own busy state can cover the caller's refresh and
+   * not clear before the screen it is sitting on has caught up.
+   */
+  onApplied: (assigned: number, partial: boolean) => void | Promise<void>;
 }
 
 export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssignModalProps) {
@@ -249,8 +259,12 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
         toast.error(
           `Assigned to ${result.assigned} bills, but ${result.failures.length} could not be re-printed.`
         );
+        /* Some bills DID change, so the caller's counts are now wrong even though
+           the operation was not clean. The report stays on screen — the caller does
+           not close on a partial — but the refresh still has to happen. */
+        await onApplied(result.assigned, true);
       } else {
-        onApplied(result.assigned);
+        await onApplied(result.assigned, false);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "The logo could not be assigned.");
@@ -336,7 +350,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
                 {applying ? (
                   <>
                     <Loader2 size={15} className="animate-spin mr-1.5 inline" />
-                    Re-printing…
+                    Assigning logo…
                   </>
                 ) : targetCount > BULK_CONFIRM_THRESHOLD ? (
                   `Assign to ${targetCount} invoices`
@@ -390,13 +404,19 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
               </p>
             )}
 
-            {progress && (
+            {applying && (
               <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-primary/5 border border-primary/20 text-sm text-text">
                 <Loader2 size={15} className="animate-spin text-primary shrink-0" />
                 <span>
-                  Assigned to {progress.assigned}{" "}
-                  {progress.assigned === 1 ? "invoice" : "invoices"}
-                  {progress.reprinted > 0 && ` · re-printed ${progress.reprinted}`}
+                  Assigning logo and regenerating invoice PDFs…
+                  {progress && progress.assigned > 0
+                    ? ` ${progress.assigned} ${
+                        progress.assigned === 1 ? "invoice" : "invoices"
+                      } updated`
+                    : ""}
+                  {progress && progress.reprinted > 0
+                    ? ` · re-printed ${progress.reprinted}`
+                    : ""}
                 </span>
               </div>
             )}

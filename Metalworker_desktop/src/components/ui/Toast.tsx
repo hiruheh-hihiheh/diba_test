@@ -28,6 +28,8 @@ interface ToastItem extends Required<Omit<ToastOptions, "description" | "title">
   id: number;
   title?: string;
   description?: string;
+  /** Set while the toast is animating out, just before it is removed. */
+  leaving?: boolean;
 }
 
 type ToastFn = (options: ToastOptions | string) => void;
@@ -70,7 +72,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const nextId = useRef(1);
 
   const dismiss = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    // Two-phase: flag the toast so it can play its exit animation, then remove
+    // it once that has run. Without this a dismissed toast simply vanished,
+    // which read as a glitch next to the animated entrance.
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 160);
   }, []);
 
   const push = useCallback(
@@ -143,7 +151,9 @@ function ToastCard({ item, dismiss }: { item: ToastItem; dismiss: (id: number) =
 
   return (
     <div
-      className={`pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-xl bg-surface border ${style.ring} shadow-2xl animate-slide-in-right`}
+      className={`pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-xl bg-surface border ${style.ring} shadow-2xl ${
+        item.leaving ? "animate-slide-out-right pointer-events-none" : "animate-slide-in-right"
+      }`}
     >
       <span className={`shrink-0 mt-0.5 ${style.iconColor}`}>{style.icon}</span>
       <div className="flex-1 min-w-0">
@@ -157,8 +167,9 @@ function ToastCard({ item, dismiss }: { item: ToastItem; dismiss: (id: number) =
       <button
         type="button"
         onClick={() => dismiss(item.id)}
+        disabled={item.leaving}
         aria-label="Dismiss notification"
-        className="shrink-0 p-1 -m-1 rounded text-text-muted hover:text-text transition-colors cursor-pointer"
+        className="shrink-0 p-1 -m-1 rounded text-text-muted hover:text-text transition-colors cursor-pointer disabled:cursor-default"
       >
         <X size={15} />
       </button>

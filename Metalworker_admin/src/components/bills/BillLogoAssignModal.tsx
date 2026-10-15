@@ -71,8 +71,18 @@ const NO_ROWS: AssignableBill[] = [];
 interface BillLogoAssignModalProps {
   logo: InvoiceLogo | null;
   onClose: () => void;
-  /** Called after the assignment is written, with how many bills changed. */
-  onApplied: (assigned: number) => void;
+  /**
+   * Called once the assignment is written, with how many bills changed and whether
+   * any of them could not be re-printed.
+   *
+   * Reached on a PARTIAL success too: some bills genuinely changed, so the caller's
+   * counts and rows are stale even though the operation was not clean. The caller
+   * decides whether to close — a partial keeps this dialog open on its report.
+   *
+   * Awaitable, so this dialog's own busy state can cover the caller's refresh and
+   * not clear before the screen it is sitting on has caught up.
+   */
+  onApplied: (assigned: number, partial: boolean) => void | Promise<void>;
 }
 
 export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssignModalProps) {
@@ -315,8 +325,12 @@ function AssignBody({
         notify(
           `Assigned to ${result.assigned} bills, but ${result.failures.length} could not be re-printed.`
         );
+        /* Some bills DID change, so the caller's counts are now wrong even though
+           the operation was not clean. The report stays on screen — the caller does
+           not close on a partial — but the refresh still has to happen. */
+        await onApplied(result.assigned, true);
       } else {
-        onApplied(result.assigned);
+        await onApplied(result.assigned, false);
       }
     } catch (err) {
       notify(
@@ -386,13 +400,19 @@ function AssignBody({
                   </Text>
                 ) : null}
 
-                {progress ? (
+                {applying ? (
                   <View style={styles.progressRow} accessibilityLiveRegion="polite">
                     <ActivityIndicator size="small" color={theme.colors.primary} />
                     <Text style={styles.progressText}>
-                      Assigned to {progress.assigned}{" "}
-                      {progress.assigned === 1 ? "invoice" : "invoices"}
-                      {progress.reprinted > 0 ? ` · re-printed ${progress.reprinted}` : ""}
+                      Assigning logo and regenerating invoice PDFs…
+                      {progress && progress.assigned > 0
+                        ? ` ${progress.assigned} ${
+                            progress.assigned === 1 ? "invoice" : "invoices"
+                          } updated`
+                        : ""}
+                      {progress && progress.reprinted > 0
+                        ? ` · re-printed ${progress.reprinted}`
+                        : ""}
                     </Text>
                   </View>
                 ) : null}
@@ -524,7 +544,7 @@ function AssignBody({
                 <Button
                   title={
                     applying
-                      ? "Re-printing"
+                      ? "Assigning logo…"
                       : targetCount > BULK_CONFIRM_THRESHOLD
                         ? `Assign to ${targetCount} invoices`
                         : "Assign logo"

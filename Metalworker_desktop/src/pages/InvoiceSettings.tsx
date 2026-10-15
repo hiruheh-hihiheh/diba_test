@@ -387,7 +387,7 @@ export default function InvoiceSettingsPage() {
   const groups = useMemo(() => groupFields(FIELDS), []);
 
   return (
-    <div className="flex flex-col gap-5 max-w-4xl">
+    <div className="flex flex-col gap-5 max-w-4xl animate-fade-in">
       {/* The promise an admin needs before typing anything. */}
       <div className="rounded-xl border border-border bg-surface-raised p-4">
         <div className="flex items-start gap-2.5">

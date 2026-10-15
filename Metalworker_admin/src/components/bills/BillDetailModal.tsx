@@ -101,11 +101,18 @@ export function BillDetailModal({
   onClose,
   onOpenFolderPicker,
   onEdit,
+  onChanged,
 }: {
   billId: string | null;
   onClose: () => void;
   onOpenFolderPicker: (bill: Bill) => void;
   onEdit: (bill: Bill) => void;
+  /**
+   * Called after the logo on this bill changes, so the caller's own list can
+   * refresh. The detail view re-reads the row for itself below; without this the
+   * list behind the sheet would keep the old logo until it is reloaded.
+   */
+  onChanged?: () => void;
 }) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -373,6 +380,7 @@ export function BillDetailModal({
                   void fetchBill(bill.id).then((fresh) => {
                     if (bill.id === billId) setBill(fresh);
                   });
+                  onChanged?.();
                 }}
               />
 

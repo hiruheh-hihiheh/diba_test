@@ -846,7 +846,7 @@ function CreatorForm({
   /* ── The form ────────────────────────────────────────────── */
 
   return (
-    <div className="pb-32">
+    <div className="animate-appear pb-32">
       <div className="px-4 pt-5 max-w-[100rem] mx-auto">
         {/* One line telling the admin what this document is and what state it is in. */}
         <div className="flex flex-wrap items-center gap-3 mb-4">

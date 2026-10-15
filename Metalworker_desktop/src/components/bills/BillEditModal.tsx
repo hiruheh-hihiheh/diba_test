@@ -289,11 +289,18 @@ export default function BillEditModal({
   billId,
   onClose,
   onSaved,
+  onChanged,
 }: {
   billId: string;
   onClose: () => void;
   /** The bill's id and the new document version, so the caller can refresh. */
   onSaved: (billId: string, pdfVersion: number) => void;
+  /**
+   * Called when the bill's logo changes, which happens immediately and is NOT part
+   * of "Save". The caller's list has to refresh on it, because closing the editor
+   * without saving still leaves the bill carrying the new logo.
+   */
+  onChanged?: () => void;
 }) {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
@@ -656,7 +663,7 @@ export default function BillEditModal({
               </p>
             </header>
             <div className="px-4 py-4">
-              <BillLogoControl billId={billId} />
+              <BillLogoControl billId={billId} onChanged={onChanged} />
             </div>
           </section>
 

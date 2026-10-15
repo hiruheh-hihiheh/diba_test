@@ -462,13 +462,23 @@ export default function InvoiceLogosScreen() {
       <BillLogoAssignModal
         logo={assignTarget}
         onClose={() => setAssignTarget(null)}
-        onApplied={(assigned) => {
+        onApplied={async (assigned, partial) => {
+          /* Refresh FIRST, and await it: the count on every card comes from one
+             count query, and the assignment changed which bills carry which logo.
+             Closing the dialog before this resolved left the numbers stale for a
+             beat — the exact state a manual refresh was needed to clear. */
+          await load(true);
+          if (partial) {
+            /* Some bills could not be re-printed. The dialog keeps its failure
+               report on screen (we do not close it), and the totals above it are
+               now correct. */
+            return;
+          }
           setAssignTarget(null);
           notify(
             `Logo assigned to ${assigned} ${assigned === 1 ? "bill" : "bills"}`,
             "All three print copies were re-printed."
           );
-          void load(true);
         }}
       />
     </SafeAreaView>

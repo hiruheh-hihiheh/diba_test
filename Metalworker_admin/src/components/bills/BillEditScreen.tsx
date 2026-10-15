@@ -130,10 +130,17 @@ export function BillEditScreen({
   billId,
   onClose,
   onSaved,
+  onChanged,
 }: {
   billId: string;
   onClose: () => void;
   onSaved: () => void;
+  /**
+   * Called when the bill's logo changes, which happens immediately and is NOT part
+   * of "Save". The caller's list has to refresh on it, because closing the editor
+   * without saving still leaves the bill carrying the new logo.
+   */
+  onChanged?: () => void;
 }) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -552,7 +559,7 @@ export function BillEditScreen({
                 Prints in the header, above the invoice number. Saved on its own, so a failed
                 re-print here never affects the values around it.
               </Text>
-              <BillLogoControl billId={billId} />
+              <BillLogoControl billId={billId} onChanged={onChanged} />
             </Section>
 
             {/* ── Line items ── */}

@@ -166,8 +166,22 @@ th {
    lists. `none` keeps the painted result identical and creates no containing
    block. Modals are additionally portalled to <body>. */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
+}
+
+/* Opacity-only entrance. Used where the element being animated contains a
+   `position: fixed` descendant (the Create Bill action footer), which a
+   transform would briefly re-anchor. Opacity is not a containing block. */
+@keyframes appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Toast dismissal. Mirrors `slideInRight` so a toast leaves the way it arrived. */
+@keyframes slideOutRight {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateX(16px); }
 }
 
 @keyframes slideInLeft {
@@ -224,7 +238,11 @@ th {
 
 @layer utilities {
   .animate-fade-in {
-    animation: fadeIn 0.4s ease-out both;
+    animation: fadeIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-appear {
+    animation: appear 0.3s ease-out both;
   }
 
   /* For `position: fixed` overlays that must cover the viewport exactly. */
@@ -238,6 +256,10 @@ th {
 
   .animate-slide-in-right {
     animation: slideInRight 0.4s ease-out both;
+  }
+
+  .animate-slide-out-right {
+    animation: slideOutRight 0.16s ease-in both;
   }
 
   .animate-scale-in {
@@ -412,4 +434,37 @@ th {
 .bg-primary:focus-visible,
 .bg-danger:focus-visible {
   outline-color: var(--color-text);
+}
+
+/* ── PRESSED FEEDBACK ─────────────────────── */
+/* A restrained, consistent "pressed" response on every real control, so a click
+   registers immediately instead of only on hover. `filter` is used rather than a
+   transform on purpose: a transform would override the `-translate-y-1/2` used
+   by buttons centred with `top-1/2` (the search clear, the show-password eye),
+   making them jump on press. Colour-only, so nothing moves and no layout is
+   touched. Anchors — nav links, breadcrumbs, row links — keep their own
+   hover/active backgrounds and are deliberately left alone. */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  filter: brightness(0.94);
+}
+
+/* ── THEME FLIP ───────────────────────────── */
+/* The html/body background already eases across a theme change, but cards, the
+   sidebar and the top bar snapped, which made the toggle look half-finished.
+   ThemeContext adds `theme-transition` to <html> for the length of the change
+   only, so these extra transitions cost nothing during normal use. Scoped to
+   `no-preference` so the reduced-motion rules above keep the change instant. */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition:
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease,
+      fill 200ms ease,
+      stroke 200ms ease !important;
+  }
 }

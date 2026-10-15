@@ -261,7 +261,7 @@ export default function InvoiceLogosPage() {
   const showNoMatches = !loading && !loadError && logos.length > 0 && visible.length === 0;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 animate-fade-in">
       <input
         type="file"
         ref={fileInputRef}
@@ -586,13 +586,18 @@ export default function InvoiceLogosPage() {
       <BillLogoAssignModal
         logo={assignTarget}
         onClose={() => setAssignTarget(null)}
-        onApplied={(assigned) => {
-          /* The counts on every card come from one count query, so after an
-             assignment that changes which bills carry which logo, those numbers are
-             now stale. A silent refetch is the right response: the admin did not ask
-             for a reload, and a wrong count on a card they are about to act on would
-             be worse than a brief refresh. */
-          void load(true);
+        onApplied={async (assigned, partial) => {
+          /* Refresh FIRST, and await it: the count on every card comes from one
+             count query, and the assignment changed which bills carry which logo.
+             Closing the dialog before this resolved left the numbers stale for a
+             beat — the exact state a manual refresh was needed to clear. */
+          await load(true);
+          if (partial) {
+            /* Some bills could not be re-printed. The dialog keeps its failure
+               report on screen (we do not close it), and the totals above it are
+               now correct. */
+            return;
+          }
           if (assignTarget) {
             toast.success(
               assigned === 1

@@ -56,6 +56,15 @@ function AdminLayoutInner() {
 
   return (
     <div className="min-h-dvh-fallback bg-bg" style={{ minHeight: "100dvh" }}>
+      {/* Keyboard users can jump past the rail and top bar straight into the
+          page. Off-screen until focused, then it slides into view. */}
+      <a
+        href="#admin-content"
+        className="fixed left-4 top-4 z-[300] -translate-y-24 focus:translate-y-0 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+      >
+        Skip to content
+      </a>
+
       <Sidebar />
 
       <div
@@ -66,7 +75,7 @@ function AdminLayoutInner() {
 
         {/* `min-w-0` lets wide tables scroll inside the page instead of
             stretching the layout; padding shrinks on narrow windows. */}
-        <main className="p-4 sm:p-6 lg:p-8 min-w-0 flex-1">
+        <main id="admin-content" tabIndex={-1} className="p-4 sm:p-6 lg:p-8 min-w-0 flex-1 outline-none">
           <Outlet />
         </main>
       </div>

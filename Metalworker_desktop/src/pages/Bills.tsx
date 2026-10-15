@@ -544,8 +544,27 @@ export default function BillsPage() {
     }
 
     setLogoBusy(true);
+
+    /* The same full-screen state the bulk delete uses, driven by the real re-print
+       counts the server reports — never a timer. `total` starts at the selection
+       size and is corrected to `assigned` on the first callback: bills that already
+       carried the logo come back as `unchanged` and are never re-printed, so
+       counting them would park the bar short of the end. */
+    setBulk({
+      title: logoId ? "Assigning logo" : "Removing logo",
+      subtitle: `${ids.length} ${ids.length === 1 ? "bill" : "bills"} selected`,
+      progressLabel: "Re-printing",
+      progress: { done: 0, total: ids.length },
+    });
+
     try {
-      const result = await applyLogoToBills(ids, logoId);
+      const result = await applyLogoToBills(ids, logoId, (p) =>
+        setBulk((prev) =>
+          prev
+            ? { ...prev, progress: { done: p.reprinted, total: Math.max(p.assigned, 1) } }
+            : prev
+        )
+      );
       if (!result.ok) {
         toast.error({
           title: logoId ? "The logo could not be assigned" : "The logo could not be removed",
@@ -564,7 +583,10 @@ export default function BillsPage() {
         selection.clear();
       }
 
-      void load(true);
+      /* AWAITED, so the list has incorporated the new logo before the overlay comes
+         down. The old fire-and-forget `void load(true)` let the spinner clear first,
+         leaving the row reading as unchanged for a beat. */
+      await load(true);
 
       if (result.failures.length > 0) {
         toast.error({
@@ -596,6 +618,7 @@ export default function BillsPage() {
       });
     } finally {
       setLogoBusy(false);
+      setBulk(null);
     }
   }
 
@@ -1493,12 +1516,16 @@ export default function BillsPage() {
           setDetailId(null);
           setEditId(bill.id);
         }}
+        onChanged={() => void load(true)}
       />
 
       {/* Editing re-prints this bill's three documents from the saved values, so the
           list is reloaded afterwards: the amounts, the copy column and the
           download links all have to show the new version, and a PDF path that
-          changed under the row would otherwise be served from a stale link. */}
+          changed under the row would otherwise be served from a stale link.
+          `onChanged` covers the logo, which is written immediately and is NOT part
+          of "Save": closing the editor without saving still has to leave the row
+          showing the logo it now carries. */}
       {editId && (
         <BillEditModal
           billId={editId}
@@ -1506,6 +1533,7 @@ export default function BillsPage() {
           onSaved={() => {
             void load(true);
           }}
+          onChanged={() => void load(true)}
         />
       )}
 
