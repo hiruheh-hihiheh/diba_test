@@ -115,7 +115,7 @@ function readsAsEnglish(msg: string): boolean {
   if (/\b(select|insert|update|delete|from|where|relation|column|table)\b/i.test(msg)) {
     // Allow ordinary sentences that merely contain these words, but not ones
     // that look like a query echo.
-    if (/[{}()\[\]]/.test(msg) || /_/.test(msg)) return false;
+    if (/[{}()[\]]/.test(msg) || /_/.test(msg)) return false;
   }
   if (/\b[0-9a-f]{8}-[0-9a-f]{4}-/i.test(msg)) return false;
   return /^[A-Z]/.test(msg.trim());

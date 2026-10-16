@@ -13,9 +13,10 @@
 # genuinely not applicable to CI, the fix is to make it deterministic or to remove it
 # from this file on purpose — never to append a way to ignore its exit code.
 #
-# A `--frozen-lockfile` install is deliberately NOT used: neither app commits a
-# lockfile, so that flag would fail immediately. `npm install` is what the repo
-# actually uses locally.
+# Both apps commit a `package-lock.json`, so CI installs with `npm ci` and caches
+# on the lockfile. That pins the dependency tree CI builds to the reviewed tree
+# rather than whatever the registry resolves that day. The two lockfiles are in
+# sync with their `package.json` files (`npm ci --dry-run` succeeds in both).
 #
 # WHY THE THREE APPS ARE SEPARATE JOBS
 # MetalWorkerApp is the worker-facing app and is NOT built here. It has its own
@@ -56,13 +57,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: Metalworker_admin/package.json
+          cache-dependency-path: Metalworker_admin/package-lock.json
 
-      # `--no-audit --no-fund` only silences network chatter in the log. It does not
-      # change what is installed, and it does not mask an install failure: a failed
+      # `npm ci` installs the exact tree in `package-lock.json` (verified in sync with
+      # `package.json`), so CI cannot silently drift onto a newer dependency.
+      # `--no-audit --no-fund` only silences network chatter in the log; a failed
       # install still fails this step.
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # The Expo web export and `expo lint` read EXPO_PUBLIC_* values at build time.
       # These are placeholders: the anon key is a public, row-level-security-limited
@@ -122,10 +124,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: Metalworker_desktop/package.json
+          cache-dependency-path: Metalworker_desktop/package-lock.json
 
+      # `npm ci` installs the exact tree in `package-lock.json` (verified in sync with
+      # `package.json`), so CI cannot silently drift onto a newer dependency.
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # The desktop build reads its config at build time. All four names below are the
       # ones this app actually reads — VITE_SUPABASE_* in src/lib/supabase.ts and
@@ -154,11 +158,14 @@ jobs:
       # The project's `lint` script, and a hard gate: no `--quiet`, no
       # `--max-warnings`, no rule turned off for CI only.
       #
-      # THIS STEP CURRENTLY FAILS. `npx eslint .` reports 53 findings (49 errors,
-      # 4 warnings) across 25 files that predate this workflow — verified locally,
-      # not guessed at. The bulk are `react-hooks/set-state-in-effect` (15), which
-      # need a read/commit split rather than a config change, plus `no-explicit-any`
-      # (11) and `react-refresh/only-export-components` (11).
+      # THIS STEP CURRENTLY FAILS. `npx eslint .` reports 45 findings (42 errors,
+      # 3 warnings) across 26 files that predate this workflow — verified locally,
+      # not guessed at. The bulk are `react-hooks/set-state-in-effect` (20), which
+      # need a read/commit split rather than a config change, plus
+      # `react-refresh/only-export-components` (11), `no-explicit-any` (8) and
+      # `react-hooks/refs` (2). The mechanical findings (unused bindings,
+      # `prefer-const`, a needless `as any`, `preserve-caught-error`, one stale
+      # `eslint-disable`) were fixed in the app; the structural ones remain.
       #
       # Billing adds zero findings. The one it did introduce — an unused
       # `folder_items: _join` binding in `services/bills.ts`, used only to omit the

@@ -418,7 +418,8 @@ async function normaliseLogoImage(
     throw new Error(
       `That image is ${picked.width} x ${picked.height} and could not be resized in this browser` +
         ` (${err instanceof Error ? err.message : "unknown error"}). ` +
-        "A logo under 3000 x 3000 pixels can still be added directly."
+        "A logo under 3000 x 3000 pixels can still be added directly.",
+      { cause: err }
     );
   }
 }

@@ -316,7 +316,7 @@ export async function processJobImport(
       }
     }
     
-  } catch (err: any) {
+  } catch (err) {
     // Unexpected exception during processing
     const { error: failureUpdateError } = await supabase.from("job_imports").update({ 
       status: "failed",
@@ -326,7 +326,11 @@ export async function processJobImport(
     }).eq("id", importId);
 
     if (failureUpdateError) {
-      throw new Error(`Unexpected error: ${err.message}. (Additionally, updating import status failed: ${failureUpdateError.message})`);
+      const errMessage = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Unexpected error: ${errMessage}. (Additionally, updating import status failed: ${failureUpdateError.message})`,
+        { cause: err },
+      );
     }
 
     throw err; // Re-throw to UI

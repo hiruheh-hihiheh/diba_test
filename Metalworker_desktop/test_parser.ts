@@ -4,7 +4,7 @@ import { parseExcelFile, parseDate, normalizeHeader } from './src/services/jobIm
 
 // Mock File and FileReader for Node environment
 global.File = class File {
-  constructor(bits, name, options) {
+  constructor(bits, name) {
     this.bits = bits;
     this.name = name;
   }
@@ -91,7 +91,7 @@ async function runValidation() {
     const result = await parseExcelFile(file);
     
     // Reverse engineer the header that was picked
-    let headerRowIndex = 1; // Assuming we picked index 1
+    const headerRowIndex = 1; // Assuming we picked index 1
     const rawHeader = jsonWithEmpty[headerRowIndex];
     console.log("Detected Header Row Index:", headerRowIndex, "(Excel Row", headerRowIndex + 1 + ")");
     console.log("Detected Header Content:");
@@ -123,7 +123,7 @@ async function runValidation() {
     console.log("\n=== UNKNOWN JOB TYPES ===");
     for (const r of result.rows) {
       if (r.normalized.job_type === null) {
-        let rawJobType = r.raw["Labour (L) /With Material (BO)"] || r.raw["job_type"] || Object.values(r.raw)[1] || "undefined";
+        const rawJobType = r.raw["Labour (L) /With Material (BO)"] || r.raw["job_type"] || Object.values(r.raw)[1] || "undefined";
         // Actually we can print raw row
         console.log(`Row ${r.rowNumber} | Job No: ${r.normalized.job_no} | Raw Job Type: ${rawJobType} | Warnings: ${r.warnings.join('; ')}`);
       }

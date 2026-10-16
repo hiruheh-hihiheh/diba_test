@@ -359,10 +359,10 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
     let label = `${item.item_type} (${item.item_id.slice(0, 8)})`;
 
     if (item.item_type === "owner_stock") {
-      const fallback = labelMap.get(item.item_id) as any;
+      const fallback = labelMap.get(item.item_id);
       if (fallback) label = buildOwnerStockLabel({ source_of_metal: fallback }, item.item_id);
     } else if (item.item_type === "company_stock") {
-      const fallback = labelMap.get(item.item_id) as any;
+      const fallback = labelMap.get(item.item_id);
       if (fallback) label = buildCompanyStockLabel({ company_name: fallback }, item.item_id);
     } else if (item.item_type === "bill_group" || item.item_type === "drawing_group") {
       const name = labelMap.get(item.item_id);

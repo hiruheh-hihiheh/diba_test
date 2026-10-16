@@ -323,7 +323,7 @@ export default function JobImportPage() {
         : null
     );
 
-    let targetFolderId = "";
+    let targetFolderId: string;
     let createdFolderName: string | null = null;
 
     try {

@@ -91,7 +91,7 @@ export function parseDate(value: any): string | null {
   
   const yyyyMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (yyyyMatch) {
-    const [_, yStr, mStr, dStr] = yyyyMatch;
+    const [, yStr, mStr, dStr] = yyyyMatch;
     const y = parseInt(yStr, 10);
     const m = parseInt(mStr, 10);
     const d = parseInt(dStr, 10);
@@ -102,7 +102,7 @@ export function parseDate(value: any): string | null {
 
   const ddMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
   if (ddMatch) {
-    const [_, dStr, mStr, yStr] = ddMatch;
+    const [, dStr, mStr, yStr] = ddMatch;
     const y = parseInt(yStr, 10);
     const m = parseInt(mStr, 10);
     const d = parseInt(dStr, 10);
@@ -229,7 +229,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
         
         let bestSheet = null;
         let bestScore = -1;
-        let ignoredSheets: string[] = [];
+        const ignoredSheets: string[] = [];
         const sheetHeaderRowIndices: Record<string, number> = {};
 
         for (const sheetName of workbook.SheetNames) {

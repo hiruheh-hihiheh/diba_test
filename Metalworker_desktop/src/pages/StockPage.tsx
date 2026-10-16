@@ -236,7 +236,6 @@ export default function StockPage<T extends Row>({
     return rows.filter((r) =>
       config.searchKeys.some((k) => String(asCells(r)[k] ?? "").toLowerCase().includes(q))
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, config.searchKeys]);
 
   const pagination = usePagination(filtered.length, 25);
