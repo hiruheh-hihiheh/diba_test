@@ -10,6 +10,7 @@ import {
   Package,
   Building2,
   FileText,
+  FolderArchive,
   FilePlus2,
   Receipt,
   ImagePlus,
@@ -88,6 +89,7 @@ const navSections: NavSection[] = [
     title: "DOCUMENTS",
     items: [
       { label: "Bills", icon: <Receipt size={20} />, path: "/bills" },
+      { label: "Company Bills", icon: <FolderArchive size={20} />, path: "/company-bills" },
       // How a bill gets made, next to the list of bills that exist. Both entry modes —
       // blank, and blank with the Invoice Business Profile preloaded — and the copy flow
       // are one screen reached three ways, so there is one entry rather than three.

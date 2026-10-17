@@ -17,6 +17,7 @@ import CompanyStockPage from "./pages/CompanyStock";
 import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
 import BillsPage from "./pages/Bills";
+import CompanyBillsPage from "./pages/CompanyBills";
 import CreateBillPage from "./pages/CreateBill";
 import InvoiceLogosPage from "./pages/InvoiceLogos";
 import InvoiceSettingsPage from "./pages/InvoiceSettings";
@@ -62,6 +63,7 @@ export default function App() {
 
                   {/* Phase 4 — Documents */}
                   <Route path="/bills" element={<BillsPage />} />
+                   <Route path="/company-bills" element={<CompanyBillsPage />} />
                   {/* Creating a bill. Declared BEFORE the logos route because both are
                       nested under /bills, and an entry screen with no query string is the
                       state the page boots into - the mode it is in lives in the query, so
