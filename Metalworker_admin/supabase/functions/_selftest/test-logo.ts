@@ -363,11 +363,17 @@ console.log("\nno-logo renders carry nothing image-shaped");
    footer all moved to the reference's coordinates. Those are intended changes to
    no-logo output too, so the earlier digests no longer describe the renderer. The
    digests below are the bytes as they stood immediately after that change. Their
-   purpose is unchanged — catch the NEXT unintended byte. */
+   purpose is unchanged — catch the NEXT unintended byte.
+
+   RE-PINNED AGAIN, DELIBERATELY, for the recipient-panel refinement: the billed-to
+   block is now enclosed in a rectangle (it used to carry only a foot rule), and
+   the lone separator above "Bank Details" is gone. Both are intended layout
+   changes that necessarily move every no-logo invoice, so the digests below are
+   the render as it stands after them. */
 const NO_LOGO_DIGESTS: Record<CopyKind, string> = {
-  original: "22e249c4f5d7ee98b6eb2abd0ffc1afa6ba896d2d1d2460c01ffa94c659e6671",
-  duplicate: "0f2c3e378842683dad66ec2c2c66b4d981a24f27ea4f2cf683c5619bd5e94be2",
-  triplicate: "2c78256ecbc08b70ed037b7c946ea66c9eba1a831dc24f517d0b20c3592e194b",
+  original: "75d23e49ac438293838714084f1a30f1ab549baaa80244621df7d7c8f77a84b4",
+  duplicate: "1b0ba07281a76b191b2ee29f9432c82843a2626edb6ef4f4b3f822a8a6879dd7",
+  triplicate: "0de309533dddbf4f50d4dee1a616fef478f85043329d100b75a5f8d1fc1cb4bb",
 };
 
 console.log("\nno-logo renders are byte-identical to the pinned documents");

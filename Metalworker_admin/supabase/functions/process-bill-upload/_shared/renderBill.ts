@@ -189,6 +189,12 @@ const RCPT_TEXT_X = 35.01;
 const RCPT_BASE = 17.12; // parties top -> first baseline
 const RCPT_PITCH = 13.0;
 const PARTIES_TO_TABLE = 131.04; // parties top -> table header top
+/* Recipient panel growth. `RCPT_BOTTOM_PAD` is the clearance the reference panel
+ * left under its own last (8th) baseline, and `RCPT_TO_TABLE_GAP` the space that
+ * panel always left above the item table; both are reused for a taller panel so
+ * a long block keeps exactly the padding an ordinary one has. */
+const RCPT_BOTTOM_PAD = 11.4;
+const RCPT_TO_TABLE_GAP = PARTIES_TO_TABLE - PARTIES_TO_RCPT_RULE;
 
 /* Closing band. Page-anchored, and drawn only on the page the table finished
  * on. `BAND_TOP` is the totals band's top in the no-logo case; a logo adds
@@ -211,7 +217,6 @@ const TOTALS_RATE0 = 25.54; // band top -> row-1 rate bbox top
 /** Divider between the grand-total row's rules, and the box they bound. */
 const TOTALS_GRAND_FROM = 4;
 const TOTALS_GRAND_TO = 5;
-const BANK_RULE_Y = 535.65;
 const BANK_X = 29.37;
 const BANK_R = 243.37;
 const BANK_HEAD_X = 31.12;
@@ -846,12 +851,12 @@ function referenceGrid(bill: BillCopy): RefGridRow[] {
 function renderParties(sheet: Sheet, bill: BillCopy): void {
   /* `sheet.page` is read at each draw site, never captured here: reserve() can
      call newPage(), which replaces the page this function would be drawing on. */
-  const top = sheet.y;
+  let top = sheet.y;
 
   const rows = referenceGrid(bill);
   /* The grid is a FIXED 7-slot template, like the workbook it comes from: a bill
      with fewer reference rows leaves the extra slots blank rather than shortening
-     the box, which is what keeps the transport, the recipient rule and the table
+     the box, which is what keeps the transport, the recipient panel and the table
      below at their reference positions. A bill with more rows grows the box by
      exactly the extra rows and pushes everything below it down with it. */
   const usedSlots = rows.length + 1; // + the PLACE OF SUPPLY row
@@ -859,9 +864,62 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   const extra = (slots - PARTIES_GRID_SLOTS) * PARTIES_ROW_H;
   const gridH = slots * PARTIES_ROW_H;
 
+  /* ---- left column: who is being billed ----------------------------------
+   *
+   * Measured BEFORE a single line is drawn, because the number of baselines this
+   * block takes is what decides how tall its panel has to be and therefore where
+   * the table below it starts. The company name and each ADDRESS LINE stay
+   * separate entries, so the invoice shows the address with the line breaks the
+   * workbook gave it, and a line too wide for the panel wraps instead of being
+   * dropped. */
+  const leftLines: LeftLine[] = [];
+  if (bill.recipientHeading) leftLines.push({ text: bill.recipientHeading, bold: true, size: 9 });
+  if (bill.partyName) leftLines.push({ text: bill.partyName, bold: true, size: 9.6 });
+  for (const line of bill.partyAddress) {
+    if (line.trim() !== "") leftLines.push({ text: line, bold: false, size: 9 });
+  }
+  if (bill.partyGstNo) {
+    leftLines.push({ text: `Party's GST No. ${bill.partyGstNo}`, bold: true, size: 9 });
+  }
+  if (bill.state || bill.stateCode !== null) {
+    const bits: string[] = [];
+    if (bill.state) bits.push(`State: ${bill.state}`);
+    if (bill.stateCode !== null && bill.stateCode !== undefined) bits.push(`State Code: ${bill.stateCode}`);
+    leftLines.push({ text: bits.join("      "), bold: false, size: 9 });
+  }
+
+  /* Horizontal room inside the border: the left inset the text always had, and
+     the same again on the right, so a wrapped line clears the border rather than
+     crossing it. */
+  const rcptInnerW = RCPT_R - RCPT_TEXT_X - (RCPT_TEXT_X - RCPT_X);
+  const rcptVisual: LeftLine[] = [];
+  for (const line of leftLines) {
+    for (const visual of wrapText(line.text, rcptInnerW, line.bold ? "bold" : "regular", line.size)) {
+      rcptVisual.push({ text: visual, bold: line.bold, size: line.size });
+    }
+  }
+
+  /* Panel height. The reference foot is right for anything up to that panel's own
+   * 8-line capacity, so an ordinary invoice's panel - and everything under it -
+   * is exactly where it always was; every line past that adds one pitch plus the
+   * same bottom pad, so the panel GROWS instead of hiding the line that ran past
+   * it. Heading, name, address, GST number, state and state code all draw, always. */
+  const rcptH = Math.max(
+    PARTIES_TO_RCPT_RULE,
+    RCPT_BASE + Math.max(rcptVisual.length - 1, 0) * RCPT_PITCH + RCPT_BOTTOM_PAD
+  );
+  /* The table moves down with the panel, which simply leaves it fewer rows on the
+     first page. If the panel grew so far that even the table's header would fall
+     off this sheet, the block takes a fresh page first and the rows below flow
+     through the normal page-break path: nothing is squeezed, shrunk or clipped. */
+  let tableTop = top + Math.max(PARTIES_TO_TABLE, rcptH + RCPT_TO_TABLE_GAP) + extra;
+  if (tableTop + HEADER_H > CONTENT_BOTTOM && top > MARGIN_TOP) {
+    sheet.newPage();
+    top = sheet.y;
+    tableTop = top + Math.max(PARTIES_TO_TABLE, rcptH + RCPT_TO_TABLE_GAP) + extra;
+  }
   const transportTop = top + PARTIES_TO_TRANSPORT + extra;
-  const rcptRuleY = top + PARTIES_TO_RCPT_RULE + extra;
-  const tableTop = top + PARTIES_TO_TABLE + extra;
+  const rcptFoot = top + rcptH + extra;
 
   /* ---- right column: the document reference grid ------------------------- */
   sheet.page.rect(PARTIES_GRID_X, top, PARTIES_GRID_W, gridH, { lineWidth: 1.5, stroke: true });
@@ -925,31 +983,11 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
     }
   }
 
-  /* ---- left column: who is being billed ----------------------------------
-   *
-   * The company name and each ADDRESS LINE stay separate entries, so the invoice
-   * shows the address with the line breaks the workbook gave it; a long line
-   * still wraps. Only the FOOT of the block is ruled — the reference has no box
-   * around the recipient, just a rule under it.
-   */
-  const leftLines: LeftLine[] = [];
-  if (bill.recipientHeading) leftLines.push({ text: bill.recipientHeading, bold: true, size: 9 });
-  if (bill.partyName) leftLines.push({ text: bill.partyName, bold: true, size: 9.6 });
-  for (const line of bill.partyAddress) {
-    if (line.trim() !== "") leftLines.push({ text: line, bold: false, size: 9 });
-  }
-  if (bill.partyGstNo) {
-    leftLines.push({ text: `Party's GST No. ${bill.partyGstNo}`, bold: true, size: 9 });
-  }
-  if (bill.state || bill.stateCode !== null) {
-    const bits: string[] = [];
-    if (bill.state) bits.push(`State: ${bill.state}`);
-    if (bill.stateCode !== null && bill.stateCode !== undefined) bits.push(`State Code: ${bill.stateCode}`);
-    leftLines.push({ text: bits.join("      "), bold: false, size: 9 });
-  }
-
-  sheet.page.line(RCPT_X, rcptRuleY, RCPT_R, rcptRuleY, 0.75);
-  leftLines.forEach((line, i) => {
+  /* Every measured baseline draws - the panel above was already grown to hold
+     them - and the box keeps the top padding, side padding and bottom pad the
+     reference had, so an ordinary invoice's panel is exactly where it was. */
+  sheet.page.rect(RCPT_X, top, RCPT_R - RCPT_X, rcptFoot - top, { lineWidth: 0.75, stroke: true });
+  rcptVisual.forEach((line, i) => {
     sheet.page.text(line.text, RCPT_TEXT_X, top + RCPT_BASE + i * RCPT_PITCH, {
       font: line.bold ? "bold" : "regular",
       size: line.size,
@@ -1118,6 +1156,12 @@ function renderTable(sheet: Sheet, bill: BillCopy): void {
   const bandTop = BAND_TOP + sheet.headerGrowth;
   const limit = bandTop - TABLE_TQ_STRIP;
 
+  /* A long recipient address can push the table's start so far down that not even
+     its first row fits above the anchored band on this sheet. Starting the table
+     on a fresh page is the same page-break path the rows below already use;
+     without this the header would be left as a strip with no rows under it. */
+  if (sheet.y + HEADER_H + itemHeight(items[0]) > limit) sheet.newPage();
+
   drawTableHeader(sheet.page, geo, sheet.y);
   sheet.y += HEADER_H;
 
@@ -1281,11 +1325,10 @@ function renderColumns(sheet: Sheet, bill: BillCopy): void {
      box's foot (or the table's, when there are no words). */
   let bottom = sheet.y;
 
-  /* ---- bank details, top left -------------------------------------------- */
-  if (bill.bankLines.length > 0 || notes.length > 0) {
-    const ruleY = BANK_RULE_Y + growth;
-    page.line(BANK_X, ruleY, BANK_R, ruleY, 0.5);
-  }
+  /* ---- bank details, top left --------------------------------------------
+   * Nothing is ruled above the heading: the boxed "Bank Details" head is the top
+   * of this section, so no separator is drawn over it. The rule under the terms
+   * below is a separate draw and is untouched. */
   if (bill.bankLines.length > 0) {
     page.text("Bank Details", BANK_HEAD_X, refBaseline(BANK_HEAD_TOP + growth, T.columnHead, true), {
       font: "bold",
