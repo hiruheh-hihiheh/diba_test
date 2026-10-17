@@ -35,10 +35,12 @@ placeholders, so a real GSTIN, IFSC, account number, phone number or e-mail
 cannot be committed unnoticed. The strings are deflated, so scanning the raw file
 would pass vacuously — that is why it reads the container rather than the cells.
 
-`npm run bills:selftest` runs twelve suites in order:
-`test-copies`, `test-parse`, `test-pdf`, `test-per-bill`, `test-billing-folders`,
-`test-edit`, `test-jobkind`, `test-structure`, `test-folder-summary-export`,
-`test-audit-log`, `test-fixture-hygiene` and `audit`.
+`npm run bills:selftest` runs seventeen suites in order:
+`test-copies`, `test-parse`, `test-pdf`, `test-logo`, `test-business-profile`,
+`test-per-bill`, `test-billing-folders`, `test-edit`, `test-jobkind`,
+`test-structure`, `test-folder-summary-export`, `test-bulk-zip`, `test-audit-log`,
+`test-bill-job-connections`, `test-bill-creator`, `test-fixture-hygiene` and
+`audit`.
 
 ## What each one proves
 
@@ -50,6 +52,7 @@ would pass vacuously — that is why it reads the container rather than the cell
 | `test-edit.ts` | Does bill editing behave? Is the submitted patch merged and validated, are derived figures recomputed, and does a failure restore the previous state? |
 | `test-billing-folders.ts` | Does billing-folder aggregation behave? Are counts and sums taken over the same DISTINCT bill set, can a copy never be double-counted, and are the missing-total semantics (migration 0010) exact? |
 | `test-folder-summary-export.ts` | Do the exported figures match the screen? Every exported string is compared against the value the folder UI renders, and the desktop client is compared against the admin client for parity. |
+| `test-bulk-zip.ts` | Does "Download ZIP" pack exactly the right documents? Builds REAL archives with `fflate`, reads them back with `unzipSync`, and checks: the requested copies only, one member per document with the stored bytes, collisions broken (sheet name, then bill id), legacy/missing copies named as skips rather than omitted, a cross-page selection preserved, bounded concurrency, partial success when a download fails, a valid ZIP with the copy in every member name, and byte-for-byte parity with the desktop copy of the same module. The Android share sheet itself is asserted only as far as its inputs (name, bytes, MIME) — it needs a device. |
 | `test-audit-log.ts` | Does every `admin_audit_log` insert use columns that actually exist, and does no policy grant clients a read surface? Guards the audit trail against silent write failures. |
 | `test-fixture-hygiene.ts` | Can real business data reach a committed workbook? Inflates every member of all three workbooks and requires every identifier-shaped value to be an approved placeholder, then proves its own rules still fire against synthetic samples. |
 | `test-pdf.ts` | Is the output **three** documents named `<base>_original/_duplicate/_triplicate.pdf`, with a valid header, trailer, `/Pages /Count`, a `startxref` that lands on the xref, every xref offset resolving to its own object, and one content stream per page? Does every page belong to an invoice, are the pages in worksheet order, and did every bill keep its invoice number, total and quantity? A bill may legitimately span two pages, so pages are attributed through the footer rather than assumed. |

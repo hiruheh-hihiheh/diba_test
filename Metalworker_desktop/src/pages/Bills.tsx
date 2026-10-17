@@ -15,6 +15,7 @@ import {
   CalendarDays,
   ChevronDown,
   Copy,
+  FileArchive,
   FilePlus2,
   FileSpreadsheet,
   FileText,
@@ -38,6 +39,9 @@ import {
   fetchBillIds,
   fetchBillLabels,
   deleteBill,
+  fetchBillDocumentsByIds,
+  downloadBillCopyBytes,
+  saveBulkZipDownload,
   fetchBillJobFacets,
   fetchBillUploads,
   fetchBills,
@@ -48,7 +52,13 @@ import {
   type BillJobGroup,
   formatQuantity,
 } from "../services/bills";
-import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillUpload, type BulkProgress } from "../types/bill";
+import {
+  BULK_ZIP_LIMITS,
+  buildBulkZip,
+  planBulkZip,
+  summarizeBulkZipShortfall,
+} from "../services/bulkBillZip";
+import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillCopy, type BillUpload, type BulkProgress } from "../types/bill";
 import BillingFolderSheet from "../components/bills/BillingFolderSheet";
 import BulkOperationOverlay, {
   type BulkOperation,
@@ -71,6 +81,7 @@ import { BillDetailModal } from "../components/bills/BillDetailModal";
 import BillEditModal from "../components/bills/BillEditModal";
 import { BillUploadPanel } from "../components/bills/BillUploadPanel";
 import { BillFolderPickerModal } from "../components/bills/BillFolderPickerModal";
+import BulkDownloadZipModal from "../components/bills/BulkDownloadZipModal";
 import { applyLogoToBills, fetchLogosByIds } from "../services/invoiceLogos";
 import { logoReprintFailureReason, type BillLogoRef } from "../types/invoiceLogo";
 import LogoPickerModal from "../components/bills/LogoPickerModal";
@@ -184,6 +195,8 @@ export default function BillsPage() {
   const [logoNames, setLogoNames] = useState<Map<string, BillLogoRef>>(() => new Map());
   /** The bulk-assign picker. Opening it is the whole of "Assign Logo". */
   const [assignLogoOpen, setAssignLogoOpen] = useState(false);
+  /** The bulk "Download ZIP" copy picker. */
+  const [zipOpen, setZipOpen] = useState(false);
 
   /* ── Bill ↔ Job connections ────────────────────────── */
   /** Link counts for the bills currently on screen, by bill id. */
@@ -618,6 +631,125 @@ export default function BillsPage() {
       });
     } finally {
       setLogoBusy(false);
+      setBulk(null);
+    }
+  }
+
+  /**
+   * Download the selected bills' stored PDFs as one ZIP.
+   *
+   * Three phases, in this order, and the order is the point:
+   *
+   *   1. RESOLVE the rows for the whole selection. The selection is a set of ids
+   *      that can span every page and filter, so the rows cannot be read off the
+   *      current page — a per-page download would quietly take 20 of the 412 the
+   *      bar says are ticked.
+   *   2. PLAN the archive and check the limit BEFORE downloading anything. If the
+   *      selection is larger than one archive may hold, the user is told the real
+   *      numbers and nothing is fetched, rather than being handed a silently
+   *      truncated ZIP.
+   *   3. BUILD with bounded concurrency, then report what really went in.
+   *
+   * Nothing here writes: the PDFs are already stored, and a download that changed
+   * them would not be a download.
+   */
+  async function runBulkZip(copies: BillCopy[]) {
+    if (selection.count === 0 || busy || copies.length === 0) return;
+    setZipOpen(false);
+
+    const ids = [...selection.selected];
+
+    try {
+      const documents = await fetchBillDocumentsByIds(ids);
+      if (documents.length === 0) {
+        toast.error({
+          title: "Nothing to download",
+          description:
+            "The selected bills could not be found. Refresh the list and try again.",
+        });
+        return;
+      }
+
+      const plan = planBulkZip(documents, copies);
+
+      if (plan.entries.length === 0) {
+        /* Every requested copy is unavailable. Say WHY for the first one instead
+           of a bare "nothing to download", so the user can see it is a legacy bill
+           or a missing copy rather than a failure. */
+        toast.error({
+          title: "No PDFs to download",
+          description: plan.skipped[0]?.detail ?? "The chosen copies are not available.",
+        });
+        return;
+      }
+
+      if (plan.entries.length > BULK_ZIP_LIMITS.maxDocuments) {
+        toast.error({
+          title: "Too many PDFs for one ZIP",
+          description: `${plan.entries.length} documents were selected, but one archive holds at most ${BULK_ZIP_LIMITS.maxDocuments}. Narrow the selection and try again.`,
+          /* Kept until dismissed: a limit the user has to read twice is worse than
+             one that waits for them. */
+          duration: 0,
+        });
+        return;
+      }
+
+      setBulk({
+        title: "Preparing the ZIP",
+        subtitle: `${plan.entries.length} ${plan.entries.length === 1 ? "PDF" : "PDFs"} · ${plan.archiveName}`,
+        progressLabel: "Downloading",
+        progress: { done: 0, total: plan.entries.length },
+      });
+
+      const outcome = await buildBulkZip(plan, {
+        download: downloadBillCopyBytes,
+        onProgress: (p) =>
+          setBulk((prev) =>
+            prev ? { ...prev, progress: { done: p.done, total: p.total } } : prev
+          ),
+      });
+
+      const missing = outcome.skipped.length + outcome.failed.length;
+
+      if (outcome.included.length === 0) {
+        toast.error({
+          title: "The ZIP could not be built",
+          description:
+            outcome.failed[0]?.error ??
+            "None of the selected documents could be downloaded.",
+          duration: 0,
+        });
+        return;
+      }
+
+      saveBulkZipDownload(outcome.bytes, outcome.archiveName);
+
+      const shortfall = summarizeBulkZipShortfall(outcome);
+      if (missing === 0 || shortfall === null) {
+        toast.success({
+          title: `Downloaded ${outcome.included.length} ${
+            outcome.included.length === 1 ? "PDF" : "PDFs"
+          }`,
+          description: outcome.archiveName,
+        });
+        return;
+      }
+
+      toast.warning({
+        title: `${outcome.included.length} of ${outcome.included.length + missing} PDFs were zipped`,
+        description: `${shortfall.examples.join("; ")}${
+          shortfall.count > shortfall.examples.length
+            ? `; and ${shortfall.count - shortfall.examples.length} more`
+            : ""
+        }.`,
+        duration: 0,
+      });
+    } catch (err) {
+      toast.error({
+        title: "The ZIP could not be built",
+        description: err instanceof Error ? err.message : "Please try again.",
+      });
+    } finally {
       setBulk(null);
     }
   }
@@ -1427,6 +1559,15 @@ export default function BillsPage() {
         </button>
         <button
           type="button"
+          onClick={() => setZipOpen(true)}
+          disabled={busy || logoBusy}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <FileArchive size={13} />
+          Download ZIP
+        </button>
+        <button
+          type="button"
           onClick={handleBulkDelete}
           disabled={busy}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1453,6 +1594,16 @@ export default function BillsPage() {
           selection.count === 1 ? "bill" : "bills"
         }`}
         subtitle="All three print copies of each bill are re-printed with the logo."
+      />
+
+      {/* Bulk ZIP. The same selection the bar describes, so the count here and the
+          count there can never disagree. */}
+      <BulkDownloadZipModal
+        open={zipOpen}
+        onClose={() => setZipOpen(false)}
+        count={selection.count}
+        allMatching={allMatchingSelected}
+        onConfirm={(copies) => void runBulkZip(copies)}
       />
 
       {/* ── Dialogs ─────────────────────────────────────── */}

@@ -33,6 +33,9 @@ import {
   fetchBillLabels,
   fetchBillJobFacets,
   fetchBillUploads,
+  fetchBillDocumentsByIds,
+  downloadBillCopyBytes,
+  saveBulkZipDownload,
   fetchBills,
   formatBillDate,
   formatMoney,
@@ -41,7 +44,13 @@ import {
   type BillJobFacet,
   type BillJobGroup,
 } from "../services/bills";
-import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BulkProgress } from "../types/bill";
+import {
+  BULK_ZIP_LIMITS,
+  buildBulkZip,
+  planBulkZip,
+  summarizeBulkZipShortfall,
+} from "../services/bulkBillZip";
+import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillCopy, type BulkProgress } from "../types/bill";
 import { logoReprintFailureReason, type BillLogoRef } from "../types/invoiceLogo";
 import {
   applyLogoToBills,
@@ -56,6 +65,7 @@ import { BillEditScreen } from "../components/bills/BillEditScreen";
 import { BillFolderPickerModal } from "../components/bills/BillFolderPickerModal";
 import { BillUploadPanel } from "../components/bills/BillUploadPanel";
 import { LogoPickerModal } from "../components/bills/LogoPickerModal";
+import { BulkDownloadZipModal } from "../components/bills/BulkDownloadZipModal";
 import { LogoThumbnail } from "../components/bills/LogoThumbnail";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -251,6 +261,8 @@ const [createOpen, setCreateOpen] = useState(false);
   const [logoNames, setLogoNames] = useState<Map<string, BillLogoRef>>(() => new Map());
   /** The bulk-assign picker. Opening it is the whole of "Assign Logo". */
   const [assignLogoOpen, setAssignLogoOpen] = useState(false);
+  /** The bulk "Download ZIP" copy picker. */
+  const [zipOpen, setZipOpen] = useState(false);
   /** The confirmation before removing a logo from the whole selection. */
   const [bulkLogoConfirm, setBulkLogoConfirm] = useState(false);
 
@@ -475,6 +487,118 @@ const [createOpen, setCreateOpen] = useState(false);
       );
     } finally {
       setLogoBusy(false);
+      setBulk(null);
+    }
+  }
+
+  /**
+   * Download the selected bills' stored PDFs as one ZIP.
+   *
+   * Three phases, in this order, and the order is the point:
+   *
+   *   1. RESOLVE the rows for the whole selection. `selected` is a set of ids that
+   *      can span every page and filter, so the rows cannot be read off the current
+   *      page — a per-page download would quietly take 20 of the 412 the bar says
+   *      are ticked.
+   *   2. PLAN the archive and check the limit BEFORE downloading anything. If the
+   *      selection is larger than one archive may hold, the admin is told the real
+   *      numbers and nothing is fetched, rather than being handed a silently
+   *      truncated ZIP.
+   *   3. BUILD with bounded concurrency, then report what really went in.
+   *
+   * Nothing here writes: the PDFs are already stored, and a download that changed
+   * them would not be a download. The archive is then handed to the system share
+   * sheet, because a sandboxed mobile app has no browser download to fall back on.
+   */
+  async function runBulkZip(copies: BillCopy[]) {
+    const ids = [...selected];
+    if (ids.length === 0 || busy || copies.length === 0) return;
+    setZipOpen(false);
+
+    try {
+      const documents = await fetchBillDocumentsByIds(ids);
+      if (documents.length === 0) {
+        notify(
+          "Nothing to download",
+          "The selected bills could not be found. Refresh the list and try again."
+        );
+        return;
+      }
+
+      const plan = planBulkZip(documents, copies);
+
+      if (plan.entries.length === 0) {
+        /* Every requested copy is unavailable. Say WHY for the first one instead
+           of a bare "nothing to download", so the admin can see it is a legacy bill
+           or a missing copy rather than a failure. */
+        notify("No PDFs to download", plan.skipped[0]?.detail ?? "The chosen copies are not available.");
+        return;
+      }
+
+      if (plan.entries.length > BULK_ZIP_LIMITS.maxDocuments) {
+        notify(
+          "Too many PDFs for one ZIP",
+          `${plan.entries.length} documents were selected, but one archive holds at most ${BULK_ZIP_LIMITS.maxDocuments}. Narrow the selection and try again.`
+        );
+        return;
+      }
+
+      setBulk({
+        title: "Preparing the ZIP",
+        subtitle: `${plan.entries.length} ${plan.entries.length === 1 ? "PDF" : "PDFs"} · ${plan.archiveName}`,
+        progressLabel: "Downloading",
+        progress: { done: 0, total: plan.entries.length },
+      });
+
+      const outcome = await buildBulkZip(plan, {
+        download: downloadBillCopyBytes,
+        onProgress: (p) =>
+          setBulk((prev) =>
+            prev ? { ...prev, progress: { done: p.done, total: p.total } } : prev
+          ),
+      });
+
+      const missing = outcome.skipped.length + outcome.failed.length;
+
+      if (outcome.included.length === 0) {
+        notify(
+          "The ZIP could not be built",
+          outcome.failed[0]?.error ?? "None of the selected documents could be downloaded."
+        );
+        return;
+      }
+
+      /* The share sheet is opened with the overlay already down, so the system
+         dialog is not painted over by ours and the admin can cancel it. */
+      setBulk(null);
+
+      await saveBulkZipDownload(outcome.bytes, outcome.archiveName);
+
+      const shortfall = summarizeBulkZipShortfall(outcome);
+      if (missing === 0 || shortfall === null) {
+        notify(
+          `Downloaded ${outcome.included.length} ${
+            outcome.included.length === 1 ? "PDF" : "PDFs"
+          }`,
+          outcome.archiveName
+        );
+        return;
+      }
+
+      notify(
+        `${outcome.included.length} of ${outcome.included.length + missing} PDFs were zipped`,
+        `${shortfall.examples.join("; ")}${
+          shortfall.count > shortfall.examples.length
+            ? `; and ${shortfall.count - shortfall.examples.length} more`
+            : ""
+        }.`
+      );
+    } catch (err) {
+      notify(
+        "The ZIP could not be built",
+        err instanceof Error ? err.message : "Please try again."
+      );
+    } finally {
       setBulk(null);
     }
   }
@@ -1312,6 +1436,25 @@ const [createOpen, setCreateOpen] = useState(false);
                 >
                   <Text style={styles.actionTextSecondary}>Remove Logo</Text>
                 </Pressable>
+                {/* Download, not delete: the PDFs are already stored, so this only
+                    reads them and packs them. The count of documents it will pull is
+                    shown on the next screen rather than guessed here. */}
+                <Pressable
+                  onPress={() => setZipOpen(true)}
+                  disabled={busy || logoBusy}
+                  style={({ pressed }) => [
+                    styles.bulkBtn,
+                    pressed && styles.pressed,
+                    (busy || logoBusy) && styles.disabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy || logoBusy }}
+                  accessibilityLabel={`Download a ZIP of the ${selected.length} selected ${
+                    selected.length === 1 ? "bill" : "bills"
+                  }`}
+                >
+                  <Text style={styles.actionText}>Download ZIP</Text>
+                </Pressable>
                 <Pressable
                   onPress={requestBulkDelete}
                   disabled={busy}
@@ -1371,6 +1514,16 @@ const [createOpen, setCreateOpen] = useState(false);
           selected.length === 1 ? "bill" : "bills"
         }`}
         subtitle="All three print copies of each bill are re-printed with the logo."
+      />
+
+      {/* Bulk ZIP. The same selection the bar describes, so the count here and the
+          count there can never disagree. */}
+      <BulkDownloadZipModal
+        visible={zipOpen}
+        onClose={() => setZipOpen(false)}
+        count={selected.length}
+        allMatching={allMatchingSelected}
+        onConfirm={(copies) => void runBulkZip(copies)}
       />
 
       {/* Removing is the same operation as assigning and needs the same re-prints;

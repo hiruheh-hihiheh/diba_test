@@ -24,6 +24,15 @@ import { Platform } from "react-native";
 import { toFiniteNumber, formatJobKind } from "./billFormat";
 import { supabase } from "./supabase";
 import { logAudit } from "./auditLog";
+// Moved to a pure module so `bulkBillZip.ts` (and the bulk-ZIP self-test) can use
+// them without loading Supabase or React Native. Re-exported below.
+import {
+  billCopyPath,
+  billDocumentFilename,
+  isLegacyBill,
+  type BillDocumentSource,
+} from "./billDocument";
+import type { BulkZipBill } from "./bulkBillZip";
 import type {
   Bill,
   BillBankDetails,
@@ -649,66 +658,14 @@ async function readErrorBody(
    PDFs
    ────────────────────────────────────────────── */
 
-/** The three storage paths, i.e. everything needed to resolve a bill's documents. */
-export type BillDocumentSource = Pick<
-  Bill,
-  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path"
-> & {
-  invoice_no?: string | null;
-  sheet_name?: string | null;
-  base_name?: string | null;
-};
-
-/** The storage path of one copy, or null when that copy was never produced. */
-export function billCopyPath(source: BillDocumentSource, copy: BillCopy): string | null {
-  switch (copy) {
-    case "original":
-      return source.original_pdf_path;
-    case "duplicate":
-      return source.duplicate_pdf_path;
-    case "triplicate":
-      return source.triplicate_pdf_path;
-  }
-}
-
-/**
- * True when this row has no per-bill document of its own.
- *
- * Only rows written before migration 0007 are in this state, and for them the
- * only document that exists is the workbook-level one containing every invoice in
- * the upload. That is NOT silently substituted: the copy buttons stay disabled and
- * say why, because handing back a 20-page PDF in response to "open invoice 301" is
- * the bug being fixed, not a degraded version of it.
+/*
+ * `BillDocumentSource`, `billCopyPath`, `isLegacyBill` and `billDocumentFilename`
+ * now live in `./billDocument` (pure, so the bulk-ZIP builder and its self-test can
+ * use them). They are re-exported here so their public home is unchanged and no
+ * call site had to move.
  */
-export function isLegacyBill(source: BillDocumentSource): boolean {
-  return !source.original_pdf_path && !source.duplicate_pdf_path && !source.triplicate_pdf_path;
-}
-
-/**
- * The download filename for one copy, derived from the BILL, not the workbook.
- *
- * `FIX/301/2026-27` -> `FIX_301_2026-27_original.pdf`, so a user who downloads
- * three bills has three sensibly named files rather than three files all called
- * after the source workbook. Mirrors `safeBillToken` in the edge function's
- * `_shared/parseBill.ts`, which names the stored object; they must agree or the
- * saved name would not match the stored one.
- */
-export function billDocumentFilename(source: BillDocumentSource, copy: BillCopy): string {
-  const raw = (source.invoice_no ?? "").trim() || (source.sheet_name ?? "").trim() || "bill";
-  const token =
-    raw
-      // Slashes become "_" so they cannot create a nested object path, while a
-      // hyphen that is part of the number is kept.
-      .replace(/[\\/]+/g, "_")
-      // Hyphen is deliberately preserved: it is safe in a storage object name and
-      // in a download filename, and `SEW_301_2026-27` reads far better than
-      // `SEW_301_2026_27`. Must match `safeBillToken` in the edge function.
-      .replace(/[<>:"/\\|?*\s]/g, "_")
-      .replace(/_{2,}/g, "_")
-      .replace(/^[_.]+|[_.]+$/g, "")
-      .slice(0, 60) || "bill";
-  return `${token}_${copy}.pdf`;
-}
+export { billCopyPath, billDocumentFilename, isLegacyBill };
+export type { BillDocumentSource };
 
 /** Signed URLs are short-lived; two minutes is enough to open or print. */
 const SIGNED_URL_TTL_SECONDS = 120;
@@ -900,6 +857,126 @@ export async function printBillPdf(
     document.querySelectorAll("iframe[data-bill-print]").forEach((el) => el.remove());
     if (objectUrl) URL.revokeObjectURL(objectUrl);
   }
+}
+
+/* ──────────────────────────────────────────────
+   Bulk ZIP
+   ────────────────────────────────────────────── */
+
+/**
+ * The columns the bulk-ZIP builder needs from a `bills` row, and no more.
+ *
+ * `invoice_no` and `sheet_name` name the entries; the three paths are what is
+ * downloaded. Nothing financial is read, so a bulk download cannot see or change a
+ * figure, and nothing about storage is written.
+ */
+const BULK_ZIP_COLUMNS =
+  "id, invoice_no, sheet_name, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path";
+
+/**
+ * Load the document rows for a set of ids, in the order the ids were given.
+ *
+ * The selection may span every page and every filter, so the rows cannot be read
+ * off the current page; they are fetched by id instead. Chunked at 500 for the same
+ * reason `fetchBillIds` chunks: a PostgREST `in()` is a URL, and a few thousand ids
+ * will not fit in one.
+ *
+ * An id that no longer exists is dropped, not fabricated: a bill deleted in another
+ * session between selecting and downloading must not become a phantom entry.
+ */
+export async function fetchBillDocumentsByIds(ids: readonly string[]): Promise<BulkZipBill[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+
+  const byId = new Map<string, BulkZipBill>();
+  const CHUNK = 500;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const { data, error } = await supabase
+      .from(BILLS)
+      .select(BULK_ZIP_COLUMNS)
+      .in("id", unique.slice(i, i + CHUNK));
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as unknown as BulkZipBill[]) byId.set(row.id, row);
+  }
+
+  return unique.map((id) => byId.get(id)).filter((row): row is BulkZipBill => Boolean(row));
+}
+
+/**
+ * Fetch ONE stored document's bytes.
+ *
+ * The bucket is private, so a short-lived signed URL is minted the same way the
+ * single-bill download mints one, and the bytes are read with Expo's `fetch` —
+ * `supabase.storage.download` is not reliable under React Native, which is why the
+ * rest of this module already prefers a signed URL plus a real fetch.
+ *
+ * One URL per document, minted just before it is used, so a long archive never
+ * holds an expired URL.
+ */
+export async function downloadBillCopyBytes(path: string): Promise<Uint8Array<ArrayBuffer>> {
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+  if (error) throw new Error(error.message);
+  if (!data?.signedUrl) throw new Error("Could not read that document.");
+
+  const { fetch: expoFetch } = await import("expo/fetch");
+  const res = await expoFetch(data.signedUrl);
+  if (!res.ok) throw new Error(`The document could not be downloaded (HTTP ${res.status}).`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/**
+ * Hand a finished archive to the user.
+ *
+ * Android and iOS have no "downloads folder" a sandboxed app may write to, so the
+ * archive is written into the app cache and offered through the system share sheet,
+ * from which the user saves it to Drive, Files, email, or anywhere else. On web it
+ * is an ordinary browser download.
+ *
+ * The cache file is deliberately NOT deleted after sharing. Every app that received
+ * it has already been given a copy, but the sheet can stay open after the promise
+ * resolves on some Android versions, and deleting the file underneath it would
+ * leave the user with a share that cannot be completed. The name is reused on the
+ * next run, so nothing accumulates except one file per distinct archive name, and
+ * the OS is free to clear the cache directory at any time.
+ */
+export async function saveBulkZipDownload(
+  bytes: Uint8Array<ArrayBuffer>,
+  filename: string
+): Promise<void> {
+  if (Platform.OS === "web") {
+    const blob = new Blob([bytes], { type: "application/zip" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return;
+  }
+
+  const { Directory, File, Paths } = await import("expo-file-system");
+  const dir = new Directory(Paths.cache, "bills");
+  if (!dir.exists) dir.create({ intermediates: true });
+
+  const target = new File(dir, filename);
+  target.create({ overwrite: true, intermediates: true });
+  target.write(bytes);
+
+  const { isAvailableAsync, shareAsync } = await import("expo-sharing");
+  if (!(await isAvailableAsync())) {
+    throw new Error("No app on this device can save the ZIP file.");
+  }
+  await shareAsync(target.uri, {
+    mimeType: "application/zip",
+    UTI: "public.zip-archive",
+    dialogTitle: filename,
+  });
 }
 /* ──────────────────────────────────────────────
    Editing
