@@ -1,10 +1,91 @@
 // src/components/dashboard/QuickActions.tsx
-import React from "react";
-import { Pressable, Text, View } from "react-native";
+//
+// Shortcuts for the tasks an admin starts from the dashboard. The four primary
+// actions are one-thumb sized tiles; the remaining destinations stay available
+// as a compact, horizontally scrollable tools strip rather than a wall of
+// equally-weighted cards. Destinations and handlers are unchanged.
+import React, { useMemo } from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { createDashboardStyles } from "./styles";
-import { SectionHeader } from "./SectionHeader";
+import { Icon, type IconName } from "../ui/Icon";
+import { IconButton } from "../ui/IconButton";
+import { PressableScale } from "../ui/PressableScale";
+import { Section } from "../ui/Section";
+
+function ActionTile({
+  label,
+  icon,
+  onPress,
+  accent = false,
+}: {
+  label: string;
+  icon: IconName;
+  onPress: () => void;
+  accent?: boolean;
+}) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
+  return (
+    <PressableScale
+      onPress={onPress}
+      accessibilityLabel={label}
+      style={styles.tileWrap}
+    >
+      <View style={[styles.tile, accent && styles.tileAccent]}>
+        <View
+          style={[
+            styles.tileIcon,
+            {
+              backgroundColor: accent
+                ? "rgba(0,0,0,0.10)"
+                : theme.colors.primarySoft,
+            },
+          ]}
+        >
+          <Icon
+            name={icon}
+            size={18}
+            color={accent ? theme.colors.primaryButtonText : theme.colors.primary}
+          />
+        </View>
+        <Text
+          style={[
+            styles.tileLabel,
+            { color: accent ? theme.colors.primaryButtonText : theme.colors.text },
+          ]}
+          numberOfLines={2}
+        >
+          {label}
+        </Text>
+      </View>
+    </PressableScale>
+  );
+}
+
+function ToolChip({
+  label,
+  icon,
+  onPress,
+}: {
+  label: string;
+  icon: IconName;
+  onPress: () => void;
+}) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
+  return (
+    <PressableScale onPress={onPress} accessibilityLabel={label}>
+      <View style={styles.chip}>
+        <Icon name={icon} size={15} color={theme.colors.textSecondary} />
+        <Text style={styles.chipLabel}>{label}</Text>
+      </View>
+    </PressableScale>
+  );
+}
 
 export function QuickActions({
   onNavigate,
@@ -16,261 +97,151 @@ export function QuickActions({
   onRefresh: () => void;
 }) {
   const { theme } = useTheme();
-  const styles = React.useMemo(() => createDashboardStyles(theme), [theme]);
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <>
-      <SectionHeader title="Quick Actions" />
+    <View>
+      <Section
+        title="Quick actions"
+        subtitle="Start the usual tasks"
+        right={
+          <IconButton
+            icon="refresh"
+            accessibilityLabel="Refresh all dashboard data"
+            onPress={onRefresh}
+            variant="soft"
+            size={34}
+            iconSize={16}
+          />
+        }
+      />
 
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
+      <View style={styles.grid}>
+        <ActionTile
+          label="Create bill"
+          icon="plus"
+          accent
+          onPress={() => onNavigate("/bill-create")}
+        />
+        <ActionTile
+          label="Dispatches"
+          icon="truck"
           onPress={() => onNavigate("/dispatch")}
-          accessibilityRole="button"
-          accessibilityLabel="View dispatches"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.primary + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>📦</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>View Dispatches</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={onAddUser}
-          accessibilityRole="button"
-          accessibilityLabel="Add user"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.success + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>+</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Add User</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={onRefresh}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh all data"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#F59E0B" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>↻</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Refresh All</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.divider} />
-
-      <SectionHeader title="Jobs" subtitle="Manage work orders" />
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/jobs-labour")}
-          accessibilityRole="button"
-          accessibilityLabel="Labour jobs"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#F59E0B" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🧰</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Labour Jobs</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/jobs-with-material")}
-          accessibilityRole="button"
-          accessibilityLabel="Jobs with material"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#10B981" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🔩</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>With Material (BO)</Text>
-        </Pressable>
-      </View>
-
-      <SectionHeader title="Stock" subtitle="Manage stock records" />
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/stock-owner")}
-          accessibilityRole="button"
-          accessibilityLabel="Stock by owner"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.primary + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🏠</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Stock by Owner</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/stock-company")}
-          accessibilityRole="button"
-          accessibilityLabel="Stock by company"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#8B5CF6" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🏭</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Stock by Company</Text>
-        </Pressable>
-      </View>
-
-      <SectionHeader title="Documents" subtitle="Bills & drawings" />
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/bills")}
-          accessibilityRole="button"
-          accessibilityLabel="Bills"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.primary + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🧾</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Bills</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/group-bills")}
-          accessibilityRole="button"
-          accessibilityLabel="Bill groups"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#F59E0B" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>📄</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Group Bill</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/group-drawings")}
-          accessibilityRole="button"
-          accessibilityLabel="Drawing groups"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.success + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>✏️</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Group Drawing</Text>
-        </Pressable>
-      </View>
-
-      {/* The reusable letterheads invoices print, and the company details they
-          print alongside them. Both sit with the documents rather than on their
-          own: a logo is only ever used through an invoice - on its own it is an
-          asset, and the "used on N bills" count on that screen only makes sense
-          next to the bills - and the business profile exists purely so an invoice
-          has those details without every workbook carrying them. */}
-      <SectionHeader title="Invoice branding" subtitle="Reusable logos & company details" />
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/invoice-logos")}
-          accessibilityRole="button"
-          accessibilityLabel="Logo Library"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: "#8B5CF6" + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>🖼️</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Logo Library</Text>
-        </Pressable>
-
-        {/* The company-level defaults: name, address, bank block, terms, footer
-            wording. Separate from the Logo Library on purpose - one is an image
-            asset, the other is text - but they answer the same question, "what
-            does our invoice letterhead say?", so they sit together. */}
-        <Pressable
-          style={styles.quickActionCard}
-          onPress={() => onNavigate("/invoice-settings")}
-          accessibilityRole="button"
-          accessibilityLabel="Invoice business profile"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.primary + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>📄</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Invoice Profile</Text>
-        </Pressable>
-      </View>
-
-      <SectionHeader title="Folders" subtitle="Organize items" />
-      <View style={styles.quickActionsRow}>
-        <Pressable
-          style={styles.quickActionCard}
+        />
+        <ActionTile label="Add user" icon="users" onPress={onAddUser} />
+        <ActionTile
+          label="Folders"
+          icon="folder"
           onPress={() => onNavigate("/folders")}
-          accessibilityRole="button"
-          accessibilityLabel="Manage folders"
-        >
-          <View
-            style={[
-              styles.quickActionIcon,
-              { backgroundColor: theme.colors.primary + "20" },
-            ]}
-          >
-            <Text style={styles.quickActionIconText}>📁</Text>
-          </View>
-          <Text style={styles.quickActionLabel}>Manage Folders</Text>
-        </Pressable>
+        />
       </View>
-    </>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRow}
+        style={styles.chipScroll}
+      >
+        <ToolChip
+          label="Labour jobs"
+          icon="hammer"
+          onPress={() => onNavigate("/jobs-labour")}
+        />
+        <ToolChip
+          label="Material jobs"
+          icon="box"
+          onPress={() => onNavigate("/jobs-with-material")}
+        />
+        <ToolChip
+          label="Owner stock"
+          icon="users"
+          onPress={() => onNavigate("/stock-owner")}
+        />
+        <ToolChip
+          label="Company stock"
+          icon="building"
+          onPress={() => onNavigate("/stock-company")}
+        />
+        <ToolChip
+          label="Bill groups"
+          icon="layers"
+          onPress={() => onNavigate("/group-bills")}
+        />
+        <ToolChip
+          label="Drawing groups"
+          icon="image"
+          onPress={() => onNavigate("/group-drawings")}
+        />
+        <ToolChip
+          label="Invoice profile"
+          icon="tag"
+          onPress={() => onNavigate("/invoice-settings")}
+        />
+        <ToolChip
+          label="Invoice logos"
+          icon="image"
+          onPress={() => onNavigate("/invoice-logos")}
+        />
+      </ScrollView>
+    </View>
   );
 }
+
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    grid: {
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+    },
+    tileWrap: { flex: 1 },
+    tile: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingVertical: 12,
+      paddingHorizontal: 10,
+      minHeight: 88,
+      justifyContent: "space-between",
+      gap: 10,
+      ...theme.elevation.card,
+    },
+    tileAccent: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
+    },
+    tileIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    tileLabel: {
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+      letterSpacing: -0.1,
+    },
+    chipScroll: { marginTop: theme.spacing.sm + 2, marginHorizontal: -theme.spacing.md },
+    chipRow: {
+      gap: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 2,
+    },
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    chipLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+    },
+  });

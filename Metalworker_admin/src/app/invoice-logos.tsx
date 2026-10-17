@@ -24,7 +24,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -43,6 +43,8 @@ import {
 import type { InvoiceLogo } from "../types/invoiceLogo";
 import { notify } from "../utils/notify";
 import { BillLogoAssignModal } from "../components/bills/BillLogoAssignModal";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
 import { LogoThumbnail } from "../components/bills/LogoThumbnail";
 import { useLogoImageUrls } from "../components/bills/useLogoImageUrls";
 import { Button } from "../components/ui/Button";
@@ -243,19 +245,18 @@ export default function InvoiceLogosScreen() {
   return (
     <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button">
-          <Text style={styles.backBtnText}>← Back</Text>
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle}>Logo Library</Text>
-          <Text style={styles.headerSubtitle}>
-            {logos.length === 0
-              ? "Reusable letterheads for your invoices"
+        <ScreenHeader
+          eyebrow="Invoices"
+          title="Logo library"
+          subtitle={
+            logos.length === 0
+              ? "Reusable letterheads for your invoices."
               : `${logos.length} ${logos.length === 1 ? "logo" : "logos"} · ${totalAssignments} ${
                   totalAssignments === 1 ? "bill" : "bills"
-                } carrying one`}
-          </Text>
-        </View>
+                } carrying one.`
+          }
+          style={styles.screenHeader}
+        />
       </View>
 
       <ScrollView
@@ -295,20 +296,19 @@ export default function InvoiceLogosScreen() {
         ) : null}
 
         {showEmpty ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>No invoice logos have been added yet.</Text>
-            <Text style={styles.muted}>
-              Add a logo once and it can be used on any number of invoices. It prints in the
-              header, above the invoice number.
-            </Text>
-          </View>
+          <EmptyState
+            icon="image"
+            title="No invoice logos yet"
+            message="Add a logo once and use it on any number of invoices. It prints in the header, above the invoice number."
+          />
         ) : null}
 
         {showNoMatches ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>No logo matches that search</Text>
-            <Text style={styles.muted}>Try a different name, or add a new logo.</Text>
-          </View>
+          <EmptyState
+            icon="search"
+            title="No logo matches that search"
+            message="Try a different name, or add a new logo."
+          />
         ) : null}
 
         <View style={styles.grid}>
@@ -489,19 +489,17 @@ const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.colors.background },
     header: {
-      paddingHorizontal: theme.spacing.lg,
-      paddingTop: theme.spacing.md,
-      paddingBottom: theme.spacing.md,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
-      gap: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.xs,
     },
-    backBtn: { alignSelf: "flex-start", paddingVertical: 4 },
-    backBtnText: { color: theme.colors.primary, fontSize: theme.textSizes.sm, fontWeight: "700" },
-    headerInfo: { gap: 2 },
-    headerTitle: { color: theme.colors.text, fontSize: theme.textSizes.xl, fontWeight: "800" },
-    headerSubtitle: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm },
-    content: { padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xl },
+    screenHeader: { marginBottom: 0 },
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      gap: theme.spacing.md,
+      paddingBottom: theme.spacing.xl,
+    },
     center: { paddingVertical: theme.spacing.xl, alignItems: "center", gap: theme.spacing.sm },
     centerBackdrop: {
       flex: 1,

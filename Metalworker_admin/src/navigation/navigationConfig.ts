@@ -5,8 +5,12 @@
 // drawer, and which routes get a back button instead of the hamburger.
 //
 // No business logic lives here — it only describes navigation and maps a
-// pathname to the chrome that should be shown for it.
+// pathname to the chrome that should be shown for it. Icons are references to
+// the shared line-icon set, so every destination reads the same in the tab
+// bar, the sheets and the drawer.
 import { router, type Href } from "expo-router";
+
+import type { IconName } from "../components/ui/Icon";
 
 export type NavItemAction = "route" | "theme" | "signout";
 
@@ -14,7 +18,9 @@ export interface NavItem {
   /** Stable key used as React key and for active-state checks. */
   key: string;
   label: string;
-  icon: string;
+  icon: IconName;
+  /** Optional one-line explanation shown in sheets and the drawer. */
+  description?: string;
   /** Route to push when the item is a plain route item. */
   route?: string;
   /** `route` or a special action (theme toggle / sign out). */
@@ -32,7 +38,7 @@ export type BottomTabKey = "home" | "jobs" | "bills" | "folders" | "more";
 export interface BottomTab {
   key: BottomTabKey;
   label: string;
-  icon: string;
+  icon: IconName;
   /** Route this tab navigates to directly (when not opening a sheet). */
   route?: string;
   /** Which sheet this tab opens (sheet tabs have no route). */
@@ -49,35 +55,35 @@ export const BOTTOM_TABS: BottomTab[] = [
   {
     key: "home",
     label: "Home",
-    icon: "🏠",
+    icon: "home",
     route: "/dashboard",
     activeRoutes: ["/dashboard"],
   },
   {
     key: "jobs",
     label: "Jobs",
-    icon: "💼",
+    icon: "briefcase",
     sheet: "jobs",
     activeRoutes: ["/jobs-labour", "/jobs-with-material"],
   },
   {
     key: "bills",
     label: "Bills",
-    icon: "🧾",
+    icon: "receipt",
     route: "/bills",
     activeRoutes: ["/bills", "/bill-create"],
   },
   {
     key: "folders",
     label: "Folders",
-    icon: "📁",
+    icon: "folder",
     route: "/folders",
     activeRoutes: ["/folders", "/folder-detail"],
   },
   {
     key: "more",
     label: "More",
-    icon: "⋯",
+    icon: "dots",
     sheet: "more",
     activeRoutes: [],
   },
@@ -89,8 +95,20 @@ export const JOBS_SHEET_SECTIONS: NavSection[] = [
     key: "jobs",
     title: "Jobs",
     items: [
-      { key: "jobs-labour", label: "Labour Jobs", icon: "🧰", route: "/jobs-labour" },
-      { key: "jobs-with-material", label: "With Material Jobs", icon: "🔩", route: "/jobs-with-material" },
+      {
+        key: "jobs-labour",
+        label: "Labour Jobs",
+        icon: "hammer",
+        description: "Time-based work orders",
+        route: "/jobs-labour",
+      },
+      {
+        key: "jobs-with-material",
+        label: "With Material Jobs",
+        icon: "box",
+        description: "Work orders that include materials",
+        route: "/jobs-with-material",
+      },
     ],
   },
 ];
@@ -100,32 +118,76 @@ export const MORE_SHEET_SECTIONS: NavSection[] = [
   {
     key: "operations",
     title: "Operations",
-    items: [{ key: "dispatch", label: "Dispatches", icon: "🚚", route: "/dispatch" }],
+    items: [
+      {
+        key: "dispatch",
+        label: "Dispatches",
+        icon: "truck",
+        description: "Review and approve submissions",
+        route: "/dispatch",
+      },
+    ],
   },
   {
     key: "inventory",
     title: "Inventory",
     items: [
-      { key: "stock-owner", label: "Stock by Owner", icon: "📦", route: "/stock-owner" },
-      { key: "stock-company", label: "Stock by Company", icon: "🏢", route: "/stock-company" },
+      {
+        key: "stock-owner",
+        label: "Stock by Owner",
+        icon: "box",
+        description: "Owner-owned material",
+        route: "/stock-owner",
+      },
+      {
+        key: "stock-company",
+        label: "Stock by Company",
+        icon: "building",
+        description: "Company-owned material",
+        route: "/stock-company",
+      },
     ],
   },
   {
     key: "documents",
     title: "Documents",
     items: [
-      { key: "group-bills", label: "Group Bills", icon: "🧾", route: "/group-bills" },
-      { key: "group-drawings", label: "Group Drawings", icon: "✏️", route: "/group-drawings" },
-      { key: "invoice-settings", label: "Invoice Profile", icon: "🏷️", route: "/invoice-settings" },
-      { key: "invoice-logos", label: "Invoice Logos", icon: "🖼️", route: "/invoice-logos" },
+      {
+        key: "group-bills",
+        label: "Group Bills",
+        icon: "layers",
+        description: "Bundles of invoices",
+        route: "/group-bills",
+      },
+      {
+        key: "group-drawings",
+        label: "Group Drawings",
+        icon: "image",
+        description: "Bundles of drawings",
+        route: "/group-drawings",
+      },
+      {
+        key: "invoice-settings",
+        label: "Invoice Profile",
+        icon: "tag",
+        description: "Letterhead business details",
+        route: "/invoice-settings",
+      },
+      {
+        key: "invoice-logos",
+        label: "Invoice Logos",
+        icon: "image",
+        description: "Reusable letterheads",
+        route: "/invoice-logos",
+      },
     ],
   },
   {
     key: "settings",
     title: "Settings",
     items: [
-      { key: "theme", label: "Switch Theme", icon: "🌓", action: "theme" },
-      { key: "signout", label: "Sign Out", icon: "🚪", action: "signout" },
+      { key: "theme", label: "Switch Theme", icon: "moon", action: "theme" },
+      { key: "signout", label: "Sign Out", icon: "logout", action: "signout" },
     ],
   },
 ];
@@ -135,52 +197,92 @@ export const DRAWER_SECTIONS: NavSection[] = [
   {
     key: "top",
     title: "",
-    items: [{ key: "dashboard", label: "Dashboard", icon: "🏠", route: "/dashboard" }],
+    items: [
+      { key: "dashboard", label: "Dashboard", icon: "home", route: "/dashboard" },
+    ],
   },
   {
     key: "operations",
     title: "Operations",
-    items: [{ key: "dispatch", label: "Dispatches", icon: "🚚", route: "/dispatch" }],
+    items: [
+      {
+        key: "dispatch",
+        label: "Dispatches",
+        icon: "truck",
+        description: "Review and approve submissions",
+        route: "/dispatch",
+      },
+    ],
   },
   {
     key: "jobs",
     title: "Jobs",
     items: [
-      { key: "jobs-labour", label: "Labour Jobs", icon: "🧰", route: "/jobs-labour" },
-      { key: "jobs-with-material", label: "With Material Jobs", icon: "🔩", route: "/jobs-with-material" },
+      {
+        key: "jobs-labour",
+        label: "Labour Jobs",
+        icon: "hammer",
+        route: "/jobs-labour",
+      },
+      {
+        key: "jobs-with-material",
+        label: "With Material Jobs",
+        icon: "box",
+        route: "/jobs-with-material",
+      },
     ],
   },
   {
     key: "inventory",
     title: "Inventory",
     items: [
-      { key: "stock-owner", label: "Stock by Owner", icon: "📦", route: "/stock-owner" },
-      { key: "stock-company", label: "Stock by Company", icon: "🏢", route: "/stock-company" },
+      { key: "stock-owner", label: "Stock by Owner", icon: "box", route: "/stock-owner" },
+      {
+        key: "stock-company",
+        label: "Stock by Company",
+        icon: "building",
+        route: "/stock-company",
+      },
     ],
   },
   {
     key: "documents",
     title: "Documents",
     items: [
-      { key: "bills", label: "Bills", icon: "🧾", route: "/bills" },
-      { key: "bill-create", label: "Create Bill", icon: "➕", route: "/bill-create" },
-      { key: "group-bills", label: "Group Bills", icon: "🧾", route: "/group-bills" },
-      { key: "group-drawings", label: "Group Drawings", icon: "✏️", route: "/group-drawings" },
-      { key: "invoice-settings", label: "Invoice Profile", icon: "🏷️", route: "/invoice-settings" },
-      { key: "invoice-logos", label: "Invoice Logos", icon: "🖼️", route: "/invoice-logos" },
+      { key: "bills", label: "Bills", icon: "receipt", route: "/bills" },
+      { key: "bill-create", label: "Create Bill", icon: "plus", route: "/bill-create" },
+      { key: "group-bills", label: "Group Bills", icon: "layers", route: "/group-bills" },
+      {
+        key: "group-drawings",
+        label: "Group Drawings",
+        icon: "image",
+        route: "/group-drawings",
+      },
+      {
+        key: "invoice-settings",
+        label: "Invoice Profile",
+        icon: "tag",
+        route: "/invoice-settings",
+      },
+      {
+        key: "invoice-logos",
+        label: "Invoice Logos",
+        icon: "image",
+        route: "/invoice-logos",
+      },
     ],
   },
   {
     key: "organization",
     title: "Organization",
-    items: [{ key: "folders", label: "Folders", icon: "📁", route: "/folders" }],
+    items: [{ key: "folders", label: "Folders", icon: "folder", route: "/folders" }],
   },
   {
     key: "settings",
     title: "Settings",
     items: [
-      { key: "theme", label: "Switch Theme", icon: "🌓", action: "theme" },
-      { key: "signout", label: "Sign Out", icon: "🚪", action: "signout" },
+      { key: "theme", label: "Switch Theme", icon: "moon", action: "theme" },
+      { key: "signout", label: "Sign Out", icon: "logout", action: "signout" },
     ],
   },
 ];
@@ -248,7 +350,7 @@ export function activeTabForPath(pathname: string): BottomTabKey | null {
  * Central navigation entry point for the shell. Routes live as plain strings
  * here; the typed-routes union is incomplete (`/bill-create`, `/invoice-settings`
  * are missing from the generated types even though the routes exist), so we
- * run `npx expo customize tsconfig.json`-style casts by going through `Href`.
+ * cast through `Href`.
  */
 export function navigateTo(route: string) {
   router.push(route as Href);

@@ -1,20 +1,24 @@
 // src/components/shell/BottomNavigation.tsx
 //
 // Fixed bottom bar with the five high-frequency destinations (Home, Jobs,
-// Bills, Folders, More). It sits in the normal layout flow below the content
-// area, so screen content is never hidden behind it. The active tab's pill
-// springs in; Jobs and More open sheets instead of navigating.
-import React, { memo, useEffect, useMemo, useRef } from "react";
+// Bills, Folders, More). It sits in normal layout flow below the content area,
+// so screen content is never hidden behind it.
+//
+// The active destination lifts into a copper-tinted pill; Jobs and More open
+// sheets and keep the tab lit while their sheet is open.
+import React, { memo, useEffect, useMemo, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { useReducedMotion } from "../../hooks/useReducedMotion";
 import {
   BOTTOM_TABS,
   type BottomTab,
   type BottomTabKey,
 } from "../../navigation/navigationConfig";
+import { Icon } from "../ui/Icon";
 
 interface BottomNavigationProps {
   activeTab: BottomTabKey | null;
@@ -65,56 +69,56 @@ const TabButton = memo(function TabButton({
   onPress: () => void;
 }) {
   const styles = useMemo(() => createStyles(theme), [theme]);
-  // 1 = resting, 0.94 = lightly compressed while pressed or springing in.
-  const anim = useRef(new Animated.Value(1)).current;
+  const reduced = useReducedMotion();
+  const [lift] = useState(() => new Animated.Value(active ? 1 : 0));
 
   useEffect(() => {
-    Animated.spring(anim, {
-      toValue: active ? 1.12 : 1,
+    if (reduced) {
+      lift.setValue(active ? 1 : 0);
+      return;
+    }
+    Animated.spring(lift, {
+      toValue: active ? 1 : 0,
       useNativeDriver: true,
-      friction: 6,
-      tension: 90,
+      friction: 8,
+      tension: 160,
     }).start();
-  }, [active, anim]);
+  }, [active, lift, reduced]);
+
+  const iconScale = lift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const iconLift = lift.interpolate({ inputRange: [0, 1], outputRange: [0, -1] });
+  const color = active ? theme.colors.primary : theme.colors.textMuted;
 
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
+      accessibilityRole="tab"
       accessibilityLabel={tab.label}
       accessibilityState={{ selected: active }}
-      style={({ pressed }) => [
-        styles.tab,
-        pressed && styles.tabPressed,
-      ]}
+      style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
     >
       <Animated.View
         style={[
-          styles.pill,
-          active && { backgroundColor: theme.colors.primaryMuted },
-          { transform: [{ scale: anim }] },
+          styles.iconPill,
+          { backgroundColor: active ? theme.colors.primarySoft : "transparent" },
         ]}
       >
-        <Text
-          style={[
-            styles.icon,
-            { color: active ? theme.colors.primary : theme.colors.textMuted },
-          ]}
-        >
-          {tab.icon}
-        </Text>
-        <Text
-          style={[
-            styles.label,
-            {
-              color: active ? theme.colors.primary : theme.colors.textMuted,
-              fontWeight: active ? "700" : "500",
-            },
-          ]}
-        >
-          {tab.label}
-        </Text>
+        <Animated.View style={{ transform: [{ scale: iconScale }, { translateY: iconLift }] }}>
+          <Icon name={tab.icon} size={21} color={color} strokeWidth={active ? 2 : 1.7} />
+        </Animated.View>
       </Animated.View>
+      <Text
+        numberOfLines={1}
+        style={[
+          styles.label,
+          {
+            color,
+            fontWeight: active ? "700" : "500",
+          },
+        ]}
+      >
+        {tab.label}
+      </Text>
     </Pressable>
   );
 });
@@ -131,25 +135,21 @@ const createStyles = (theme: AppTheme) =>
       flex: 1,
       alignItems: "center",
       justifyContent: "center",
-      paddingVertical: 6,
+      paddingTop: 2,
+      paddingBottom: 2,
+      minHeight: 50,
+      gap: 2,
     },
-    tabPressed: {
-      opacity: 0.7,
-    },
-    pill: {
-      minWidth: 64,
+    tabPressed: { opacity: 0.65 },
+    iconPill: {
+      width: 50,
+      height: 27,
+      borderRadius: 14,
       alignItems: "center",
       justifyContent: "center",
-      paddingHorizontal: theme.spacing.sm,
-      paddingVertical: 4,
-      borderRadius: theme.radius.xl,
-      gap: 1,
-    },
-    icon: {
-      fontSize: 18,
-      lineHeight: 22,
     },
     label: {
-      fontSize: theme.textSizes.caption,
+      fontSize: 10,
+      letterSpacing: 0.1,
     },
   });

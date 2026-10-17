@@ -15,6 +15,7 @@ import {
   spacing,
   radius,
   textSizes,
+  typography,
   motion,
   elevation,
   type AppTheme,
@@ -81,8 +82,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       spacing,
       radius,
       textSizes,
+      typography,
       motion,
       elevation,
+      isDark: themeMode === "dark",
     }),
     [themeMode]
   );

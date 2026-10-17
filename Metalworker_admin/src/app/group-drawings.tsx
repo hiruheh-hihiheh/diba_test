@@ -3,14 +3,12 @@
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
@@ -28,6 +26,12 @@ import {
 import type { DrawingGroup, DrawingGroupInput } from "../types/drawingGroup";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Icon } from "../components/ui/Icon";
+import { IconButton } from "../components/ui/IconButton";
+import { PressableScale } from "../components/ui/PressableScale";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
+import { SkeletonCard } from "../components/ui/Skeleton";
 import { DrawingGroupForm } from "../components/documents/DrawingGroupForm";
 import type { GroupPhoto } from "../components/documents/GroupPhotoUploader";
 import { GroupPhotoPreviewModal } from "../components/documents/GroupPhotoPreviewModal";
@@ -182,10 +186,13 @@ export default function GroupDrawingsScreen() {
 
   if (authChecking) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
+      <View
+        style={[
+          styles.screen,
+          { alignItems: "center", justifyContent: "center" },
+        ]}
+      >
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }
@@ -194,95 +201,130 @@ export default function GroupDrawingsScreen() {
     <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
         }
       >
-        {/* Count caption + new group */}
-        <View style={styles.headerRow}>
-          <Text style={styles.countCaption}>
-            {groups.length === 1 ? "1 group" : `${groups.length} groups`}
-          </Text>
-          <Button
-            title="+ Create Drawing Group"
-            size="sm"
-            onPress={() => {
-              setEditingItem(null);
-              setEditingPhotos([]);
-              setShowForm(true);
-            }}
-          />
-        </View>
+        <ScreenHeader
+          eyebrow="Documents"
+          title="Drawing Groups"
+          subtitle={`${groups.length} ${
+            groups.length === 1 ? "group" : "groups"
+          } · Photos stay grouped by date`}
+          right={
+            <Button
+              title="New"
+              icon="plus"
+              size="sm"
+              onPress={() => {
+                setEditingItem(null);
+                setEditingPhotos([]);
+                setShowForm(true);
+              }}
+            />
+          }
+        />
 
-        <View style={styles.spacer} />
         {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
+          <View style={styles.skeletons}>
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
           </View>
         ) : groups.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>✏️</Text>
-            <Text style={styles.emptyTitle}>No Drawing Groups</Text>
-            <Text style={styles.emptyText}>
-              Create your first drawing group above.
-            </Text>
-          </View>
+          <EmptyState
+            icon="image"
+            title="No drawing groups yet"
+            message="Create a group to keep drawing photos together by date."
+            action={
+              <Button
+                title="Create drawing group"
+                icon="plus"
+                onPress={() => {
+                  setEditingItem(null);
+                  setEditingPhotos([]);
+                  setShowForm(true);
+                }}
+              />
+            }
+          />
         ) : (
-          groups.map((item) => (
-            <View key={item.id} style={styles.groupCard}>
-              <View style={styles.groupCardHeader}>
-                <View style={styles.groupIconWrap}>
-                  <Text style={styles.groupIcon}>✏️</Text>
-                </View>
-                <View style={styles.groupInfo}>
-                  <Text style={styles.groupName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.groupDate}>
-                    {new Date(item.group_date).toLocaleDateString([], {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    })}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.groupActions}>
-                <Pressable
+          <View style={styles.list}>
+            {groups.map((item) => (
+              <View key={item.id} style={styles.card}>
+                <PressableScale
                   onPress={() => setViewingItem(item)}
-                  style={styles.actionBtnSecondary}
-                  accessibilityRole="button"
-                  accessibilityLabel={`View ${item.name}`}
+                  accessibilityLabel={`Open ${item.name}`}
                 >
-                  <Text style={styles.actionTextSecondary}>View</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => handleEdit(item)}
-                  style={styles.actionBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Edit ${item.name}`}
-                >
-                  <Text style={styles.actionText}>Edit</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setDeleteTarget(item)}
-                  style={styles.actionBtnDanger}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete ${item.name}`}
-                >
-                  <Text style={styles.actionTextDanger}>Delete</Text>
-                </Pressable>
+                  <View style={styles.cardTop}>
+                    <View style={styles.iconWrap}>
+                      <Icon name="image" size={20} color={theme.colors.primary} />
+                    </View>
+                    <View style={styles.info}>
+                      <Text style={styles.name} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text style={styles.date}>
+                        {new Date(item.group_date).toLocaleDateString([], {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </Text>
+                      <Text style={styles.hint}>Tap to open the drawing set</Text>
+                    </View>
+                    <Icon
+                      name="chevronRight"
+                      size={16}
+                      color={theme.colors.textMuted}
+                    />
+                  </View>
+                </PressableScale>
+
+                <View style={styles.cardFooter}>
+                  <Button
+                    title="View photos"
+                    icon="eye"
+                    size="sm"
+                    variant="secondary"
+                    onPress={() => setViewingItem(item)}
+                  />
+                  <View style={styles.actions}>
+                    <IconButton
+                      icon="pencil"
+                      accessibilityLabel={`Edit ${item.name}`}
+                      onPress={() => handleEdit(item)}
+                      variant="soft"
+                      size={38}
+                      iconSize={16}
+                    />
+                    <IconButton
+                      icon="trash"
+                      accessibilityLabel={`Delete ${item.name}`}
+                      onPress={() => setDeleteTarget(item)}
+                      variant="soft"
+                      size={38}
+                      iconSize={16}
+                      color={theme.colors.danger}
+                    />
+                  </View>
+                </View>
               </View>
-            </View>
-          ))
+            ))}
+          </View>
         )}
       </ScrollView>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         visible={!!deleteTarget}
-        title="Delete Group"
-        message={`Delete drawing group "${deleteTarget?.name}"?`}
+        title="Delete group"
+        message={`Delete "${deleteTarget?.name}"? The photos stay in storage, but the group and its ordering are removed.`}
         confirmLabel="Delete"
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteTarget(null)}
@@ -314,134 +356,59 @@ export default function GroupDrawingsScreen() {
   );
 }
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  countCaption: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    flex: 1,
-  },
-  spacer: { height: theme.spacing.md },
-  loadingContainer: {
-    paddingVertical: theme.spacing.xl * 2,
-    alignItems: "center",
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: theme.spacing.xl * 2,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: theme.spacing.md },
-  emptyTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-  },
-  groupCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-  },
-  groupCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: theme.spacing.md,
-  },
-  groupIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.colors.success + "20",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: theme.spacing.md,
-  },
-  groupIcon: {
-    fontSize: 22,
-  },
-  groupInfo: {
-    flex: 1,
-  },
-  groupName: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  groupDate: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-  groupActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing.sm,
-  },
-  actionBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary + "15",
-    minWidth: 70,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  actionBtnSecondary: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.border,
-    minWidth: 70,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionTextSecondary: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  actionBtnDanger: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.danger + "15",
-    minWidth: 70,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionTextDanger: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-});
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xl,
+    },
+    skeletons: { gap: 8 },
+    list: { gap: theme.spacing.sm },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: 12,
+      ...theme.elevation.card,
+    },
+    cardTop: { flexDirection: "row", alignItems: "center", gap: 12 },
+    iconWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    info: { flex: 1, minWidth: 0 },
+    name: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "700",
+      letterSpacing: -0.2,
+    },
+    date: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      marginTop: 2,
+    },
+    hint: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      marginTop: 3,
+    },
+    cardFooter: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    actions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  });

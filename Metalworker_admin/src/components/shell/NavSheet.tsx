@@ -1,20 +1,12 @@
 // src/components/shell/NavSheet.tsx
 //
-// Reusable bottom sheet (RN Modal) used for both the Jobs and More tabs.
-// - Android back closes it via `onRequestClose`.
-// - Items call the shell's handler, which navigates / toggles theme / signs
-//   out, then closes the sheet.
-// - A visible grab handle and spring slide keep it feeling native.
-import React from "react";
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+// The Jobs and More destinations open this sheet. It uses the shared
+// BottomSheet (spring entrance, draggable handle, scrim) and renders each
+// destination as a full-width row with its icon, a one-line description and a
+// chevron. Sections are labelled rather than tabbed so the whole menu is
+// scannable in one swipe.
+import React, { useMemo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -22,6 +14,8 @@ import {
   type NavItem,
   type NavSection,
 } from "../../navigation/navigationConfig";
+import { BottomSheet } from "../ui/BottomSheet";
+import { Icon } from "../ui/Icon";
 
 interface NavSheetProps {
   visible: boolean;
@@ -39,169 +33,110 @@ export function NavSheet({
   onItemPress,
 }: NavSheetProps) {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <Modal
+    <BottomSheet
       visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
+      onClose={onClose}
+      title={title}
+      subtitle="Choose where to go"
     >
-      <View style={[styles.root, { backgroundColor: theme.colors.overlay }]}>
-        {/* Scrim */}
-        <Pressable
-          onPress={onClose}
-          style={StyleSheet.absoluteFill}
-          accessibilityRole="button"
-          accessibilityLabel="Close menu"
-        />
-
-        {/* Sheet */}
-        <View
-          style={[
-            styles.sheet,
-            {
-              paddingBottom: Math.max(insets.bottom, 16),
-              backgroundColor: theme.colors.surfaceRaised,
-            },
-          ]}
-        >
-          <View style={[styles.handleWrap, { backgroundColor: theme.colors.surfaceHover }]} />
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: theme.colors.text }]}>
-              {title}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel={`Close ${title} menu`}
-              hitSlop={8}
-              style={({ pressed }) => [
-                styles.closeBtn,
-                {
-                  backgroundColor: theme.colors.surfaceHover,
-                  opacity: pressed ? 0.7 : 1,
-                },
-              ]}
-            >
-              <Text style={[styles.closeIcon, { color: theme.colors.text }]}>
-                ✕
-              </Text>
-            </Pressable>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {sections.map((section) => (
-              <View key={section.key} style={styles.section}>
-                <Text
+      {sections.map((section) => (
+        <View key={section.key} style={styles.section}>
+          {section.title !== "" ? (
+            <Text style={styles.sectionTitle}>{section.title.toUpperCase()}</Text>
+          ) : null}
+          {section.items.map((item) => {
+            const danger = item.action === "signout";
+            return (
+              <Pressable
+                key={item.key}
+                onPress={() => onItemPress(item)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  item.description ? `${item.label}. ${item.description}` : item.label
+                }
+                style={({ pressed }) => [
+                  styles.item,
+                  pressed && { backgroundColor: theme.colors.surfaceHover },
+                ]}
+              >
+                <View
                   style={[
-                    styles.sectionTitle,
-                    { color: theme.colors.textMuted },
+                    styles.iconBubble,
+                    {
+                      backgroundColor: danger
+                        ? theme.colors.dangerMuted
+                        : theme.colors.primarySoft,
+                    },
                   ]}
                 >
-                  {section.title.toUpperCase()}
-                </Text>
-                {section.items.map((item) => (
-                  <Pressable
-                    key={item.key}
-                    onPress={() => onItemPress(item)}
-                    accessibilityRole="button"
-                    accessibilityLabel={item.label}
-                    style={({ pressed }) => [
-                      styles.item,
-                      pressed && { backgroundColor: theme.colors.surfaceHover },
+                  <Icon
+                    name={item.icon}
+                    size={18}
+                    color={danger ? theme.colors.danger : theme.colors.primary}
+                  />
+                </View>
+                <View style={styles.itemText}>
+                  <Text
+                    style={[
+                      styles.itemLabel,
+                      { color: danger ? theme.colors.danger : theme.colors.text },
                     ]}
                   >
-                    <Text style={[styles.itemIcon, { color: theme.colors.text }]}>
-                      {item.icon}
+                    {item.label}
+                  </Text>
+                  {item.description ? (
+                    <Text style={styles.itemDescription} numberOfLines={1}>
+                      {item.description}
                     </Text>
-                    <Text
-                      style={[styles.itemLabel, { color: theme.colors.text }]}
-                    >
-                      {item.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            ))}
-          </ScrollView>
+                  ) : null}
+                </View>
+                <Icon name="chevronRight" size={16} color={theme.colors.textMuted} />
+              </Pressable>
+            );
+          })}
         </View>
-      </View>
-    </Modal>
+      ))}
+    </BottomSheet>
   );
 }
 
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    root: {
-      flex: 1,
-      justifyContent: "flex-end",
-    },
-    sheet: {
-      width: "100%",
-      borderTopLeftRadius: theme.radius.xl,
-      borderTopRightRadius: theme.radius.xl,
-      paddingTop: 10,
-      maxHeight: "78%",
-      ...theme.elevation.overlay,
-    },
-    handleWrap: {
-      alignSelf: "center",
-      width: 40,
-      height: 4,
-      borderRadius: 2,
-      marginBottom: 8,
-    },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-    },
-    title: {
-      fontSize: 18,
-      fontWeight: "700",
-    },
-    closeBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    closeIcon: {
-      fontSize: 16,
-      fontWeight: "700",
-    },
-    section: {
-      paddingHorizontal: 16,
-      paddingTop: 4,
-      paddingBottom: 10,
-    },
+    section: { marginBottom: theme.spacing.sm },
     sectionTitle: {
-      fontSize: 11,
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
       fontWeight: "700",
-      letterSpacing: 0.8,
-      marginBottom: 4,
+      letterSpacing: 1.1,
+      marginTop: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+      paddingHorizontal: 2,
     },
     item: {
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: 13,
-      borderRadius: 8,
+      gap: theme.spacing.sm + 2,
+      paddingVertical: 10,
       paddingHorizontal: 8,
-      gap: 12,
-      minHeight: 50,
+      marginHorizontal: -8,
+      borderRadius: theme.radius.md,
+      minHeight: 56,
     },
-    itemIcon: {
-      fontSize: 18,
-      width: 24,
-      textAlign: "center",
+    iconBubble: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    itemLabel: {
-      fontSize: 15,
+    itemText: { flex: 1, minWidth: 0 },
+    itemLabel: { fontSize: theme.textSizes.md, fontWeight: "600" },
+    itemDescription: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      marginTop: 2,
     },
   });

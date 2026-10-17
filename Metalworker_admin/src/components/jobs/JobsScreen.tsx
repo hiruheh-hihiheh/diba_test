@@ -18,18 +18,24 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { useAdminGate } from "../../hooks/useAdminGate";
 import { fetchJobsPage } from "../../services/jobs";
 import type { Job, JobType } from "../../types/job";
-import { Input } from "../ui/Input";
+import { Badge, type BadgeTone } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { EmptyState } from "../ui/EmptyState";
+import { Icon } from "../ui/Icon";
+import { PressableScale } from "../ui/PressableScale";
+import { Reveal } from "../ui/Reveal";
+import { ScreenHeader } from "../ui/ScreenHeader";
+import { SearchBar } from "../ui/SearchBar";
+import { SkeletonCard } from "../ui/Skeleton";
 import { JobEditModal } from "./JobEditModal";
 import { JobDrawingModal } from "./JobDrawingModal";
-import { ThemeToggle } from "../ui/ThemeToggle";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 400;
@@ -141,52 +147,49 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
 
   const hasMore = jobs.length < total;
 
+  const statusTone = (value: string | null): BadgeTone => {
+    const normalized = (value ?? "").toLowerCase();
+    if (normalized.includes("complete") || normalized.includes("done")) return "success";
+    if (normalized.includes("hold") || normalized.includes("cancel")) return "danger";
+    if (normalized.includes("progress") || normalized.includes("wip")) return "info";
+    return "warning";
+  };
+
   const listHeader = (
     <View>
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          style={styles.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={8}
-        >
-          <Text style={styles.backBtnText}>← Back</Text>
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle}>
-            {jobType === "labour" ? "Labour Jobs" : "With Material (BO)"}
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            {total} {total === 1 ? "Job" : "Jobs"}
-          </Text>
-        </View>
-        <ThemeToggle />
-      </View>
-
-      <Input
-        placeholder="Search jobs..."
-        value={search}
-        onChangeText={setSearch}
-        autoCapitalize="none"
-        accessibilityLabel="Search jobs"
+      <ScreenHeader
+        eyebrow="Work orders"
+        title={jobType === "labour" ? "Labour jobs" : "Material jobs"}
+        subtitle={`${total} ${total === 1 ? "job" : "jobs"}${
+          debouncedSearch ? " matching your search" : " in this category"
+        }`}
       />
 
-      <View style={styles.spacer} />
+      <SearchBar
+        value={search}
+        onChangeText={setSearch}
+        placeholder="Search job number, tool or part"
+        accessibilityLabel="Search jobs"
+        autoCapitalize="none"
+        style={styles.search}
+      />
     </View>
   );
 
   const listEmpty = () => {
     if (authChecking || loading) {
       return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+        <View style={styles.skeletons}>
+          <SkeletonCard lines={2} />
+          <SkeletonCard lines={2} />
+          <SkeletonCard lines={2} />
         </View>
       );
     }
     if (error) {
       return (
         <View style={styles.errorBanner}>
+          <Icon name="alert" size={16} color={theme.colors.danger} />
           <Text style={styles.errorBannerText}>Failed to load jobs: {error}</Text>
           <Pressable
             onPress={() => void loadFirstPage(debouncedSearch)}
@@ -198,23 +201,21 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
       );
     }
     return (
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyIcon}>🧰</Text>
-        <Text style={styles.emptyTitle}>
-          {debouncedSearch
-            ? "No Results"
+      <EmptyState
+        icon={jobType === "labour" ? "hammer" : "box"}
+        title={
+          debouncedSearch
+            ? "No matching jobs"
             : jobType === "labour"
-              ? "No Labour Jobs"
-              : "No Jobs"}
-        </Text>
-        <Text style={styles.emptyText}>
-          {debouncedSearch
-            ? "Try a different search term."
-            : jobType === "labour"
-              ? "No labour jobs available."
-              : "No jobs available."}
-        </Text>
-      </View>
+            ? "No labour jobs yet"
+            : "No material jobs yet"
+        }
+        message={
+          debouncedSearch
+            ? "Try a different job number, tool or part."
+            : "Jobs created in the field app will appear here."
+        }
+      />
     );
   };
 
@@ -228,100 +229,137 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
     }
     if (hasMore && !error) {
       return (
-        <Pressable
-          style={styles.loadMoreBtn}
+        <Button
+          title={`Load more (${total - jobs.length} left)`}
+          variant="secondary"
           onPress={() => void loadMore()}
-          accessibilityRole="button"
-          accessibilityLabel="Load more jobs"
-        >
-          <Text style={styles.loadMoreText}>Load more</Text>
-        </Pressable>
+          style={styles.loadMore}
+        />
       );
     }
     return null;
   };
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+    <View style={styles.screen}>
       <FlatList
         data={jobs}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <Pressable
-            style={({ pressed }) => [styles.jobCard, pressed && styles.jobCardPressed]}
-            onPress={() => {
-              setEditingJob(item);
-              setEditOpenSeq((s) => s + 1);
-            }}
-            accessibilityHint="Opens the edit form for this job"
-          >
-            {/*
-              The card press opens the edit modal, but the DRG row below is its
-              own button. RNW renders `accessibilityRole="button"` as a real
-              <button>, so marking this element a button too would create an
-              invalid <button> inside <button>. The card stays keyboard
-              focusable/tappable (Pressable is tabIndex 0), and the DRG control
-              keeps the only semantic button role.
-            */}
-            <View style={styles.jobCardHeader}>
-              <Text style={styles.jobNo}>{item.job_no || "No Job #"}</Text>
-              <View style={styles.statusBadge}>
-                <Text style={styles.statusText}>{item.status || "Pending"}</Text>
-              </View>
-            </View>
+        renderItem={({ item, index }) => (
+          <Reveal delay={Math.min(index, 6) * 16}>
+            {/* The pressable covers the card body only: the Drawings row is a
+                separate button, and nesting one button inside another is invalid
+                on web (and confuses screen readers on native). */}
+            <View style={styles.jobCard}>
+              <PressableScale
+                onPress={() => {
+                  setEditingJob(item);
+                  setEditOpenSeq((s) => s + 1);
+                }}
+                accessibilityLabel={`Edit job ${item.job_no || item.id}`}
+                accessibilityHint="Opens the edit form for this job"
+              >
+                <View style={styles.jobCardHeader}>
+                  <View style={styles.jobNoWrap}>
+                    <View style={styles.jobIcon}>
+                      <Icon
+                        name={jobType === "labour" ? "hammer" : "box"}
+                        size={17}
+                        color={theme.colors.primary}
+                      />
+                    </View>
+                    <View style={styles.jobNoText}>
+                      <Text style={styles.jobNo} numberOfLines={1}>
+                        {item.job_no || "No job number"}
+                      </Text>
+                      <Text style={styles.jobType}>
+                        {jobType === "labour" ? "Labour job" : "With material"}
+                      </Text>
+                    </View>
+                  </View>
+                  <Badge
+                    label={(item.status || "Pending").toUpperCase()}
+                    tone={statusTone(item.status)}
+                  />
+                </View>
 
-            <Text style={styles.jobTitle}>
-              {item.tool_description || "Unknown Tool"} {item.tool_part ? ` / ${item.tool_part}` : ""}
-            </Text>
+                <Text style={styles.jobTitle} numberOfLines={2}>
+                  {item.tool_description || "Unknown tool"}
+                  {item.tool_part ? ` · ${item.tool_part}` : ""}
+                </Text>
 
-            <View style={styles.jobDetails}>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Qty:</Text>
-                <Text style={styles.detailValue}>{item.quantity != null ? item.quantity : "—"}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>PO Status:</Text>
-                <Text style={styles.detailValue}>{item.po_status || "—"}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Given:</Text>
-                <Text style={styles.detailValue}>{item.job_given_date || "—"}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Exp. Comp:</Text>
-                <Text style={styles.detailValue}>{item.expected_completion_date || item.expected_completion_note || "—"}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Machining:</Text>
-                <Text style={styles.detailValue}>{item.current_machining_status || "—"}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>DRG:</Text>
-                <Pressable
-                  style={({ pressed }) => [styles.drgBtn, pressed && styles.drgBtnPressed]}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    setDrawingModalJob(item);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open drawings for job ${item.job_no || item.id}`}
-                >
-                  <Text style={styles.drgBtnText}>{item.drawing_status || "—"}</Text>
-                </Pressable>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Model:</Text>
-                <Text style={styles.detailValue}>{item.model_status || "—"}</Text>
-              </View>
+                <View style={styles.chipRow}>
+                  <View style={styles.metaChip}>
+                    <Text style={styles.metaChipLabel}>QTY</Text>
+                    <Text style={styles.metaChipValue}>
+                      {item.quantity != null ? item.quantity : "—"}
+                    </Text>
+                  </View>
+                  <View style={styles.metaChip}>
+                    <Text style={styles.metaChipLabel}>PO</Text>
+                    <Text style={styles.metaChipValue} numberOfLines={1}>
+                      {item.po_status || "—"}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.detailsGrid}>
+                  <JobDetail
+                    label="Given"
+                    value={item.job_given_date || "—"}
+                  />
+                  <JobDetail
+                    label="Expected"
+                    value={
+                      item.expected_completion_date ||
+                      item.expected_completion_note ||
+                      "—"
+                    }
+                  />
+                  <JobDetail
+                    label="Machining"
+                    value={item.current_machining_status || "—"}
+                  />
+                  <JobDetail label="Model" value={item.model_status || "—"} />
+                </View>
+              </PressableScale>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.drgRow,
+                  pressed && styles.drgRowPressed,
+                ]}
+                onPress={() => setDrawingModalJob(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open drawings for job ${item.job_no || item.id}`}
+              >
+                <View style={styles.drgIcon}>
+                  <Icon name="image" size={15} color={theme.colors.textSecondary} />
+                </View>
+                <Text style={styles.drgLabel}>Drawings</Text>
+                <Text style={styles.drgValue} numberOfLines={1}>
+                  {item.drawing_status || "Not set"}
+                </Text>
+                <Icon
+                  name="chevronRight"
+                  size={14}
+                  color={theme.colors.textMuted}
+                />
+              </Pressable>
             </View>
-          </Pressable>
+          </Reveal>
         )}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
         ListFooterComponent={listFooter}
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
         }
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.6}
@@ -345,180 +383,180 @@ export function JobsScreen({ jobType }: JobsScreenProps) {
         onClose={() => setDrawingModalJob(null)}
         job={drawingModalJob}
       />
-    </SafeAreaView>
+    </View>
+  );
+}
+
+function JobDetail({ label, value }: { label: string; value: string }) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  return (
+    <View style={styles.detailCell}>
+      <Text style={styles.detailLabel}>{label.toUpperCase()}</Text>
+      <Text style={styles.detailValue} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
+    screen: { flex: 1, backgroundColor: theme.colors.background },
     content: {
-      padding: theme.spacing.lg,
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
       paddingBottom: theme.spacing.xl,
     },
-    header: {
-      marginBottom: theme.spacing.lg,
-    },
-    backBtn: {
-      marginBottom: theme.spacing.sm,
-      alignSelf: "flex-start",
-    },
-    backBtnText: {
-      color: theme.colors.primary,
-      fontSize: theme.textSizes.sm,
-      fontWeight: "600",
-    },
-    headerInfo: {
-      marginBottom: theme.spacing.md,
-    },
-    headerTitle: {
-      color: theme.colors.text,
-      fontSize: theme.textSizes.xl,
-      fontWeight: "800",
-    },
-    headerSubtitle: {
-      color: theme.colors.textMuted,
-      fontSize: theme.textSizes.sm,
-      marginTop: 2,
-    },
-    spacer: { height: theme.spacing.lg },
+    search: { marginBottom: theme.spacing.md },
+    skeletons: { gap: 8 },
     errorBanner: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
-      backgroundColor: theme.colors.danger + "15",
+      gap: 8,
+      backgroundColor: theme.colors.dangerMuted,
       borderRadius: theme.radius.md,
       borderWidth: 1,
-      borderColor: theme.colors.danger + "40",
-      padding: theme.spacing.md,
-      marginBottom: theme.spacing.md,
+      borderColor: theme.colors.danger + "45",
+      padding: 12,
     },
     errorBannerText: {
       color: theme.colors.danger,
-      fontSize: theme.textSizes.sm,
+      fontSize: theme.textSizes.xs,
       flex: 1,
-      marginRight: theme.spacing.sm,
     },
     retryText: {
-      color: theme.colors.primary,
-      fontSize: theme.textSizes.sm,
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.xs,
       fontWeight: "700",
-    },
-    loadingContainer: {
-      paddingVertical: theme.spacing.xl * 2,
-      alignItems: "center",
-    },
-    emptyState: {
-      alignItems: "center",
-      paddingVertical: theme.spacing.xl * 2,
-    },
-    emptyIcon: { fontSize: 40, marginBottom: theme.spacing.md },
-    emptyTitle: {
-      color: theme.colors.text,
-      fontSize: theme.textSizes.lg,
-      fontWeight: "700",
-      marginBottom: 4,
-    },
-    emptyText: {
-      color: theme.colors.textMuted,
-      fontSize: theme.textSizes.sm,
-      textAlign: "center",
     },
     jobCard: {
       backgroundColor: theme.colors.surface,
       borderRadius: theme.radius.lg,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: theme.spacing.md,
-      marginBottom: theme.spacing.md,
-    },
-    jobCardPressed: {
-      opacity: 0.7,
-      backgroundColor: theme.colors.border,
+      padding: 12,
+      marginBottom: theme.spacing.sm,
+      ...theme.elevation.card,
     },
     jobCardHeader: {
       flexDirection: "row",
-      justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: theme.spacing.sm,
+      justifyContent: "space-between",
+      gap: 8,
     },
+    jobNoWrap: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 9,
+      minWidth: 0,
+    },
+    jobIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    jobNoText: { flex: 1, minWidth: 0 },
     jobNo: {
-      color: theme.colors.primary,
-      fontSize: theme.textSizes.md,
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
       fontWeight: "700",
+      letterSpacing: -0.2,
     },
-    statusBadge: {
-      backgroundColor: theme.colors.primary + "15",
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 4,
-    },
-    statusText: {
-      color: theme.colors.primary,
-      fontSize: theme.textSizes.xs,
-      fontWeight: "700",
-      textTransform: "uppercase",
+    jobType: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
+      marginTop: 1,
     },
     jobTitle: {
       color: theme.colors.text,
       fontSize: theme.textSizes.md,
       fontWeight: "600",
-      marginBottom: theme.spacing.md,
+      marginTop: 10,
+      letterSpacing: -0.2,
     },
-    jobDetails: {
-      gap: 4,
-    },
-    detailRow: {
+    chipRow: {
       flexDirection: "row",
-      justifyContent: "space-between",
+      gap: 6,
+      marginTop: 10,
     },
-    detailLabel: {
-      color: theme.colors.textMuted,
-      fontSize: theme.textSizes.sm,
-      width: 100,
-    },
-    detailValue: {
-      color: theme.colors.text,
-      fontSize: theme.textSizes.sm,
-      flex: 1,
-      textAlign: "right",
-    },
-    drgBtn: {
-      backgroundColor: theme.colors.background,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 4,
+    metaChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.surfaceSecondary,
       borderWidth: 1,
       borderColor: theme.colors.border,
+      maxWidth: "60%",
     },
-    drgBtnPressed: {
-      backgroundColor: theme.colors.primary + "20",
-      borderColor: theme.colors.primary,
+    metaChipLabel: {
+      color: theme.colors.textMuted,
+      fontSize: 9,
+      fontWeight: "700",
+      letterSpacing: 0.6,
     },
-    drgBtnText: {
-      fontSize: theme.textSizes.sm,
-      color: theme.colors.text,
+    metaChipValue: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
       fontWeight: "600",
+      flexShrink: 1,
     },
-    footerLoader: {
-      paddingVertical: theme.spacing.lg,
+    detailsGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      rowGap: 10,
+      marginTop: 12,
+    },
+    detailCell: { width: "50%", paddingRight: 8 },
+    detailLabel: {
+      color: theme.colors.textMuted,
+      fontSize: 9,
+      fontWeight: "700",
+      letterSpacing: 0.7,
+      marginBottom: 2,
+    },
+    detailValue: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "500",
+    },
+    drgRow: {
+      flexDirection: "row",
       alignItems: "center",
+      gap: 8,
+      marginTop: 12,
+      paddingTop: 10,
+      paddingBottom: 2,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
     },
-    loadMoreBtn: {
-      marginTop: theme.spacing.sm,
-      paddingVertical: theme.spacing.md,
-      borderRadius: theme.radius.md,
-      backgroundColor: theme.colors.primary + "15",
+    drgRowPressed: { opacity: 0.6 },
+    drgIcon: {
+      width: 26,
+      height: 26,
+      borderRadius: 8,
+      backgroundColor: theme.colors.surfaceHover,
       alignItems: "center",
       justifyContent: "center",
-      minHeight: 44,
     },
-    loadMoreText: {
-      color: theme.colors.primary,
-      fontSize: theme.textSizes.sm,
-      fontWeight: "700",
+    drgLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
     },
+    drgValue: {
+      flex: 1,
+      textAlign: "right",
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+    },
+    footerLoader: { paddingVertical: theme.spacing.lg, alignItems: "center" },
+    loadMore: { marginTop: theme.spacing.sm },
   });

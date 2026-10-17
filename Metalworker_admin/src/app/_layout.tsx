@@ -1,9 +1,11 @@
+import { Platform } from "react-native";
 import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { ThemeProvider, useTheme } from "../context/ThemeContext";
 import { AdminShell } from "../components/shell/AdminShell";
+import { ToastHost } from "../components/ui/Toast";
 
 /**
  * Routes rendered WITHOUT the admin shell chrome. Login keeps its own
@@ -24,6 +26,10 @@ function RootContent() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: theme.colors.background },
+        // Android's default stack transition is abrupt; the platform-accurate
+        // rightward slide keeps screen changes feeling continuous. Other
+        // platforms keep their native default.
+        animation: Platform.OS === "android" ? "slide_from_right" : "default",
       }}
     />
   );
@@ -32,6 +38,7 @@ function RootContent() {
     <>
       <StatusBar style={themeMode === "light" ? "dark" : "light"} />
       {isBare ? stack : <AdminShell>{stack}</AdminShell>}
+      <ToastHost />
     </>
   );
 }

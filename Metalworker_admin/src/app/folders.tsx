@@ -3,7 +3,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -35,8 +34,17 @@ import {
 import { DraggableItem } from "../components/folders/DraggableItem";
 import { FolderDropTarget } from "../components/folders/FolderDropTarget";
 import { ItemPreviewModal } from "../components/folders/ItemPreviewModal";
-import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Icon } from "../components/ui/Icon";
+import { PressableScale } from "../components/ui/PressableScale";
+import { Reveal } from "../components/ui/Reveal";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
+import { SearchBar } from "../components/ui/SearchBar";
+import { Section } from "../components/ui/Section";
+import { SkeletonCard } from "../components/ui/Skeleton";
 import { notify } from "../utils/notify";
 
 /* ─── Type badge config ─── */
@@ -242,8 +250,6 @@ export default function FoldersScreen() {
     showFlash("success", `Added to "${folder.name}"`);
   }
 
-  /* ── Render ── */
-
   return (
     <View style={styles.screen}>
       <DragDropProvider
@@ -254,118 +260,153 @@ export default function FoldersScreen() {
         <ScrollView
           contentContainerStyle={styles.content}
           scrollEnabled={!isDragActive}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+              colors={[theme.colors.primary]}
+            />
           }
         >
-          {/* Count caption + new-folder action — the shell header owns the
-              page title and back button. */}
-          <View style={styles.headerRow}>
-            <Text style={styles.countCaption}>
-              {folders.length === 1 ? "1 folder" : `${folders.length} folders`} ·{" "}
-              {allItems.length === 1 ? "1 item" : `${allItems.length} items`}
-            </Text>
-            <Pressable
-              style={styles.newFolderBtn}
-              onPress={() => setShowCreateModal(true)}
-            >
-              <Text style={styles.newFolderBtnText}>+ New Folder</Text>
-            </Pressable>
-          </View>
+          <ScreenHeader
+            eyebrow="Organization"
+            title="Folders"
+            subtitle={`${folders.length} ${folders.length === 1 ? "folder" : "folders"} · ${
+              allItems.length
+            } ${allItems.length === 1 ? "item" : "items"}`}
+            right={
+              <Button
+                title="New"
+                icon="folderPlus"
+                size="sm"
+                onPress={() => setShowCreateModal(true)}
+              />
+            }
+          />
+
+          {flash ? (
+            <Reveal style={styles.flashWrap}>
+              <View
+                style={[
+                  styles.flash,
+                  {
+                    backgroundColor:
+                      flash.type === "error"
+                        ? theme.colors.dangerMuted
+                        : theme.colors.successMuted,
+                    borderColor:
+                      flash.type === "error"
+                        ? theme.colors.danger + "45"
+                        : theme.colors.success + "45",
+                  },
+                ]}
+              >
+                <Icon
+                  name={flash.type === "error" ? "alert" : "checkCircle"}
+                  size={16}
+                  color={
+                    flash.type === "error"
+                      ? theme.colors.danger
+                      : theme.colors.success
+                  }
+                />
+                <Text
+                  style={[
+                    styles.flashText,
+                    {
+                      color:
+                        flash.type === "error"
+                          ? theme.colors.danger
+                          : theme.colors.success,
+                    },
+                  ]}
+                >
+                  {flash.text}
+                </Text>
+              </View>
+            </Reveal>
+          ) : null}
 
           {authChecking || loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={theme.colors.primary} />
+            <View style={styles.skeletons}>
+              <SkeletonCard lines={2} />
+              <SkeletonCard lines={1} />
+              <SkeletonCard lines={1} />
             </View>
           ) : error ? (
             <View style={styles.errorBanner}>
-              <Text style={styles.errorBannerText}>Failed to load folders: {error}</Text>
-              <Pressable onPress={loadData}>
+              <Icon name="alert" size={17} color={theme.colors.danger} />
+              <Text style={styles.errorBannerText}>
+                Failed to load folders: {error}
+              </Text>
+              <Pressable onPress={loadData} accessibilityRole="button">
                 <Text style={styles.retryText}>Retry</Text>
               </Pressable>
             </View>
           ) : (
             <>
-              {flash ? (
-                <View
-                  style={[
-                    styles.flashBanner,
-                    flash.type === "error" && styles.flashBannerError,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.flashText,
-                      flash.type === "error" && styles.flashTextError,
-                    ]}
-                  >
-                    {flash.type === "error" ? "⚠ " : "✓ "}
-                    {flash.text}
-                  </Text>
-                </View>
-              ) : null}
-
-              {/* ── Available Items (draggable) ── */}
-              {allItems.length > 0 && (
-                <View style={styles.sectionCard}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>
-                      Available Items {allItems.length !== filteredItems.length ? `(${filteredItems.length} of ${allItems.length})` : `(${allItems.length})`}
-                    </Text>
-                    <Text style={styles.sectionHint}>
-                      Long-press & drag into a folder
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.searchSection}>
-                    <View style={styles.searchInputWrapper}>
-                      <Input
-                        placeholder="Search items..."
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        autoCapitalize="none"
-                      />
-                      {searchQuery.length > 0 && (
-                        <Pressable onPress={() => setSearchQuery("")} style={styles.clearSearchBtn}>
-                          <Text style={styles.clearSearchText}>✕</Text>
-                        </Pressable>
-                      )}
+              {allItems.length > 0 ? (
+                <View style={styles.panel}>
+                  <View style={styles.panelHead}>
+                    <View style={styles.panelHeadText}>
+                      <Text style={styles.panelTitle}>Available items</Text>
+                      <Text style={styles.panelHint}>
+                        {isDragActive
+                          ? "Drop onto a folder below"
+                          : "Long-press an item and drag it into a folder"}
+                      </Text>
                     </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-                      <View style={styles.filterRow}>
-                        <Pressable
-                          style={[styles.filterBtn, itemTypeFilter === "all" && styles.filterBtnActive]}
-                          onPress={() => setItemTypeFilter("all")}
-                        >
-                          <Text style={[styles.filterBtnText, itemTypeFilter === "all" && styles.filterBtnTextActive]}>
-                            All
-                          </Text>
-                        </Pressable>
-                        {Object.entries(getTypeBadges(theme)).map(([type, badge]) => (
-                          <Pressable
-                            key={type}
-                            style={[styles.filterBtn, itemTypeFilter === type && styles.filterBtnActive]}
-                            onPress={() => setItemTypeFilter(type as FolderItemType)}
-                          >
-                            <Text style={[styles.filterBtnText, itemTypeFilter === type && styles.filterBtnTextActive]}>
-                              {badge.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </ScrollView>
+                    <Badge
+                      label={`${filteredItems.length} of ${allItems.length}`}
+                      tone="neutral"
+                    />
                   </View>
+
+                  <SearchBar
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search items"
+                    accessibilityLabel="Search available items"
+                    autoCapitalize="none"
+                    style={styles.search}
+                  />
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.filterRow}
+                  >
+                    <TypeChip
+                      label="All"
+                      active={itemTypeFilter === "all"}
+                      onPress={() => setItemTypeFilter("all")}
+                    />
+                    {Object.entries(getTypeBadges(theme)).map(([type, badge]) => (
+                      <TypeChip
+                        key={type}
+                        label={badge.label}
+                        active={itemTypeFilter === type}
+                        onPress={() => setItemTypeFilter(type as FolderItemType)}
+                      />
+                    ))}
+                  </ScrollView>
 
                   {filteredItems.length === 0 ? (
-                    <View style={styles.emptySearchState}>
+                    <View style={styles.emptySearch}>
+                      <Icon name="search" size={18} color={theme.colors.textMuted} />
                       <Text style={styles.emptySearchTitle}>No matching items</Text>
-                      <Text style={styles.emptySearchText}>Try a different search or filter.</Text>
+                      <Text style={styles.emptySearchText}>
+                        Try another search or type filter.
+                      </Text>
                     </View>
                   ) : (
                     <ScrollView
                       style={styles.itemsScroll}
                       nestedScrollEnabled
                       scrollEnabled={!isDragActive}
+                      showsVerticalScrollIndicator={false}
                     >
                       {filteredItems.map((item) => {
                         const badge = getTypeBadges(theme)[item.type];
@@ -378,30 +419,50 @@ export default function FoldersScreen() {
                               label: item.label,
                             }}
                           >
-                            <View style={styles.draggableRow}>
-                              <Text style={styles.dragHandle}>⠿</Text>
-                              <Pressable 
-                                style={styles.itemInfoContainer}
-                                onPress={() => setPreviewItem({ type: item.type, id: item.id, label: item.label })}
+                            <View style={styles.itemRow}>
+                              <View style={styles.dragHandle}>
+                                <Icon
+                                  name="menu"
+                                  size={13}
+                                  color={theme.colors.textMuted}
+                                />
+                              </View>
+                              <View
+                                style={[
+                                  styles.typeBadge,
+                                  { backgroundColor: badge.color + "1F" },
+                                ]}
                               >
-                                <View
+                                <Text
                                   style={[
-                                    styles.typeBadge,
-                                    { backgroundColor: badge.color + "20" },
+                                    styles.typeBadgeText,
+                                    { color: badge.color },
                                   ]}
+                                  numberOfLines={1}
                                 >
-                                  <Text
-                                    style={[
-                                      styles.typeBadgeText,
-                                      { color: badge.color },
-                                    ]}
-                                  >
-                                    {badge.label}
-                                  </Text>
-                                </View>
+                                  {badge.label}
+                                </Text>
+                              </View>
+                              <Pressable
+                                style={styles.itemMain}
+                                onPress={() =>
+                                  setPreviewItem({
+                                    type: item.type,
+                                    id: item.id,
+                                    label: item.label,
+                                  })
+                                }
+                                accessibilityRole="button"
+                                accessibilityLabel={`Preview ${item.label}`}
+                              >
                                 <Text style={styles.itemLabel} numberOfLines={1}>
                                   {item.label}
                                 </Text>
+                                <Icon
+                                  name="chevronRight"
+                                  size={14}
+                                  color={theme.colors.textMuted}
+                                />
                               </Pressable>
                             </View>
                           </DraggableItem>
@@ -410,76 +471,117 @@ export default function FoldersScreen() {
                     </ScrollView>
                   )}
                 </View>
-              )}
+              ) : null}
 
-              {/* ── Folders (drop targets) ── */}
-              <Text style={styles.foldersHeading}>
-                {isDragActive
-                  ? "⬇ Drop onto a folder below"
-                  : "📁 Folders"}
-              </Text>
+              <Section
+                title="Your folders"
+                subtitle="Tap to open · drag an item onto a folder to file it"
+                style={styles.folderSection}
+              />
 
               {folders.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyIcon}>📁</Text>
-                  <Text style={styles.emptyTitle}>No Folders</Text>
-                  <Text style={styles.emptyText}>
-                    Create your first folder to organize stock and documents.
-                  </Text>
-                </View>
+                <EmptyState
+                  icon="folderPlus"
+                  title="No folders yet"
+                  message="Create your first folder to organize stock, bills, drawings and jobs."
+                  action={
+                    <Button
+                      title="Create folder"
+                      icon="plus"
+                      onPress={() => setShowCreateModal(true)}
+                    />
+                  }
+                />
               ) : (
                 folders.map((folder) => (
                   <FolderDropTarget key={folder.id} zoneId={folder.id}>
-                    <Pressable
-                      style={styles.folderCard}
-                      onPress={() => openFolder(folder)}
+                    <View
+                      style={[
+                        styles.folderCard,
+                        isDragActive && styles.folderCardDrop,
+                      ]}
                     >
-                      <View style={styles.folderCardMain}>
-                        <View style={styles.folderIconWrap}>
-                          <Text style={styles.folderIcon}>📁</Text>
-                        </View>
-                        <View style={styles.folderInfo}>
-                          <Text style={styles.folderName} numberOfLines={1}>
-                            {folder.name}
-                          </Text>
-                          <Text style={styles.folderCount}>
-                            {folderCounts[folder.id] || 0} item{(folderCounts[folder.id] || 0) !== 1 ? "s" : ""}
-                          </Text>
-                          <Text style={styles.folderDate}>
-                            Created{" "}
-                            {new Date(folder.created_at).toLocaleDateString(
-                              [],
-                              {
+                      <PressableScale
+                        onPress={() => openFolder(folder)}
+                        accessibilityLabel={`Open folder ${folder.name}`}
+                      >
+                        <View style={styles.folderRow}>
+                          <View style={styles.folderIcon}>
+                            <Icon
+                              name="folder"
+                              size={20}
+                              color={theme.colors.primary}
+                            />
+                          </View>
+                          <View style={styles.folderInfo}>
+                            <Text style={styles.folderName} numberOfLines={1}>
+                              {folder.name}
+                            </Text>
+                            <Text style={styles.folderMeta}>
+                              {folderCounts[folder.id] || 0}{" "}
+                              {(folderCounts[folder.id] || 0) === 1
+                                ? "item"
+                                : "items"}{" "}
+                              · Created{" "}
+                              {new Date(folder.created_at).toLocaleDateString([], {
                                 day: "numeric",
                                 month: "short",
                                 year: "numeric",
-                              }
-                            )}
-                          </Text>
+                              })}
+                            </Text>
+                          </View>
+                          <Icon
+                            name="chevronRight"
+                            size={16}
+                            color={theme.colors.textMuted}
+                          />
                         </View>
-                        <Text style={styles.folderArrow}>→</Text>
-                      </View>
+                      </PressableScale>
+
                       <View style={styles.folderActions}>
                         <Pressable
                           onPress={(e) => {
                             e.stopPropagation();
                             setRenamingFolder(folder);
                           }}
-                          style={styles.actionBtn}
+                          style={({ pressed }) => [
+                            styles.folderAction,
+                            pressed && { opacity: 0.6 },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Rename ${folder.name}`}
                         >
-                          <Text style={styles.actionText}>Rename</Text>
+                          <Icon
+                            name="pencil"
+                            size={14}
+                            color={theme.colors.textSecondary}
+                          />
+                          <Text style={styles.folderActionText}>Rename</Text>
                         </Pressable>
                         <Pressable
                           onPress={(e) => {
                             e.stopPropagation();
                             handleDeleteFolder(folder);
                           }}
-                          style={styles.actionBtnDanger}
+                          style={({ pressed }) => [
+                            styles.folderAction,
+                            pressed && { opacity: 0.6 },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Delete ${folder.name}`}
                         >
-                          <Text style={styles.actionTextDanger}>Delete</Text>
+                          <Icon name="trash" size={14} color={theme.colors.danger} />
+                          <Text
+                            style={[
+                              styles.folderActionText,
+                              { color: theme.colors.danger },
+                            ]}
+                          >
+                            Delete
+                          </Text>
                         </Pressable>
                       </View>
-                    </Pressable>
+                    </View>
                   </FolderDropTarget>
                 ))
               )}
@@ -498,14 +600,12 @@ export default function FoldersScreen() {
         />
       )}
 
-      {/* ── Create Modal ── */}
       <CreateFolderModal
         visible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSave={handleCreateFolder}
       />
 
-      {/* ── Rename Modal ── */}
       {renamingFolder && (
         <RenameFolderModal
           visible={!!renamingFolder}
@@ -515,13 +615,12 @@ export default function FoldersScreen() {
         />
       )}
 
-      {/* Delete-folder confirmation (web + native). */}
       <ConfirmDialog
         visible={pendingDelete !== null}
-        title="Delete Folder"
+        title="Delete folder"
         message={
           pendingDelete
-            ? `Delete "${pendingDelete.name}"? This will remove all item associations but will NOT delete the actual stock/group records.`
+            ? `Delete "${pendingDelete.name}"? This removes all item associations but will NOT delete the actual stock or group records.`
             : ""
         }
         confirmLabel="Delete"
@@ -539,326 +638,242 @@ export default function FoldersScreen() {
   );
 }
 
-/* ─── Styles ─── */
+function TypeChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`Filter by ${label}`}
+      style={({ pressed }) => [
+        styles.filterChip,
+        {
+          backgroundColor: active ? theme.colors.primary : theme.colors.surface,
+          borderColor: active ? theme.colors.primary : theme.colors.border,
+        },
+        pressed && { opacity: 0.75 },
+      ]}
+    >
+      <Text
+        style={[
+          styles.filterChipText,
+          {
+            color: active
+              ? theme.colors.primaryButtonText
+              : theme.colors.textSecondary,
+          },
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  countCaption: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    flex: 1,
-  },
-  newFolderBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm + 2,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary,
-  },
-  newFolderBtnText: {
-    color: theme.colors.primaryButtonText,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-  loadingContainer: {
-    paddingVertical: theme.spacing.xl * 2,
-    alignItems: "center",
-  },
-  errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: theme.colors.danger + "15",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.danger + "40",
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-  },
-  errorBannerText: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  retryText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-  flashBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: theme.colors.success + "15",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.success + "40",
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-  },
-  flashBannerError: {
-    backgroundColor: theme.colors.danger + "15",
-    borderColor: theme.colors.danger + "40",
-  },
-  flashText: {
-    color: theme.colors.success,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    flex: 1,
-  },
-  flashTextError: {
-    color: theme.colors.danger,
-  },
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xl,
+    },
+    skeletons: { gap: 8 },
+    flashWrap: { marginBottom: theme.spacing.md },
+    flash: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      padding: 12,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+    },
+    flashText: { flex: 1, fontSize: theme.textSizes.xs, fontWeight: "600" },
+    errorBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.colors.dangerMuted,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.danger + "45",
+      padding: 12,
+    },
+    errorBannerText: {
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.xs,
+      flex: 1,
+    },
+    retryText: {
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+    },
 
-  /* ── Available Items section ── */
-  sectionCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.sm,
-  },
-  sectionTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  sectionHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-    fontStyle: "italic",
-  },
-  searchSection: {
-    marginBottom: theme.spacing.md,
-  },
-  searchInputWrapper: {
-    position: "relative",
-    marginBottom: theme.spacing.sm,
-  },
-  clearSearchBtn: {
-    position: "absolute",
-    right: 12,
-    top: 10,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  clearSearchText: {
-    color: theme.colors.textMuted,
-    fontSize: 12,
-    fontWeight: "bold",
-  },
-  filterScroll: {
-    flexGrow: 0,
-  },
-  filterRow: {
-    flexDirection: "row",
-    gap: 8,
-    paddingBottom: 4,
-  },
-  filterBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: theme.colors.background,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  filterBtnActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  filterBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.colors.textMuted,
-  },
-  filterBtnTextActive: {
-    color: "#fff",
-  },
-  emptySearchState: {
-    alignItems: "center",
-    paddingVertical: theme.spacing.xl,
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.radius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderStyle: "dashed",
-  },
-  emptySearchTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-  emptySearchText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-  },
-  itemsScroll: {
-    maxHeight: 280,
-  },
-  draggableRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    gap: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.sm,
-    marginBottom: 2,
-  },
-  dragHandle: {
-    color: theme.colors.textMuted,
-    fontSize: 16,
-    width: 20,
-    textAlign: "center",
-  },
-  itemInfoContainer: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing.sm,
-  },
-  typeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  typeBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  itemLabel: {
-    flex: 1,
-    color: theme.colors.text,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
+    panel: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: theme.spacing.md,
+      ...theme.elevation.card,
+    },
+    panelHead: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+      marginBottom: theme.spacing.sm + 2,
+    },
+    panelHeadText: { flex: 1, minWidth: 0 },
+    panelTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "700",
+      letterSpacing: -0.2,
+    },
+    panelHint: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      marginTop: 2,
+    },
+    search: { marginBottom: theme.spacing.sm },
+    filterRow: {
+      gap: 6,
+      paddingBottom: 10,
+      paddingTop: 2,
+    },
+    filterChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+    },
+    filterChipText: { fontSize: theme.textSizes.xs, fontWeight: "600" },
+    emptySearch: {
+      alignItems: "center",
+      gap: 4,
+      paddingVertical: theme.spacing.lg,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderStyle: "dashed",
+      borderColor: theme.colors.border,
+    },
+    emptySearchTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "600",
+      marginTop: 2,
+    },
+    emptySearchText: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+    },
+    itemsScroll: { maxHeight: 260 },
+    itemRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingVertical: 8,
+      paddingHorizontal: 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    dragHandle: { width: 20, alignItems: "center" },
+    typeBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+      borderRadius: 7,
+      maxWidth: 84,
+    },
+    typeBadgeText: {
+      fontSize: 9.5,
+      fontWeight: "800",
+      letterSpacing: 0.4,
+      textTransform: "uppercase",
+    },
+    itemMain: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      minWidth: 0,
+    },
+    itemLabel: {
+      flex: 1,
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "500",
+    },
 
-  /* ── Folders section ── */
-  foldersHeading: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: theme.spacing.md,
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: theme.spacing.xl * 2,
-  },
-  emptyIcon: { fontSize: 48, marginBottom: theme.spacing.md },
-  emptyTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-  },
-  folderCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-  },
-  folderCardMain: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: theme.spacing.sm,
-  },
-  folderIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: theme.colors.primary + "15",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: theme.spacing.md,
-  },
-  folderIcon: {
-    fontSize: 22,
-  },
-  folderInfo: {
-    flex: 1,
-  },
-  folderName: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  folderCount: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    marginBottom: 2,
-  },
-  folderDate: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-  },
-  folderArrow: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.lg,
-    marginLeft: theme.spacing.sm,
-  },
-  folderActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing.sm,
-  },
-  actionBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs + 2,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary + "15",
-  },
-  actionText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "600",
-  },
-  actionBtnDanger: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs + 2,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.danger + "15",
-  },
-  actionTextDanger: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.xs,
-    fontWeight: "600",
-  },
-});
+    folderSection: { marginTop: theme.spacing.lg },
+    folderCard: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: 12,
+      marginBottom: theme.spacing.sm,
+      ...theme.elevation.card,
+    },
+    folderCardDrop: {
+      borderColor: theme.colors.primary + "70",
+      backgroundColor: theme.colors.primarySoft,
+    },
+    folderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 2,
+    },
+    folderIcon: {
+      width: 42,
+      height: 42,
+      borderRadius: 13,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    folderInfo: { flex: 1, minWidth: 0 },
+    folderName: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "700",
+      letterSpacing: -0.2,
+    },
+    folderMeta: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      marginTop: 2,
+    },
+    folderActions: {
+      flexDirection: "row",
+      gap: theme.spacing.md,
+      marginTop: 10,
+      paddingTop: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    folderAction: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingVertical: 4,
+      paddingRight: 6,
+    },
+    folderActionText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+    },
+  });

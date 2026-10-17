@@ -4,7 +4,6 @@ import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -23,9 +22,15 @@ import {
   deleteOwnerStock,
 } from "../services/ownerStock";
 import type { OwnerStock, OwnerStockInput } from "../types/ownerStock";
-import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Icon } from "../components/ui/Icon";
+import { IconButton } from "../components/ui/IconButton";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
+import { SearchBar } from "../components/ui/SearchBar";
+import { SkeletonCard } from "../components/ui/Skeleton";
 import { OwnerStockForm } from "../components/stock/OwnerStockForm";
 import { notify } from "../utils/notify";
 
@@ -112,10 +117,8 @@ export default function StockOwnerScreen() {
 
   if (authChecking) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
+      <View style={[styles.screen, { alignItems: "center", justifyContent: "center" }]}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }
@@ -124,119 +127,150 @@ export default function StockOwnerScreen() {
     <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
         }
       >
-        {/* Count caption — the shell header owns the page title. */}
-        <Text style={styles.countCaption}>
-          {stocks.length === 1 ? "1 record" : `${stocks.length} records`}
-        </Text>
+        <ScreenHeader
+          eyebrow="Inventory"
+          title="Stock by Owner"
+          subtitle={`${stocks.length} ${stocks.length === 1 ? "record" : "records"}${
+            search ? ` · ${filteredStocks.length} shown` : ""
+          }`}
+          right={
+            <Button
+              title="Add"
+              icon="plus"
+              size="sm"
+              onPress={() => {
+                setEditingItem(null);
+                setShowForm(true);
+              }}
+            />
+          }
+        />
 
-        {/* Search + Add */}
-        <Input
-          placeholder="Search stocks..."
+        <SearchBar
           value={search}
           onChangeText={setSearch}
+          placeholder="Search folder, folio, metal or T.N."
+          accessibilityLabel="Search owner stock"
           autoCapitalize="none"
-          accessibilityLabel="Search stocks"
-        />
-        <Button
-          title="+ Add Owner Stock"
-          onPress={() => {
-            setEditingItem(null);
-            setShowForm(true);
-          }}
+          style={styles.search}
         />
 
-        <View style={styles.spacer} />
-
-        {/* List */}
         {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
+          <View style={styles.skeletons}>
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
           </View>
         ) : filteredStocks.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>📦</Text>
-            <Text style={styles.emptyTitle}>
-              {search ? "No Results" : "No Owner Stock Records"}
-            </Text>
-            <Text style={styles.emptyText}>
-              {search
-                ? "Try a different search term."
-                : "Add your first owner stock record above."}
-            </Text>
-          </View>
+          <EmptyState
+            icon="box"
+            title={search ? "No matching records" : "No owner stock yet"}
+            message={
+              search
+                ? "Try a different folder number, folio, metal type or T.N."
+                : "Add the first owner stock record to start tracking material."
+            }
+            action={
+              search ? (
+                <Button title="Clear search" variant="secondary" onPress={() => setSearch("")} />
+              ) : (
+                <Button
+                  title="Add owner stock"
+                  icon="plus"
+                  onPress={() => {
+                    setEditingItem(null);
+                    setShowForm(true);
+                  }}
+                />
+              )
+            }
+          />
         ) : (
-          <View style={styles.listCard}>
-            {filteredStocks.map((item) => (
-              <View key={item.id} style={styles.stockRow}>
-                <View style={styles.stockRowMain}>
-                  {item.drawing_photo_url ? (
-                    <Image
-                      source={{ uri: item.drawing_photo_url }}
-                      style={styles.stockThumb}
-                    />
-                  ) : (
-                    <View style={styles.stockThumbPlaceholder}>
-                      <Text style={styles.stockThumbPlaceholderText}>📋</Text>
-                    </View>
-                  )}
-                  <View style={styles.stockInfo}>
-                    <Text style={styles.stockTitle} numberOfLines={1}>
-                      {item.folder_no
-                        ? `${item.folder_no}${item.folio_number ? " - " + item.folio_number : ""}`
-                        : item.source_of_metal || "Untitled"}
-                    </Text>
-                    <Text style={styles.stockMeta} numberOfLines={1}>
-                      {item.metal_type || "—"} • {item.source_of_metal || "—"}
-                    </Text>
-                    {item.amount_purchase != null && (
-                      <Text style={styles.stockAmount}>
-                        ₹{item.amount_purchase.toLocaleString()}
-                      </Text>
+          <View style={styles.list}>
+            {filteredStocks.map((item) => {
+              const label = item.folder_no
+                ? `${item.folder_no}${item.folio_number ? ` · ${item.folio_number}` : ""}`
+                : item.source_of_metal || "Untitled";
+              return (
+                <View key={item.id} style={styles.card}>
+                  <View style={styles.cardTop}>
+                    {item.drawing_photo_url ? (
+                      <Image source={{ uri: item.drawing_photo_url }} style={styles.thumb} />
+                    ) : (
+                      <View style={styles.thumbEmpty}>
+                        <Icon name="image" size={20} color={theme.colors.textMuted} />
+                      </View>
                     )}
-                    <Text style={styles.stockDate}>
-                      {formatDate(item.created_at)}
-                    </Text>
+
+                    <View style={styles.info}>
+                      <Text style={styles.title} numberOfLines={1}>
+                        {label}
+                      </Text>
+                      <View style={styles.metaRow}>
+                        {item.metal_type ? (
+                          <Badge label={item.metal_type} tone="neutral" />
+                        ) : null}
+                        <Text style={styles.meta} numberOfLines={1}>
+                          {item.source_of_metal || "No source recorded"}
+                        </Text>
+                      </View>
+                      {item.amount_purchase != null ? (
+                        <Text style={styles.amount}>
+                          ₹{item.amount_purchase.toLocaleString()}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  <View style={styles.cardFooter}>
+                    <Text style={styles.date}>{formatDate(item.created_at)}</Text>
+                    <View style={styles.actions}>
+                      <Button
+                        title="Edit"
+                        icon="pencil"
+                        size="sm"
+                        variant="secondary"
+                        onPress={() => handleEdit(item)}
+                      />
+                      <IconButton
+                        icon="trash"
+                        accessibilityLabel={`Delete ${label}`}
+                        onPress={() => setDeleteTarget(item)}
+                        variant="soft"
+                        size={38}
+                        iconSize={16}
+                        color={theme.colors.danger}
+                      />
+                    </View>
                   </View>
                 </View>
-                <View style={styles.stockActions}>
-                  <Pressable
-                    onPress={() => handleEdit(item)}
-                    style={styles.actionBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Edit ${item.folder_no || "owner stock"}`}
-                  >
-                    <Text style={styles.actionText}>Edit</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setDeleteTarget(item)}
-                    style={styles.actionBtnDanger}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Delete ${item.folder_no || "owner stock"}`}
-                  >
-                    <Text style={styles.actionTextDanger}>Delete</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
       </ScrollView>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         visible={!!deleteTarget}
-        title="Delete Stock"
-        message={`Delete owner stock "${deleteTarget?.folder_no || deleteTarget?.source_of_metal || "record"}"?`}
+        title="Delete stock record"
+        message={`Delete owner stock "${
+          deleteTarget?.folder_no || deleteTarget?.source_of_metal || "record"
+        }"? This cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Form Modal */}
       <OwnerStockForm
         key={editingItem?.id ?? "new"}
         visible={showForm}
@@ -251,133 +285,75 @@ export default function StockOwnerScreen() {
   );
 }
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
-  countCaption: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginBottom: theme.spacing.sm,
-  },
-  spacer: { height: theme.spacing.lg },
-  loadingContainer: {
-    paddingVertical: theme.spacing.xl * 2,
-    alignItems: "center",
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: theme.spacing.xl * 2,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: theme.spacing.md },
-  emptyTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.lg,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-  },
-  listCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-  },
-  stockRow: {
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  stockRowMain: {
-    flexDirection: "row",
-    marginBottom: theme.spacing.sm,
-  },
-  stockThumb: {
-    width: 56,
-    height: 56,
-    borderRadius: theme.radius.sm,
-    marginRight: theme.spacing.md,
-    backgroundColor: theme.colors.background,
-  },
-  stockThumbPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: theme.radius.sm,
-    marginRight: theme.spacing.md,
-    backgroundColor: theme.colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stockThumbPlaceholderText: {
-    fontSize: 24,
-  },
-  stockInfo: {
-    flex: 1,
-  },
-  stockTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  stockMeta: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginBottom: 2,
-  },
-  stockAmount: {
-    color: theme.colors.success,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  stockDate: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-  },
-  stockActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing.sm,
-  },
-  actionBtn: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primary + "15",
-    minWidth: 70,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  actionBtnDanger: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.danger + "15",
-    minWidth: 70,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  actionTextDanger: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-});
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xl,
+    },
+    search: { marginBottom: theme.spacing.md },
+    skeletons: { gap: 8 },
+    list: { gap: theme.spacing.sm },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: 12,
+      ...theme.elevation.card,
+    },
+    cardTop: { flexDirection: "row", gap: 12 },
+    thumb: {
+      width: 56,
+      height: 56,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.surfaceSecondary,
+    },
+    thumbEmpty: {
+      width: 56,
+      height: 56,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.surfaceSecondary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    info: { flex: 1, minWidth: 0 },
+    title: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "700",
+      letterSpacing: -0.2,
+    },
+    metaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 5,
+    },
+    meta: {
+      flex: 1,
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+    },
+    amount: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "700",
+      fontVariant: ["tabular-nums"],
+      marginTop: 6,
+    },
+    cardFooter: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    date: { color: theme.colors.textMuted, fontSize: theme.textSizes.caption },
+    actions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  });

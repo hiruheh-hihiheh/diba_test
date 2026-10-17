@@ -3,20 +3,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
 import {
@@ -34,6 +27,11 @@ import type { Dispatch } from "../types/dispatch";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { BottomSheet } from "../components/ui/BottomSheet";
+import { Icon } from "../components/ui/Icon";
+import { IconButton } from "../components/ui/IconButton";
+import { PressableScale } from "../components/ui/PressableScale";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { notify } from "../utils/notify";
 import {
   StatGrid,
@@ -41,10 +39,19 @@ import {
   WorkerSection,
   QuickActions,
 } from "../components/dashboard";
+import { createDashboardStyles } from "../components/dashboard/styles";
+
+/** Presentation-only greeting; it never depends on business data. */
+function greetingForHour(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
 
 export default function DashboardScreen() {
   const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const styles = React.useMemo(() => createDashboardStyles(theme), [theme]);
 
   const router = useRouter();
   const { session, checking: sessionLoading } = useAdminGate();
@@ -535,10 +542,27 @@ export default function DashboardScreen() {
   if (sessionLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <View style={styles.loadingMark}>
+          <Icon name="hammer" size={24} color={theme.colors.primary} />
+        </View>
+        <ActivityIndicator size="small" color={theme.colors.textMuted} />
       </View>
     );
   }
+
+  const pendingReviews = dispatchStats.submitted;
+  const dateLabel = new Date().toLocaleDateString([], {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  const summary = dispatchLoading
+    ? "Syncing your workspace…"
+    : `${
+        pendingReviews > 0
+          ? `${pendingReviews} dispatch${pendingReviews === 1 ? "" : "es"} awaiting review`
+          : "Dispatch queue is clear"
+      } · ${userStats.active} active team member${userStats.active === 1 ? "" : "s"}`;
 
   return (
     <View style={styles.screen}>
@@ -546,9 +570,103 @@ export default function DashboardScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
         }
       >
+        {/* ── Greeting + attention ─────────────────────────── */}
+        <View>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.eyebrow}>ADMIN CONSOLE</Text>
+            <View style={styles.heroRight}>
+              <Text style={styles.dateText}>{dateLabel}</Text>
+              <IconButton
+                icon="refresh"
+                accessibilityLabel="Refresh dashboard"
+                onPress={onRefresh}
+                variant="soft"
+                size={30}
+                iconSize={15}
+                disabled={refreshing}
+              />
+            </View>
+          </View>
+          <Text style={styles.greeting}>{greetingForHour()}</Text>
+          <Text style={styles.heroSubtitle}>{summary}</Text>
+
+          <PressableScale
+            onPress={() => router.push("/dispatch")}
+            accessibilityLabel={
+              pendingReviews > 0
+                ? `${pendingReviews} dispatches awaiting review. Open dispatches.`
+                : "No dispatches waiting. Open dispatches."
+            }
+            style={[
+              styles.attentionCard,
+              {
+                borderColor:
+                  pendingReviews > 0
+                    ? theme.colors.primary + "55"
+                    : theme.colors.success + "45",
+                backgroundColor:
+                  pendingReviews > 0
+                    ? theme.colors.primarySoft
+                    : theme.colors.successMuted,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.attentionIcon,
+                {
+                  backgroundColor:
+                    pendingReviews > 0
+                      ? theme.colors.primaryMuted
+                      : theme.colors.successMuted,
+                },
+              ]}
+            >
+              <Icon
+                name={pendingReviews > 0 ? "alert" : "checkCircle"}
+                size={21}
+                color={
+                  pendingReviews > 0 ? theme.colors.primary : theme.colors.success
+                }
+              />
+            </View>
+            <View style={styles.attentionText}>
+              <Text
+                style={[
+                  styles.attentionEyebrow,
+                  {
+                    color:
+                      pendingReviews > 0
+                        ? theme.colors.primary
+                        : theme.colors.success,
+                  },
+                ]}
+              >
+                {pendingReviews > 0 ? "NEEDS REVIEW" : "ALL CLEAR"}
+              </Text>
+              <Text style={styles.attentionTitle}>
+                {pendingReviews > 0
+                  ? `${pendingReviews} dispatch${pendingReviews === 1 ? "" : "es"} waiting`
+                  : "No dispatches waiting"}
+              </Text>
+              <Text style={styles.attentionBody}>
+                {pendingReviews > 0
+                  ? "Approve or respond to keep work moving."
+                  : "New worker submissions will appear here."}
+              </Text>
+            </View>
+            <Icon name="chevronRight" size={16} color={theme.colors.textMuted} />
+          </PressableScale>
+        </View>
+
         <StatGrid
           userStats={userStats}
           dispatchStats={dispatchStats}
@@ -603,7 +721,11 @@ export default function DashboardScreen() {
       {/* DELETE CONFIRM (web + native) */}
       <ConfirmDialog
         visible={pendingDeleteWorker !== null}
-        title={pendingDeleteWorker ? `Delete "${pendingDeleteWorker.username}"?` : "Delete user"}
+        title={
+          pendingDeleteWorker
+            ? `Delete "${pendingDeleteWorker.username}"?`
+            : "Delete user"
+        }
         message="This will permanently remove the user's account and authentication credentials."
         confirmLabel="Delete"
         cancelLabel="Cancel"
@@ -617,249 +739,188 @@ export default function DashboardScreen() {
         }}
       />
 
-      {/* ADD MODAL */}
-      <Modal
+      {/* ADD USER */}
+      <BottomSheet
         visible={showAddModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAddModal(false)}
+        onClose={() => {
+          if (!addLoading) setShowAddModal(false);
+        }}
+        title="Add user"
+        subtitle="Create a login for a labourer or processor."
+        footer={
+          <>
+            <Button
+              title={addRole === "processor" ? "Create processor" : "Create labour"}
+              loading={addLoading}
+              onPress={handleCreate}
+              fullWidth
+            />
+            <Button
+              title="Cancel"
+              variant="ghost"
+              onPress={() => setShowAddModal(false)}
+              fullWidth
+            />
+          </>
+        }
       >
-        <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboard}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <Input
+          label="Username"
+          icon="users"
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={addUsername}
+          onChangeText={setAddUsername}
+          placeholder="e.g. raju"
+        />
+        <Input
+          label="Password"
+          secureTextEntry
+          value={addPassword}
+          onChangeText={setAddPassword}
+          placeholder="Minimum 6 characters"
+        />
+
+        <Text style={styles.formLabel}>Role</Text>
+        <SegmentedControl
+          accessibilityLabel="Account role"
+          value={addRole}
+          onChange={setAddRole}
+          options={[
+            { value: "worker", label: "Labour" },
+            { value: "processor", label: "Processor" },
+          ]}
+        />
+
+        {addMessage ? (
+          <View
+            style={[
+              styles.formMessage,
+              {
+                marginTop: 12,
+                backgroundColor:
+                  addMessage.type === "error"
+                    ? theme.colors.dangerMuted
+                    : theme.colors.successMuted,
+              },
+            ]}
           >
-            <ScrollView contentContainerStyle={styles.modalContent}>
-              <Text style={styles.modalTitle}>Add User</Text>
-              <Text style={styles.modalDesc}>
-                Create a new username and password for a Labour or Processor.
-              </Text>
+            <Icon
+              name={addMessage.type === "error" ? "alert" : "checkCircle"}
+              size={15}
+              color={
+                addMessage.type === "error"
+                  ? theme.colors.danger
+                  : theme.colors.success
+              }
+            />
+            <Text
+              style={[
+                styles.formMessageText,
+                {
+                  color:
+                    addMessage.type === "error"
+                      ? theme.colors.danger
+                      : theme.colors.success,
+                },
+              ]}
+            >
+              {addMessage.text}
+            </Text>
+          </View>
+        ) : null}
+      </BottomSheet>
 
-              <Input
-                label="USERNAME"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={addUsername}
-                onChangeText={setAddUsername}
-                placeholder="e.g. raju"
-              />
-              <Input
-                label="PASSWORD"
-                secureTextEntry
-                value={addPassword}
-                onChangeText={setAddPassword}
-                placeholder="Minimum 6 characters"
-              />
-
-              <View style={styles.toggleContainer}>
-                <Text style={styles.label}>ROLE</Text>
-                <View style={{ flexDirection: "row", marginTop: 8 }}>
-                  <Pressable
-                    style={[
-                      styles.toggleBtn,
-                      addRole === "worker" ? styles.toggleActive : styles.toggleInactive,
-                      { flex: 1, marginRight: 8 },
-                    ]}
-                    onPress={() => setAddRole("worker")}
-                    accessibilityRole="button"
-                    accessibilityLabel="Labour role"
-                  >
-                    <Text style={styles.toggleText}>Labour</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.toggleBtn,
-                      addRole === "processor" ? styles.toggleActive : styles.toggleInactive,
-                      { flex: 1 },
-                    ]}
-                    onPress={() => setAddRole("processor")}
-                    accessibilityRole="button"
-                    accessibilityLabel="Processor role"
-                  >
-                    <Text style={styles.toggleText}>Processor</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              {addMessage && (
-                <Text
-                  style={
-                    addMessage.type === "success" ? styles.success : styles.error
-                  }
-                >
-                  {addMessage.text}
-                </Text>
-              )}
-
-              <Button
-                title={addRole === "processor" ? "Create Processor" : "Create Labour"}
-                loading={addLoading}
-                onPress={handleCreate}
-              />
-              <Button
-                title="Cancel"
-                variant="ghost"
-                onPress={() => setShowAddModal(false)}
-              />
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* EDIT MODAL */}
-      <Modal
+      {/* EDIT USER */}
+      <BottomSheet
         visible={showEditModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowEditModal(false)}
+        onClose={() => {
+          if (!editLoading) setShowEditModal(false);
+        }}
+        title={`Edit ${editingWorker?.role === "processor" ? "processor" : "labour"}`}
+        subtitle={editingWorker ? `@${editingWorker.username}` : undefined}
+        footer={
+          <>
+            <Button
+              title="Save changes"
+              loading={editLoading}
+              onPress={handleEditSave}
+              fullWidth
+            />
+            <Button
+              title="Cancel"
+              variant="ghost"
+              onPress={() => setShowEditModal(false)}
+              fullWidth
+            />
+          </>
+        }
       >
-        <SafeAreaView style={styles.modalScreen} edges={["top", "bottom"]}>
-          <KeyboardAvoidingView
-            style={styles.modalKeyboard}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <Input
+          label="Full name"
+          value={editFullName}
+          onChangeText={setEditFullName}
+          placeholder="e.g. Raju Sharma"
+        />
+        <Input
+          label="Username"
+          icon="users"
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={editUsername}
+          onChangeText={setEditUsername}
+          placeholder="e.g. raju"
+        />
+
+        <Text style={styles.formLabel}>Status</Text>
+        <SegmentedControl
+          accessibilityLabel="Account status"
+          value={editIsActive ? "active" : "inactive"}
+          onChange={(value) => setEditIsActive(value === "active")}
+          options={[
+            { value: "active", label: "Active" },
+            { value: "inactive", label: "Inactive" },
+          ]}
+        />
+
+        {editMessage ? (
+          <View
+            style={[
+              styles.formMessage,
+              {
+                marginTop: 12,
+                backgroundColor:
+                  editMessage.type === "error"
+                    ? theme.colors.dangerMuted
+                    : theme.colors.successMuted,
+              },
+            ]}
           >
-            <ScrollView contentContainerStyle={styles.modalContent}>
-              <Text style={styles.modalTitle}>
-                Edit {editingWorker?.role === "processor" ? "Processor" : "Labour"}
-              </Text>
-
-              <Input
-                label="FULL NAME"
-                value={editFullName}
-                onChangeText={setEditFullName}
-                placeholder="e.g. Raju Sharma"
-              />
-              <Input
-                label="USERNAME"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={editUsername}
-                onChangeText={setEditUsername}
-                placeholder="e.g. raju"
-              />
-
-              <View style={styles.toggleContainer}>
-                <Text style={styles.label}>STATUS</Text>
-                <Pressable
-                  style={[
-                    styles.toggleBtn,
-                    editIsActive ? styles.toggleActive : styles.toggleInactive,
-                  ]}
-                  onPress={() => setEditIsActive(!editIsActive)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Toggle active status"
-                >
-                  <Text style={styles.toggleText}>
-                    {editIsActive ? "Active" : "Inactive"}
-                  </Text>
-                </Pressable>
-              </View>
-
-              {editMessage && (
-                <Text
-                  style={
-                    editMessage.type === "success" ? styles.success : styles.error
-                  }
-                >
-                  {editMessage.text}
-                </Text>
-              )}
-
-              <Button
-                title="Save Changes"
-                loading={editLoading}
-                onPress={handleEditSave}
-              />
-              <Button
-                title="Cancel"
-                variant="ghost"
-                onPress={() => setShowEditModal(false)}
-              />
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
+            <Icon
+              name={editMessage.type === "error" ? "alert" : "checkCircle"}
+              size={15}
+              color={
+                editMessage.type === "error"
+                  ? theme.colors.danger
+                  : theme.colors.success
+              }
+            />
+            <Text
+              style={[
+                styles.formMessageText,
+                {
+                  color:
+                    editMessage.type === "error"
+                      ? theme.colors.danger
+                      : theme.colors.success,
+                },
+              ]}
+            >
+              {editMessage.text}
+            </Text>
+          </View>
+        ) : null}
+      </BottomSheet>
     </View>
   );
 }
-
-const createStyles = (theme: AppTheme) =>
-  StyleSheet.create({
-    loadingContainer: {
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-      backgroundColor: theme.colors.background,
-    },
-    screen: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    content: {
-      padding: theme.spacing.lg,
-      paddingBottom: theme.spacing.xl,
-    },
-
-    /* ADD / EDIT MODAL SHELLS */
-    modalScreen: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    modalKeyboard: {
-      flex: 1,
-    },
-    modalContent: {
-      padding: theme.spacing.lg,
-      flexGrow: 1,
-    },
-    modalTitle: {
-      color: theme.colors.text,
-      fontSize: theme.textSizes.lg,
-      fontWeight: "700",
-      marginBottom: 4,
-    },
-    modalDesc: {
-      color: theme.colors.textMuted,
-      fontSize: theme.textSizes.sm,
-      marginBottom: theme.spacing.lg,
-    },
-    toggleContainer: { marginBottom: theme.spacing.md },
-    label: {
-      color: theme.colors.textMuted,
-      fontSize: theme.textSizes.xs,
-      fontWeight: "600",
-      textTransform: "uppercase",
-      marginBottom: 6,
-    },
-    toggleBtn: {
-      paddingVertical: 12,
-      borderRadius: theme.radius.md,
-      alignItems: "center",
-      borderWidth: 1,
-    },
-    toggleActive: {
-      backgroundColor: theme.colors.success + "20",
-      borderColor: theme.colors.success,
-    },
-    toggleInactive: {
-      backgroundColor: theme.colors.danger + "20",
-      borderColor: theme.colors.danger,
-    },
-    toggleText: { fontSize: theme.textSizes.sm, fontWeight: "700" },
-
-    /* MESSAGES */
-    success: {
-      marginTop: theme.spacing.sm,
-      color: theme.colors.success,
-      fontSize: theme.textSizes.sm,
-      textAlign: "center",
-      marginBottom: theme.spacing.md,
-    },
-    error: {
-      marginTop: theme.spacing.sm,
-      color: theme.colors.danger,
-      fontSize: theme.textSizes.sm,
-      textAlign: "center",
-      marginBottom: theme.spacing.md,
-    },
-  });

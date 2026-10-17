@@ -21,7 +21,6 @@ import {
   View,
 } from "react-native";
 import { router, useFocusEffect, type Href } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
@@ -67,9 +66,17 @@ import { BillUploadPanel } from "../components/bills/BillUploadPanel";
 import { LogoPickerModal } from "../components/bills/LogoPickerModal";
 import { BulkDownloadZipModal } from "../components/bills/BulkDownloadZipModal";
 import { LogoThumbnail } from "../components/bills/LogoThumbnail";
+import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Icon, type IconName } from "../components/ui/Icon";
+import { IconButton } from "../components/ui/IconButton";
 import { Input } from "../components/ui/Input";
+import { Reveal } from "../components/ui/Reveal";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
+import { SearchBar } from "../components/ui/SearchBar";
+import { SkeletonCard } from "../components/ui/Skeleton";
 import { notify } from "../utils/notify";
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -788,51 +795,56 @@ const [createOpen, setCreateOpen] = useState(false);
           <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />
         }
       >
-        {/* Caption + toolbar */}
-        <View style={styles.headerRow}>
-          <Text style={styles.countCaption}>
-            {loading && !loadedOnce
-              ? "Loading…"
+        <ScreenHeader
+          eyebrow="Billing"
+          title="Bills"
+          subtitle={
+            loading && !loadedOnce
+              ? "Loading invoices…"
               : filtered
-              ? `${total} ${total === 1 ? "bill matches" : "bills match"}`
+              ? `${total} ${total === 1 ? "bill matches" : "bills match"} the current filters`
               : `${total} ${total === 1 ? "bill" : "bills"} from ${uploads.length} ${
                   uploads.length === 1 ? "workbook" : "workbooks"
-                }`}
-          </Text>
+                }`
+          }
+        />
+
+        <View style={styles.searchRow}>
+          <SearchBar
+            value={search}
+            onChangeText={(v) => {
+              setSearch(v);
+              setPage(1);
+            }}
+            placeholder="Invoice, party, sheet or GST no."
+            accessibilityLabel="Search bills by invoice number, filename, sheet or GST number"
+            autoCapitalize="none"
+            style={styles.searchBar}
+          />
+          <IconButton
+            icon="filter"
+            accessibilityLabel="Show bill filters"
+            onPress={() => setShowFilters((v) => !v)}
+            variant={showFilters || hasFilters ? "solid" : "soft"}
+            size={48}
+            iconSize={18}
+          />
         </View>
 
-        <View style={styles.toolbar}>
+        <View style={styles.actionBar}>
           <Button
-            title="+ Create Bill"
+            title="Create bill"
+            icon="plus"
             onPress={() => setCreateOpen(true)}
-            style={styles.toolbarMain}
+            style={styles.actionBarBtn}
           />
           <Button
-            title="+ Upload workbook"
+            title="Upload workbook"
+            icon="upload"
+            variant="secondary"
             onPress={() => setUploadOpen(true)}
-            variant="ghost"
-            style={styles.toolbarSecondary}
+            style={styles.actionBarBtn}
           />
-          <Pressable
-            onPress={() => setShowFilters((v) => !v)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: showFilters }}
-            accessibilityLabel="Filters"
-            style={({ pressed }) => [
-              styles.filterToggle,
-              hasFilters && styles.filterToggleActive,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text
-              style={[
-                styles.filterToggleText,
-                hasFilters && styles.filterToggleTextActive,
-              ]}
-            >
-              {hasFilters ? "Filtered" : "Filter"}
-            </Text>
-          </Pressable>
         </View>
 
         {/* Job-type grouping.
@@ -884,19 +896,6 @@ const [createOpen, setCreateOpen] = useState(false);
             </ScrollView>
           </View>
         )}
-
-        {/* Search */}
-        <Input
-          label="Search"
-          value={search}
-          onChangeText={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
-          placeholder="Invoice no, filename, sheet or GST no…"
-          returnKeyType="search"
-          accessibilityLabel="Search bills by invoice number, filename, sheet or GST number"
-        />
 
         {/* Filters */}
         {showFilters && (
@@ -1004,32 +1003,29 @@ const [createOpen, setCreateOpen] = useState(false);
 
         {/* List */}
         {loading && !loadedOnce ? (
-          <View
-            style={styles.loadingContainer}
-            accessibilityLiveRegion="polite"
-            accessibilityLabel="Loading bills"
-          >
-            <ActivityIndicator size="large" color={theme.colors.primary} />
+          <View style={styles.skeletons}>
+            <SkeletonCard lines={2} />
+            <SkeletonCard lines={2} />
+            <SkeletonCard lines={1} />
           </View>
         ) : loadError ? (
-          <View style={styles.errorState}>
-            <Text style={styles.emptyTitle}>Could not load the bills</Text>
-            <Text style={styles.emptyText}>{loadError}</Text>
-            <Button title="Try again" onPress={() => void load()} />
-          </View>
+          <EmptyState
+            icon="alert"
+            title="Could not load the bills"
+            message={loadError}
+            action={<Button title="Try again" onPress={() => void load()} />}
+          />
         ) : bills.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>{filtered ? "🔍" : "🧾"}</Text>
-            <Text style={styles.emptyTitle}>
-              {filtered ? "No bills match" : "No bills yet"}
-            </Text>
-            <Text style={styles.emptyText}>
-              {filtered
+          <EmptyState
+            icon={filtered ? "search" : "receipt"}
+            title={filtered ? "No bills match" : "No bills yet"}
+            message={
+              filtered
                 ? "Nothing matches the current search and filters."
-                : "Upload a tax-invoice workbook. Each worksheet becomes one bill, and the workbook produces an original, a duplicate and a triplicate PDF."}
-            </Text>
-            <View style={styles.emptyActions}>
-              {filtered ? (
+                : "Upload a tax-invoice workbook. Each worksheet becomes one bill, and the workbook produces an original, a duplicate and a triplicate PDF."
+            }
+            action={
+              filtered ? (
                 <Button
                   title="Clear search and filters"
                   onPress={() => {
@@ -1040,11 +1036,12 @@ const [createOpen, setCreateOpen] = useState(false);
               ) : (
                 <Button
                   title="Upload workbook"
+                  icon="upload"
                   onPress={() => setUploadOpen(true)}
                 />
-              )}
-            </View>
-          </View>
+              )
+            }
+          />
         ) : (
           <>
             {/* Select-all. Two doors, because they mean different things: the
@@ -1079,7 +1076,14 @@ const [createOpen, setCreateOpen] = useState(false);
                     },
                   ]}
                 >
-                  {allVisibleSelected && <Text style={styles.checkboxTick}>✓</Text>}
+                  {allVisibleSelected && (
+                    <Icon
+                      name="check"
+                      size={12}
+                      color={theme.colors.primaryButtonText}
+                      strokeWidth={3}
+                    />
+                  )}
                 </View>
                 <Text style={styles.selectAllText}>
                   {allVisibleSelected ? "Clear selection" : "Select all on this page"}
@@ -1118,192 +1122,159 @@ const [createOpen, setCreateOpen] = useState(false);
               )}
             </View>
 
-            {bills.map((bill) => {
+            {bills.map((bill, index) => {
               const isSelected = selected.includes(bill.id);
               const rowBusy = deleting === bill.id;
               /* Normalized once per card: "WITHMETAL" must never reach the
                  screen, and an invoice that declared no job type shows nothing. */
               const jobKind = formatJobKind(bill.job_kind);
+              const title = bill.invoice_no || bill.sheet_name;
               return (
-                <View
-                  key={bill.id}
-                  style={[
-                    styles.billCard,
-                    isSelected && styles.billCardSelected,
-                    rowBusy && styles.billCardBusy,
-                  ]}
-                  accessibilityState={{ busy: rowBusy }}
-                >
-                  <View style={styles.billCardTop}>
-                    <Pressable
-                      onPress={() => toggle(bill.id)}
-                      disabled={busy}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: isSelected, disabled: busy }}
-                      accessibilityLabel={`Select bill ${
-                        bill.invoice_no || bill.sheet_name
-                      }`}
-                      hitSlop={8}
-                      style={({ pressed }) => [
-                        pressed && styles.pressed,
-                        busy && styles.disabled,
-                      ]}
-                    >
-                      <View
+                <Reveal key={bill.id} delay={Math.min(index, 7) * 18}>
+                  <View
+                    style={[
+                      styles.billCard,
+                      isSelected && styles.billCardSelected,
+                      rowBusy && styles.billCardBusy,
+                    ]}
+                    accessibilityState={{ busy: rowBusy }}
+                  >
+                    <View style={styles.billTopRow}>
+                      <Pressable
+                        onPress={() => toggle(bill.id)}
+                        disabled={busy}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: isSelected, disabled: busy }}
+                        accessibilityLabel={`Select bill ${title}`}
+                        hitSlop={10}
                         style={[
                           styles.checkbox,
                           isSelected && {
                             backgroundColor: theme.colors.primary,
                             borderColor: theme.colors.primary,
                           },
+                          busy && styles.disabled,
                         ]}
                       >
-                        {isSelected && <Text style={styles.checkboxTick}>✓</Text>}
-                      </View>
-                    </Pressable>
+                        {isSelected ? (
+                          <Icon
+                            name="check"
+                            size={12}
+                            color={theme.colors.primaryButtonText}
+                            strokeWidth={3}
+                          />
+                        ) : null}
+                      </Pressable>
 
-                    <View style={styles.billMain}>
                       <Pressable
+                        style={styles.billMain}
                         onPress={() => setDetailId(bill.id)}
                         accessibilityRole="button"
-                        accessibilityLabel={`Open bill ${
-                          bill.invoice_no || bill.sheet_name
-                        }`}
+                        accessibilityLabel={`Open bill ${title}`}
                       >
-                        <Text style={styles.invoiceNo} numberOfLines={1}>
-                          {bill.invoice_no || "No invoice number"}
-                        </Text>
-                      </Pressable>
-                      {/* Job classification, under the invoice number. Normalized
-                          once per card, so the raw "WITHMETAL" token is never
-                          shown; omitted entirely when the invoice declared none. */}
-                      {jobKind && (
-                        <View style={styles.jobKindPill}>
-                          <Text style={styles.jobKindPillText} numberOfLines={1}>
-                            {jobKind}
+                        <View style={styles.billTitleRow}>
+                          <Text style={styles.invoiceNo} numberOfLines={1}>
+                            {bill.invoice_no || "No invoice number"}
+                          </Text>
+                          <Text style={styles.billAmount}>
+                            {formatMoney(bill.amount_after_tax)}
                           </Text>
                         </View>
-                      )}
-                      <Text style={styles.billSub} numberOfLines={1}>
-                        {bill.party_name
-                          ? `${bill.party_name} · `
-                          : ""}
-                        {`Sheet ${bill.sheet_name} · ${bill.original_filename}`}
-                      </Text>
-                    </View>
-                  </View>
 
-                  <View style={styles.billFigures}>
-                    <View style={styles.figureCell}>
-                      <Text style={styles.figureLabel}>Qty</Text>
-                      <Text style={styles.figureValue}>
-                        {formatQuantity(bill.total_quantity)}
-                      </Text>
-                    </View>
-                    <View style={styles.figureCell}>
-                      <Text style={styles.figureLabel}>Invoice date</Text>
-                      <Text style={styles.figureValue}>
-                        {formatBillDate(bill.invoice_date)}
-                      </Text>
-                    </View>
-                    <View style={styles.figureCellWide}>
-                      <Text style={styles.figureLabel}>Amount</Text>
-                      <Text style={styles.figureAmount}>
-                        {formatMoney(bill.amount_after_tax)}
-                      </Text>
-                    </View>
-                  </View>
+                        <View style={styles.billMetaRow}>
+                          {jobKind ? <Badge label={jobKind} tone="primary" /> : null}
+                          <Text style={styles.billParty} numberOfLines={1}>
+                            {bill.party_name || `Sheet ${bill.sheet_name}`}
+                          </Text>
+                        </View>
 
-                  <View style={styles.copyRow}>
-                    <Text style={styles.copyLabel}>Print copies</Text>
-                    <BillCopyActions bill={bill} layout="compact" />
-                  </View>
+                        <View style={styles.billMetaRow}>
+                          <Icon
+                            name="calendar"
+                            size={12}
+                            color={theme.colors.textMuted}
+                          />
+                          <Text style={styles.billMeta}>
+                            {formatBillDate(bill.invoice_date)}
+                          </Text>
+                          <Text style={styles.billDot}>·</Text>
+                          <Icon
+                            name="box"
+                            size={12}
+                            color={theme.colors.textMuted}
+                          />
+                          <Text style={styles.billMeta}>
+                            Qty {formatQuantity(bill.total_quantity)}
+                          </Text>
+                        </View>
 
-                  {/* The logo line answers "will this print with a letterhead?" at a
-                      glance, which is the question an admin has when checking a list
-                      before sending invoices out. It deliberately says "No Logo
-                      Assigned" rather than showing nothing: the absence is the state
-                      most bills are in, and silence would read as "not applicable"
-                      rather than "chosen, deliberately none". */}
-                  <View style={styles.logoRow}>
-                    <Text style={styles.copyLabel}>Logo</Text>
-                    {bill.logo_id ? (
-                      <View style={styles.logoInner}>
-                        <LogoThumbnail logoId={bill.logo_id} size={24} />
-                        <Text style={styles.logoName} numberOfLines={1}>
-                          {describeBillLogo(bill.logo_id, logoNames)}
+                        <Text style={styles.billFile} numberOfLines={1}>
+                          {bill.original_filename} · Sheet {bill.sheet_name}
                         </Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.logoNone}>No Logo Assigned</Text>
-                    )}
-                    {bill.logo_rendered_logo_id !== bill.logo_id ? (
-                      <Text style={styles.logoStale}>Re-printing PDF…</Text>
-                    ) : null}
-                  </View>
+                      </Pressable>
+                    </View>
 
-                  <View style={styles.billActions}>
-                    <Pressable
-                      onPress={() => setDetailId(bill.id)}
-                      style={({ pressed }) => [
-                        styles.actionBtnSecondary,
-                        pressed && styles.pressed,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`View bill ${
-                        bill.invoice_no || bill.sheet_name
-                      }`}
-                    >
-                      <Text style={styles.actionTextSecondary}>View</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => openPicker([bill.id])}
-                      style={({ pressed }) => [
-                        styles.actionBtn,
-                        pressed && styles.pressed,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Add bill ${
-                        bill.invoice_no || bill.sheet_name
-                      } to a folder`}
-                    >
-                      <Text style={styles.actionText}>Add to folder</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setEditId(bill.id)}
-                      disabled={rowBusy}
-                      style={({ pressed }) => [
-                        styles.actionBtn,
-                        rowBusy && styles.actionBtnDisabled,
-                        pressed && !rowBusy && styles.pressed,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Edit bill ${
-                        bill.invoice_no || bill.sheet_name
-                      }`}
-                    >
-                      <Text style={styles.actionText}>Edit</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setDeleteTarget(bill)}
-                      disabled={rowBusy}
-                      style={({ pressed }) => [
-                        styles.actionBtnDanger,
-                        rowBusy && styles.actionBtnDisabled,
-                        pressed && !rowBusy && styles.pressed,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Delete bill ${
-                        bill.invoice_no || bill.sheet_name
-                      }`}
-                      accessibilityState={{ busy: rowBusy }}
-                    >
-                      <Text style={styles.actionTextDanger}>
-                        {rowBusy ? "Deleting…" : "Delete"}
-                      </Text>
-                    </Pressable>
+                    <View style={styles.accessoryRow}>
+                      <Text style={styles.accessoryLabel}>PRINT</Text>
+                      <BillCopyActions bill={bill} layout="compact" />
+                    </View>
+
+                    {/* The logo line answers "will this print with a letterhead?"
+                        at a glance, which is the question an admin has when
+                        checking a list before sending invoices out. It
+                        deliberately says "None assigned" rather than showing
+                        nothing: the absence is the state most bills are in, and
+                        silence would read as "not applicable". */}
+                    <View style={styles.accessoryRow}>
+                      <Text style={styles.accessoryLabel}>LOGO</Text>
+                      {bill.logo_id ? (
+                        <View style={styles.logoInner}>
+                          <LogoThumbnail logoId={bill.logo_id} size={22} />
+                          <Text style={styles.logoName} numberOfLines={1}>
+                            {describeBillLogo(bill.logo_id, logoNames)}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.logoNone}>None assigned</Text>
+                      )}
+                      {bill.logo_rendered_logo_id !== bill.logo_id ? (
+                        <Text style={styles.logoStale}>Re-printing…</Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.billActions}>
+                      <CardAction
+                        icon="eye"
+                        label="View"
+                        onPress={() => setDetailId(bill.id)}
+                        accessibilityLabel={`View bill ${title}`}
+                      />
+                      <CardAction
+                        icon="folder"
+                        label="Folder"
+                        onPress={() => openPicker([bill.id])}
+                        accessibilityLabel={`Add bill ${title} to a folder`}
+                      />
+                      <CardAction
+                        icon="pencil"
+                        label="Edit"
+                        disabled={rowBusy}
+                        onPress={() => setEditId(bill.id)}
+                        accessibilityLabel={`Edit bill ${title}`}
+                      />
+                      <IconButton
+                        icon="trash"
+                        accessibilityLabel={`Delete bill ${title}`}
+                        onPress={() => setDeleteTarget(bill)}
+                        variant="soft"
+                        size={38}
+                        iconSize={16}
+                        color={theme.colors.danger}
+                        disabled={rowBusy}
+                      />
+                    </View>
                   </View>
-                </View>
+                </Reveal>
               );
             })}
 
@@ -1784,8 +1755,133 @@ function BillUploadScreenModal({
   );
 }
 
+function CardAction({
+  icon,
+  label,
+  onPress,
+  accessibilityLabel,
+  disabled = false,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  accessibilityLabel: string;
+  disabled?: boolean;
+}) {
+  const { theme } = useTheme();
+  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [
+        styles.cardAction,
+        pressed && !disabled && { opacity: 0.6 },
+        disabled && styles.disabled,
+      ]}
+    >
+      <Icon name={icon} size={15} color={theme.colors.textSecondary} />
+      <Text style={styles.cardActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
+
+
+    searchRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+    },
+    searchBar: { flex: 1 },
+    actionBar: {
+      flexDirection: "row",
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.sm + 2,
+      marginBottom: theme.spacing.md,
+    },
+    actionBarBtn: { flex: 1 },
+    skeletons: { gap: 4, marginTop: theme.spacing.sm },
+
+    /* ── Redesigned bill card ──────────────────────────────── */
+    billTopRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+    },
+    billTitleRow: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      gap: theme.spacing.sm,
+    },
+    billAmount: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "800",
+      letterSpacing: -0.3,
+      fontVariant: ["tabular-nums"],
+    },
+    billMetaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 6,
+      flexWrap: "wrap",
+    },
+    billParty: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "500",
+    },
+    billMeta: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+    },
+    billDot: { color: theme.colors.textMuted, fontSize: 10 },
+    billFile: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
+      marginTop: 6,
+    },
+    accessoryRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+      marginTop: 10,
+      minHeight: 30,
+    },
+    accessoryLabel: {
+      width: 46,
+      color: theme.colors.textMuted,
+      fontSize: 9.5,
+      fontWeight: "700",
+      letterSpacing: 0.7,
+    },
+    cardAction: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+      minHeight: 38,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    cardActionText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+    },
+
     screen: { flex: 1, backgroundColor: theme.colors.background },
     content: { padding: theme.spacing.lg, paddingBottom: theme.spacing.xl },
 
@@ -1842,9 +1938,9 @@ const createStyles = (theme: AppTheme) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 6,
-      minHeight: 38,
+      minHeight: 36,
       paddingHorizontal: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      borderRadius: theme.radius.pill,
       borderWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
@@ -1874,10 +1970,10 @@ const createStyles = (theme: AppTheme) =>
     },
     chipRow: { gap: theme.spacing.sm, paddingVertical: 2, paddingRight: theme.spacing.md },
     chip: {
-      minHeight: 38,
+      minHeight: 36,
       maxWidth: 220,
       paddingHorizontal: theme.spacing.md,
-      borderRadius: theme.radius.md,
+      borderRadius: theme.radius.pill,
       borderWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
@@ -1955,9 +2051,10 @@ const createStyles = (theme: AppTheme) =>
     checkbox: {
       width: 22,
       height: 22,
-      borderRadius: 6,
-      borderWidth: 2,
-      borderColor: theme.colors.border,
+      borderRadius: 7,
+      borderWidth: 1.5,
+      borderColor: theme.colors.borderStrong,
+      marginTop: 2,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1973,17 +2070,24 @@ const createStyles = (theme: AppTheme) =>
       borderRadius: theme.radius.lg,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: theme.spacing.md,
-      marginBottom: theme.spacing.md,
+      padding: 12,
+      marginBottom: theme.spacing.sm + 2,
+      ...theme.elevation.card,
     },
-    billCardSelected: { borderColor: theme.colors.primary },
+    billCardSelected: {
+      borderColor: theme.colors.primary,
+      backgroundColor: theme.colors.primarySoft,
+    },
     billCardBusy: { opacity: 0.6 },
     billCardTop: { flexDirection: "row", alignItems: "flex-start", gap: theme.spacing.sm },
     billMain: { flex: 1, minWidth: 0 },
     invoiceNo: {
+      flex: 1,
+      minWidth: 0,
       color: theme.colors.text,
       fontSize: theme.textSizes.md,
       fontWeight: "700",
+      letterSpacing: -0.2,
     },
     /* Self-align so the pill hugs the text rather than stretching the card, and
        sits inline with the invoice number's own line height. */
@@ -2082,8 +2186,12 @@ const createStyles = (theme: AppTheme) =>
 
     billActions: {
       flexDirection: "row",
-      gap: theme.spacing.sm,
-      marginTop: theme.spacing.md,
+      alignItems: "center",
+      gap: 6,
+      marginTop: theme.spacing.sm,
+      paddingTop: theme.spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
     },
     actionBtn: {
       flex: 1,
@@ -2165,8 +2273,8 @@ const createStyles = (theme: AppTheme) =>
       padding: theme.spacing.md,
       borderRadius: theme.radius.lg,
       borderWidth: 1,
-      borderColor: theme.colors.primary,
-      backgroundColor: theme.colors.primaryMuted,
+      borderColor: theme.colors.primary + "66",
+      backgroundColor: theme.colors.primarySoft,
       gap: theme.spacing.sm,
     },
     bulkCount: {

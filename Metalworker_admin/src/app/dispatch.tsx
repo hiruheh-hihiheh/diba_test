@@ -2,7 +2,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,13 +14,18 @@ import { router, useFocusEffect } from "expo-router";
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
-import {
-  fetchAdminDispatches,
-  getStatusColor,
-} from "../services/dispatch";
+import { fetchAdminDispatches } from "../services/dispatch";
 import type { Dispatch, DispatchStatus } from "../types/dispatch";
 
-import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Icon } from "../components/ui/Icon";
+import { IconButton } from "../components/ui/IconButton";
+import { PressableScale } from "../components/ui/PressableScale";
+import { Reveal } from "../components/ui/Reveal";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
+import { SearchBar } from "../components/ui/SearchBar";
+import { SkeletonCard } from "../components/ui/Skeleton";
 
 interface UserGroup {
   username: string;
@@ -152,6 +156,16 @@ export default function DispatchScreen() {
     );
   }
 
+  const statusCounts: Record<DispatchStatus | "all", number> = {
+    all: dispatches.length,
+    submitted: dispatches.filter((d) => d.status === "submitted").length,
+    reviewed: dispatches.filter((d) => d.status === "reviewed").length,
+    approved: dispatches.filter((d) => d.status === "approved").length,
+    rejected: dispatches.filter((d) => d.status === "rejected").length,
+  };
+
+  const totalWorkers = groupedDispatches.length;
+  const totalDispatches = filteredDispatches.length;
   const filterOptions: (DispatchStatus | "all")[] = [
     "all",
     "submitted",
@@ -160,487 +174,441 @@ export default function DispatchScreen() {
     "rejected",
   ];
 
-  const totalWorkers = groupedDispatches.length;
-  const totalDispatches = filteredDispatches.length;
-
   return (
     <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
         }
       >
-        {/* Count caption — the shell header owns the page title. */}
-        <Text style={styles.countCaption}>
-          {totalDispatches} dispatches • {totalWorkers} workers
-        </Text>
+        <ScreenHeader
+          eyebrow="Operations"
+          title="Dispatches"
+          subtitle={`${totalDispatches} of ${dispatches.length} shown · ${totalWorkers} ${
+            totalWorkers === 1 ? "worker" : "workers"
+          }`}
+          right={
+            <IconButton
+              icon="refresh"
+              accessibilityLabel="Refresh dispatches"
+              onPress={onRefresh}
+              variant="soft"
+              size={36}
+              iconSize={16}
+              disabled={refreshing}
+            />
+          }
+        />
 
-        {/* SEARCH & FILTER */}
-        <View style={styles.searchSection}>
-          <Input
-            placeholder="Search username or vehicle..."
-            value={search}
-            onChangeText={setSearch}
-            autoCapitalize="none"
-          />
+        <SearchBar
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search worker or vehicle"
+          accessibilityLabel="Search dispatches by worker or vehicle"
+          autoCapitalize="none"
+        />
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterRow}
-            contentContainerStyle={styles.filterContent}
-          >
-            {filterOptions.map((f) => (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          style={styles.filterScroll}
+        >
+          {filterOptions.map((option) => {
+            const active = filter === option;
+            const label = option === "all" ? "All" : option[0].toUpperCase() + option.slice(1);
+            return (
               <Pressable
-                key={f}
-                style={[
-                  styles.filterBtn,
-                  filter === f && styles.filterBtnActive,
+                key={option}
+                onPress={() => setFilter(option)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={({ pressed }) => [
+                  styles.filterChip,
+                  active && styles.filterChipActive,
+                  pressed && { opacity: 0.75 },
                 ]}
-                onPress={() => setFilter(f)}
               >
                 <Text
                   style={[
-                    styles.filterText,
-                    filter === f && styles.filterTextActive,
+                    styles.filterChipText,
+                    active && styles.filterChipTextActive,
                   ]}
                 >
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                  {label}
                 </Text>
+                <View
+                  style={[
+                    styles.filterCount,
+                    active && styles.filterCountActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterCountText,
+                      active && styles.filterCountTextActive,
+                    ]}
+                  >
+                    {statusCounts[option]}
+                  </Text>
+                </View>
               </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+            );
+          })}
+        </ScrollView>
 
-        {/* DISPATCH LIST */}
-        <View style={styles.listCard}>
-          <View style={styles.listHeader}>
-            <Text style={styles.cardTitle}>
-              {filter !== "all" || search ? "Filtered Results" : "All Dispatches"}
+        {error && !loading ? (
+          <View style={styles.errorBanner}>
+            <Icon name="alert" size={16} color={theme.colors.danger} />
+            <Text style={styles.errorBannerText}>
+              Could not load dispatches: {error}
             </Text>
-            <Pressable onPress={onRefresh} disabled={refreshing}>
-              <Text style={styles.refreshText}>
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </Text>
+            <Pressable onPress={onRefresh} accessibilityRole="button">
+              <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           </View>
+        ) : null}
 
-          {error && !loading && (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorBannerText}>
-                Failed to load dispatches: {error}
-              </Text>
-              <Pressable onPress={onRefresh}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
-            </View>
-          )}
+        {loading && dispatches.length === 0 ? (
+          <View style={styles.skeletons}>
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
+            <SkeletonCard lines={1} />
+          </View>
+        ) : filteredDispatches.length === 0 ? (
+          <EmptyState
+            icon="truck"
+            title={search || filter !== "all" ? "No matching dispatches" : "No dispatches yet"}
+            message={
+              search || filter !== "all"
+                ? "Try a different search term or status filter."
+                : "Worker submissions will appear here once they are sent from the field app."
+            }
+          />
+        ) : (
+          <View style={styles.list}>
+            {groupedDispatches.map((group) => {
+              if (group.dispatches.length === 1) {
+                const dispatch = group.dispatches[0];
+                return (
+                  <PressableScale
+                    key={dispatch.id}
+                    onPress={() => openDispatchDetails(dispatch.id)}
+                    accessibilityLabel={`Dispatch by ${dispatch.worker_username}, ${dispatch.status}`}
+                  >
+                    <View style={styles.rowCard}>
+                      <View style={styles.rowIcon}>
+                        <Icon name="truck" size={18} color={theme.colors.primary} />
+                      </View>
+                      <View style={styles.rowText}>
+                        <Text style={styles.rowTitle} numberOfLines={1}>
+                          {dispatch.worker_username}
+                        </Text>
+                        <Text style={styles.rowMeta} numberOfLines={1}>
+                          {dispatch.vehicle_number}
+                        </Text>
+                        <Text style={styles.rowDate}>{formatDate(dispatch.submitted_at)}</Text>
+                      </View>
+                      <View style={styles.rowTrailing}>
+                        <Badge
+                          label={dispatch.status.toUpperCase()}
+                          tone={statusToneFor(dispatch.status)}
+                        />
+                        <Icon
+                          name="chevronRight"
+                          size={15}
+                          color={theme.colors.textMuted}
+                        />
+                      </View>
+                    </View>
+                  </PressableScale>
+                );
+              }
 
-          {loading && dispatches.length === 0 ? (
-            <View style={styles.emptyState}>
-              <ActivityIndicator color={theme.colors.primary} />
-            </View>
-          ) : filteredDispatches.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>📭</Text>
-              <Text style={styles.emptyText}>
-                {search || filter !== "all"
-                  ? "No dispatches match your search or filter."
-                  : "No dispatches found."}
-              </Text>
-            </View>
-          ) : (
-            <View>
-              {groupedDispatches.map((group) => {
-                if (group.dispatches.length === 1) {
-                  // Single dispatch - show as normal row
-                  const dispatch = group.dispatches[0];
-                  return (
-                    <Pressable
-                      key={dispatch.id}
-                      style={styles.dispatchRow}
-                      onPress={() => openDispatchDetails(dispatch.id)}
+              return (
+                <View key={group.username} style={styles.groupCard}>
+                  <Pressable
+                    style={styles.groupHeader}
+                    onPress={() => toggleUserExpansion(group.username)}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: group.isExpanded }}
+                    accessibilityLabel={`${group.username}, ${group.dispatches.length} dispatches. ${
+                      group.isExpanded ? "Collapse" : "Expand"
+                    }`}
+                  >
+                    <View style={styles.groupAvatar}>
+                      <Text style={styles.groupAvatarText}>
+                        {group.username.slice(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.groupInfo}>
+                      <Text style={styles.groupName} numberOfLines={1}>
+                        {group.username}
+                      </Text>
+                      <Text style={styles.groupCount}>
+                        {group.dispatches.length} dispatches
+                      </Text>
+                    </View>
+                    <View
+                      style={{
+                        transform: [
+                          { rotate: group.isExpanded ? "90deg" : "0deg" },
+                        ],
+                      }}
                     >
-                      <View style={styles.dispatchInfo}>
-                        <View style={styles.dispatchMainRow}>
-                          <Text style={styles.dispatchUsername} numberOfLines={1}>
-                            {dispatch.worker_username}
-                          </Text>
-                          <View
-                            style={[
-                              styles.statusBadge,
-                              { backgroundColor: getStatusColor(dispatch.status, theme) + "20" },
+                      <Icon
+                        name="chevronRight"
+                        size={16}
+                        color={theme.colors.textMuted}
+                      />
+                    </View>
+                  </Pressable>
+
+                  {group.isExpanded ? (
+                    <Reveal>
+                      <View style={styles.groupBody}>
+                        {group.dispatches.map((dispatch, index) => (
+                          <Pressable
+                            key={dispatch.id}
+                            onPress={() => openDispatchDetails(dispatch.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Dispatch ${dispatch.vehicle_number}, ${dispatch.status}`}
+                            style={({ pressed }) => [
+                              styles.groupRow,
+                              index !== group.dispatches.length - 1 &&
+                                styles.groupRowDivider,
+                              pressed && { backgroundColor: theme.colors.surfaceHover },
                             ]}
                           >
-                            <Text
-                              style={[
-                                styles.statusText,
-                                { color: getStatusColor(dispatch.status, theme) },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {dispatch.status.toUpperCase()}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={styles.dispatchVehicle} numberOfLines={1}>
-                          🚛 {dispatch.vehicle_number}
-                        </Text>
-                        <Text style={styles.dispatchDate}>
-                          📅 {formatDate(dispatch.submitted_at)}
-                        </Text>
+                            <View style={styles.groupRowInfo}>
+                              <Text style={styles.groupRowTitle} numberOfLines={1}>
+                                {dispatch.vehicle_number}
+                              </Text>
+                              <Text style={styles.rowDate}>
+                                {formatDate(dispatch.submitted_at)}
+                              </Text>
+                            </View>
+                            <Badge
+                              label={dispatch.status.toUpperCase()}
+                              tone={statusToneFor(dispatch.status)}
+                            />
+                            <Icon
+                              name="chevronRight"
+                              size={14}
+                              color={theme.colors.textMuted}
+                            />
+                          </Pressable>
+                        ))}
                       </View>
-                      <View style={styles.chevron}>
-                        <Text style={styles.chevronText}>›</Text>
-                      </View>
-                    </Pressable>
-                  );
-                } else {
-                  // Multiple dispatches - show as collapsible group
-                  return (
-                    <View key={group.username} style={styles.userGroup}>
-                      <Pressable
-                        style={styles.userGroupHeader}
-                        onPress={() => toggleUserExpansion(group.username)}
-                      >
-                        <View style={styles.userGroupIcon}>
-                          <Text style={styles.userGroupIconText}>
-                            {group.isExpanded ? "📂" : "📁"}
-                          </Text>
-                        </View>
-                        <View style={styles.userGroupInfo}>
-                          <Text style={styles.userGroupName} numberOfLines={1}>
-                            {group.username}
-                          </Text>
-                          <Text style={styles.userGroupCount}>
-                            {group.dispatches.length} Dispatches
-                          </Text>
-                        </View>
-                        <View style={styles.userGroupChevron}>
-                          <Text style={styles.userGroupChevronText}>
-                            {group.isExpanded ? "▲" : "▼"}
-                          </Text>
-                        </View>
-                      </Pressable>
-
-                      {group.isExpanded && (
-                        <View style={styles.userGroupContent}>
-                          {group.dispatches.map((dispatch, index) => (
-                            <Pressable
-                              key={dispatch.id}
-                              style={[
-                                styles.groupedDispatchRow,
-                                index === group.dispatches.length - 1 &&
-                                  styles.groupedDispatchRowLast,
-                              ]}
-                              onPress={() => openDispatchDetails(dispatch.id)}
-                            >
-                              <View style={styles.groupedDispatchInfo}>
-                                <View style={styles.groupedDispatchMainRow}>
-                                  <Text style={styles.dispatchVehicle} numberOfLines={1}>
-                                    🚛 {dispatch.vehicle_number}
-                                  </Text>
-                                  <View
-                                    style={[
-                                      styles.statusBadge,
-                                      { backgroundColor: getStatusColor(dispatch.status, theme) + "20" },
-                                    ]}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.statusText,
-                                        { color: getStatusColor(dispatch.status, theme) },
-                                      ]}
-                                      numberOfLines={1}
-                                    >
-                                      {dispatch.status.toUpperCase()}
-                                    </Text>
-                                  </View>
-                                </View>
-                                <Text style={styles.dispatchDate}>
-                                  📅 {formatDate(dispatch.submitted_at)}
-                                </Text>
-                              </View>
-                              <View style={styles.chevron}>
-                                <Text style={styles.chevronText}>›</Text>
-                              </View>
-                            </Pressable>
-                          ))}
-                        </View>
-                      )}
-                    </View>
-                  );
-                }
-              })}
-            </View>
-          )}
-        </View>
+                    </Reveal>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
 }
 
-const createStyles = (theme: AppTheme) => StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: theme.colors.background,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
+function statusToneFor(status: DispatchStatus): "warning" | "info" | "success" | "danger" | "neutral" {
+  switch (status) {
+    case "approved":
+      return "success";
+    case "rejected":
+      return "danger";
+    case "reviewed":
+      return "info";
+    case "submitted":
+      return "warning";
+    default:
+      return "neutral";
+  }
+}
 
-  countCaption: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginBottom: theme.spacing.lg,
-  },
-
-  /* SEARCH & FILTER */
-  searchSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  filterRow: {
-    marginTop: theme.spacing.md,
-  },
-  filterContent: {
-    paddingRight: theme.spacing.sm,
-  },
-  filterBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    marginRight: theme.spacing.sm,
-  },
-  filterBtnActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  filterText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  filterTextActive: { color: theme.colors.primaryButtonText },
-
-  /* LIST CARD */
-  listCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.md,
-    // react-native-web does not implement the native `shadow*` props; web
-    // wants a single `boxShadow` string, native the `shadow*` family.
-    ...Platform.select({
-      web: { boxShadow: "0 2px 4px rgba(0, 0, 0, 0.05)" },
-      default: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-      },
-    }),
-  },
-  listHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing.md,
-  },
-  cardTitle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  refreshText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-  },
-  errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: theme.colors.danger + "15",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.danger + "40",
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-  },
-  errorBannerText: {
-    color: theme.colors.danger,
-    fontSize: theme.textSizes.sm,
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  retryText: {
-    color: theme.colors.primary,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "700",
-  },
-  emptyState: {
-    paddingVertical: theme.spacing.xl,
-    alignItems: "center",
-  },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: theme.spacing.md,
-    opacity: 0.5,
-  },
-  emptyText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    textAlign: "center",
-  },
-
-  /* DISPATCH ROW */
-  dispatchRow: {
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  dispatchInfo: {
-    flex: 1,
-  },
-  dispatchMainRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: theme.spacing.xs,
-  },
-  dispatchUsername: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  dispatchVehicle: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.sm,
-    fontWeight: "600",
-    marginBottom: 2,
-    flex: 1,
-    marginRight: theme.spacing.sm,
-  },
-  dispatchDate: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.xs,
-  },
-  chevron: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: theme.colors.primary + "15",
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: theme.spacing.sm,
-  },
-  chevronText: {
-    color: theme.colors.primary,
-    fontSize: 20,
-    fontWeight: "700",
-  },
-
-  /* STATUS BADGE */
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    maxWidth: 100,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-
-  /* USER GROUP */
-  userGroup: {
-    marginBottom: theme.spacing.md,
-  },
-  userGroupHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.primary + "10",
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.primary + "30",
-  },
-  userGroupIcon: {
-    fontSize: 24,
-    marginRight: theme.spacing.md,
-  },
-  userGroupIconText: {
-    fontSize: 24,
-  },
-  userGroupInfo: {
-    flex: 1,
-  },
-  userGroupName: {
-    color: theme.colors.text,
-    fontSize: theme.textSizes.md,
-    fontWeight: "700",
-  },
-  userGroupCount: {
-    color: theme.colors.textMuted,
-    fontSize: theme.textSizes.sm,
-    marginTop: 2,
-  },
-  userGroupChevron: {
-    width: 24,
-    height: 24,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  userGroupChevronText: {
-    color: theme.colors.textMuted,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  userGroupContent: {
-    marginTop: theme.spacing.sm,
-    marginLeft: theme.spacing.md,
-    paddingLeft: theme.spacing.md,
-    borderLeftWidth: 2,
-    borderLeftColor: theme.colors.border,
-  },
-
-  /* GROUPED DISPATCH ROW */
-  groupedDispatchRow: {
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  groupedDispatchRowLast: {
-    borderBottomWidth: 0,
-  },
-  groupedDispatchInfo: {
-    flex: 1,
-  },
-  groupedDispatchMainRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: theme.spacing.xs,
-  },
-});
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    loadingContainer: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: theme.colors.background,
+    },
+    screen: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      paddingBottom: theme.spacing.xl,
+    },
+    filterScroll: { marginTop: theme.spacing.sm + 2, marginHorizontal: -theme.spacing.md },
+    filterRow: {
+      gap: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 2,
+    },
+    filterChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    filterChipActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
+    },
+    filterChipText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+    },
+    filterChipTextActive: { color: theme.colors.primaryButtonText },
+    filterCount: {
+      minWidth: 20,
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.surfaceHover,
+      alignItems: "center",
+    },
+    filterCountActive: { backgroundColor: "rgba(0,0,0,0.16)" },
+    filterCountText: {
+      color: theme.colors.textMuted,
+      fontSize: 10,
+      fontWeight: "700",
+      fontVariant: ["tabular-nums"],
+    },
+    filterCountTextActive: { color: theme.colors.primaryButtonText },
+    errorBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.colors.dangerMuted,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.danger + "45",
+      padding: 12,
+      marginTop: theme.spacing.md,
+    },
+    errorBannerText: {
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.xs,
+      flex: 1,
+    },
+    retryText: {
+      color: theme.colors.danger,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+    },
+    skeletons: { marginTop: theme.spacing.md, gap: 0 },
+    list: { marginTop: theme.spacing.md, gap: theme.spacing.sm },
+    rowCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      padding: 12,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      ...theme.elevation.card,
+    },
+    rowIcon: {
+      width: 42,
+      height: 42,
+      borderRadius: 13,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    rowText: { flex: 1, minWidth: 0 },
+    rowTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "700",
+    },
+    rowMeta: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      marginTop: 2,
+    },
+    rowDate: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
+      marginTop: 2,
+    },
+    rowTrailing: { alignItems: "flex-end", gap: 6 },
+    groupCard: {
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      overflow: "hidden",
+      ...theme.elevation.card,
+    },
+    groupHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      padding: 12,
+      minHeight: 62,
+    },
+    groupAvatar: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    groupAvatarText: {
+      color: theme.colors.primary,
+      fontSize: 12,
+      fontWeight: "800",
+    },
+    groupInfo: { flex: 1, minWidth: 0 },
+    groupName: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "700",
+    },
+    groupCount: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      marginTop: 2,
+    },
+    groupBody: {
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      paddingHorizontal: 12,
+    },
+    groupRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 11,
+      paddingHorizontal: 2,
+      borderRadius: theme.radius.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: "transparent",
+    },
+    groupRowDivider: { borderBottomColor: theme.colors.border },
+    groupRowInfo: { flex: 1, minWidth: 0 },
+    groupRowTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.sm,
+      fontWeight: "600",
+    },
+  });

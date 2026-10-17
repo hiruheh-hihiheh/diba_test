@@ -3,11 +3,12 @@
 // The full "everything" navigation menu sliding out from the left over a
 // scrim. Covers the whole shell (header, content and bottom bar) so users can
 // jump anywhere from any screen. Closes on backdrop tap, the X button, item
-// selection, Android back and web Escape (both orchestrated by AdminShell).
-import React, { useEffect, useMemo, useRef } from "react";
+// selection, Android back and web Escape (all orchestrated by AdminShell).
+import React, { useEffect, useMemo } from "react";
 import {
   Animated,
   Dimensions,
+  Easing,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,12 +19,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { useReducedMotion } from "../../hooks/useReducedMotion";
 import {
   type NavItem,
   type NavSection,
 } from "../../navigation/navigationConfig";
+import { Icon } from "../ui/Icon";
+import { IconButton } from "../ui/IconButton";
 
-const PANEL_WIDTH = Math.min(Dimensions.get("window").width * 0.85, 340);
+const PANEL_WIDTH = Math.min(Dimensions.get("window").width * 0.86, 348);
 
 interface NavigationDrawerProps {
   visible: boolean;
@@ -44,6 +48,7 @@ export function NavigationDrawer({
 }: NavigationDrawerProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const reduced = useReducedMotion();
   // Pre-created via useMemo: reading `useRef().current` during render is
   // rejected by the react-hooks/refs compiler rule.
   const translateX = useMemo(() => new Animated.Value(-PANEL_WIDTH), []);
@@ -51,16 +56,24 @@ export function NavigationDrawer({
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   useEffect(() => {
+    if (reduced) {
+      translateX.setValue(visible ? 0 : -PANEL_WIDTH);
+      scrimOpacity.setValue(visible ? 1 : 0);
+      return;
+    }
     if (visible) {
       Animated.parallel([
-        Animated.timing(translateX, {
+        Animated.spring(translateX, {
           toValue: 0,
-          duration: theme.motion.base,
+          damping: 26,
+          stiffness: 260,
+          mass: 0.9,
           useNativeDriver: true,
         }),
         Animated.timing(scrimOpacity, {
           toValue: 1,
           duration: theme.motion.fast,
+          easing: Easing.out(Easing.quad),
           useNativeDriver: true,
         }),
       ]).start();
@@ -68,7 +81,8 @@ export function NavigationDrawer({
       Animated.parallel([
         Animated.timing(translateX, {
           toValue: -PANEL_WIDTH,
-          duration: theme.motion.fast,
+          duration: theme.motion.base,
+          easing: Easing.in(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(scrimOpacity, {
@@ -78,7 +92,7 @@ export function NavigationDrawer({
         }),
       ]).start();
     }
-  }, [visible, translateX, scrimOpacity, theme.motion]);
+  }, [visible, translateX, scrimOpacity, theme.motion, reduced]);
 
   return (
     <View
@@ -104,50 +118,49 @@ export function NavigationDrawer({
           {
             width: PANEL_WIDTH,
             paddingTop: insets.top,
-            backgroundColor: theme.colors.surfaceRaised,
+            backgroundColor: theme.colors.surface,
+            borderRightColor: theme.colors.border,
             transform: [{ translateX }],
           },
         ]}
       >
-        <View style={[styles.brandRow, { borderBottomColor: theme.colors.border }]}>
-          <View style={styles.brandText}>
-            <Text style={[styles.brandTitle, { color: theme.colors.text }]}>
-              MetalWorker Admin
-            </Text>
-            <Text style={[styles.brandSub, { color: theme.colors.textMuted }]}>
-              Navigation
-            </Text>
+        <View style={styles.brandRow}>
+          <View style={styles.brandMark}>
+            <Icon name="hammer" size={19} color={theme.colors.primaryButtonText} />
           </View>
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
+          <View style={styles.brandText}>
+            <Text style={styles.brandTitle}>MetalWorker</Text>
+            <Text style={styles.brandSub}>Admin console</Text>
+          </View>
+          <IconButton
+            icon="close"
             accessibilityLabel="Close navigation menu"
-            hitSlop={8}
-            style={({ pressed }) => [
-              styles.closeBtn,
-              {
-                backgroundColor: theme.colors.surfaceHover,
-                opacity: pressed ? 0.7 : 1,
-              },
-            ]}
-          >
-            <Text style={[styles.closeIcon, { color: theme.colors.text }]}>✕</Text>
-          </Pressable>
+            onPress={onClose}
+            variant="soft"
+            size={34}
+            iconSize={15}
+          />
         </View>
 
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 16 }}
+          contentContainerStyle={styles.scrollContent}
         >
           {sections.map((section) => (
             <View key={section.key} style={styles.section}>
               {section.title !== "" && (
-                <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+                <Text style={styles.sectionTitle}>
                   {section.title.toUpperCase()}
                 </Text>
               )}
               {section.items.map((item) => {
                 const active = item.route === currentPath;
+                const danger = item.action === "signout";
+                const tint = danger
+                  ? theme.colors.danger
+                  : active
+                  ? theme.colors.primary
+                  : theme.colors.textSecondary;
                 return (
                   <Pressable
                     key={item.key}
@@ -157,24 +170,35 @@ export function NavigationDrawer({
                     accessibilityLabel={item.label}
                     style={({ pressed }) => [
                       styles.item,
-                      active && { backgroundColor: theme.colors.primaryMuted },
-                      pressed && !active && { backgroundColor: theme.colors.surfaceHover },
+                      active && { backgroundColor: theme.colors.primarySoft },
+                      pressed && { backgroundColor: theme.colors.surfaceHover },
                     ]}
                   >
-                    <Text style={[styles.itemIcon, { color: theme.colors.text }]}>
-                      {item.icon}
-                    </Text>
+                    {active ? <View style={styles.activeBar} /> : null}
+                    <View style={styles.itemIcon}>
+                      <Icon name={item.icon} size={18} color={tint} />
+                    </View>
                     <Text
                       style={[
                         styles.itemLabel,
                         {
-                          color: active ? theme.colors.primary : theme.colors.text,
+                          color: dangerousColor(danger, active, theme),
                           fontWeight: active ? "700" : "500",
                         },
                       ]}
+                      numberOfLines={1}
                     >
                       {item.label}
                     </Text>
+                    {active ? (
+                      <View style={styles.activeDot} />
+                    ) : (
+                      <Icon
+                        name="chevronRight"
+                        size={14}
+                        color={theme.colors.textMuted}
+                      />
+                    )}
                   </Pressable>
                 );
               })}
@@ -186,22 +210,32 @@ export function NavigationDrawer({
         <View
           style={[
             styles.footer,
-            {
-              borderTopColor: theme.colors.border,
-              paddingBottom: Math.max(insets.bottom, 12),
-            },
+            { paddingBottom: Math.max(insets.bottom, 12) },
           ]}
         >
-          <Text
-            style={[styles.footerText, { color: theme.colors.textMuted }]}
-            numberOfLines={1}
-          >
-            {signedInAs ? `Signed in as ${signedInAs}` : "Signed in"}
-          </Text>
+          <View style={styles.userIcon}>
+            <Icon name="users" size={16} color={theme.colors.textMuted} />
+          </View>
+          <View style={styles.userText}>
+            <Text style={styles.userCaption}>Signed in as</Text>
+            <Text style={styles.userEmail} numberOfLines={1}>
+              {signedInAs ?? "Admin"}
+            </Text>
+          </View>
         </View>
       </Animated.View>
     </View>
   );
+}
+
+function dangerousColor(
+  danger: boolean,
+  active: boolean,
+  theme: AppTheme
+): string {
+  if (danger) return theme.colors.danger;
+  if (active) return theme.colors.primary;
+  return theme.colors.text;
 }
 
 const createStyles = (theme: AppTheme) =>
@@ -227,75 +261,106 @@ const createStyles = (theme: AppTheme) =>
       top: 0,
       left: 0,
       bottom: 0,
-      borderRightWidth: StyleSheet.hairlineWidth,
-      borderRightColor: "rgba(0,0,0,0.15)",
+      borderTopRightRadius: theme.radius.xl,
+      borderBottomRightRadius: theme.radius.xl,
+      borderRightWidth: 1,
+      overflow: "hidden",
       ...theme.elevation.overlay,
     },
     brandRow: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
+      gap: 10,
       paddingHorizontal: 16,
-      paddingVertical: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingTop: 14,
+      paddingBottom: 14,
     },
-    brandText: {
-      flex: 1,
-    },
-    brandTitle: {
-      fontSize: 18,
-      fontWeight: "800",
-    },
-    brandSub: {
-      fontSize: 12,
-      marginTop: 2,
-    },
-    closeBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+    brandMark: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: theme.colors.primary,
       alignItems: "center",
       justifyContent: "center",
     },
-    closeIcon: {
-      fontSize: 16,
-      fontWeight: "700",
+    brandText: { flex: 1, minWidth: 0 },
+    brandTitle: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "800",
+      letterSpacing: -0.3,
     },
-    footer: {
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 16,
-      paddingTop: 12,
+    brandSub: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      marginTop: 1,
     },
-    footerText: {
-      fontSize: 12,
-    },
-    section: {
-      paddingHorizontal: 12,
-      paddingTop: 16,
-    },
+    scrollContent: { paddingBottom: 8 },
+    section: { paddingHorizontal: 10, paddingTop: 10 },
     sectionTitle: {
-      fontSize: 11,
+      color: theme.colors.textMuted,
+      fontSize: 10,
       fontWeight: "700",
-      letterSpacing: 0.8,
-      paddingHorizontal: 8,
-      marginBottom: 6,
+      letterSpacing: 1.2,
+      paddingHorizontal: 10,
+      marginBottom: 3,
     },
     item: {
       flexDirection: "row",
       alignItems: "center",
-      paddingHorizontal: 8,
-      paddingVertical: 12,
-      borderRadius: 8,
-      gap: 12,
-      minHeight: 48,
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      borderRadius: theme.radius.md,
+      minHeight: 44,
+      overflow: "hidden",
     },
-    itemIcon: {
-      fontSize: 18,
-      width: 24,
-      textAlign: "center",
+    activeBar: {
+      position: "absolute",
+      left: 0,
+      top: 9,
+      bottom: 9,
+      width: 3,
+      borderRadius: 2,
+      backgroundColor: theme.colors.primary,
     },
-    itemLabel: {
-      fontSize: 15,
-      flex: 1,
+    activeDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: theme.colors.primary,
+    },
+    itemIcon: { width: 22, alignItems: "center" },
+    itemLabel: { fontSize: theme.textSizes.sm, flex: 1 },
+    footer: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      backgroundColor: theme.colors.surfaceSecondary,
+    },
+    userIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.colors.surfaceHover,
+    },
+    userText: { flex: 1, minWidth: 0 },
+    userCaption: {
+      color: theme.colors.textMuted,
+      fontSize: 10,
+      fontWeight: "600",
+      letterSpacing: 0.4,
+    },
+    userEmail: {
+      color: theme.colors.text,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+      marginTop: 1,
     },
   });

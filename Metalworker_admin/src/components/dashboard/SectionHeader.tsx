@@ -1,31 +1,28 @@
 // src/components/dashboard/SectionHeader.tsx
 import React from "react";
-import { Text, View } from "react-native";
 
-import { useTheme } from "../../context/ThemeContext";
-import { createDashboardStyles } from "./styles";
+import { Section } from "../ui/Section";
 
 export function SectionHeader({
   title,
   subtitle,
   rightElement,
+  actionLabel,
+  onAction,
 }: {
   title: string;
   subtitle?: string;
   rightElement?: React.ReactNode;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
-  const { theme } = useTheme();
-  const styles = React.useMemo(() => createDashboardStyles(theme), [theme]);
-
   return (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderLeft}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {subtitle ? (
-          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
-        ) : null}
-      </View>
-      {rightElement}
-    </View>
+    <Section
+      title={title}
+      subtitle={subtitle}
+      right={rightElement}
+      actionLabel={actionLabel}
+      onAction={onAction}
+    />
   );
 }

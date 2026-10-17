@@ -1,7 +1,6 @@
 // src/components/dashboard/index.ts
 export {
   StatGrid,
-  StatCard,
   type DashboardUserStats,
   type DashboardDispatchStats,
 } from "./StatGrid";

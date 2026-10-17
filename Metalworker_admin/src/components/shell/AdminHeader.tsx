@@ -1,19 +1,21 @@
 // src/components/shell/AdminHeader.tsx
 //
-// The app bar every admin screen shares: hamburger (or back button on detail
-// routes), the route title, and the theme toggle. Sits above screen content
-// in normal flow; safe-area top padding keeps it clear of the status bar.
+// The app bar every admin screen shares: menu (or back on detail routes), the
+// route title, and the theme switch. It sits above content in normal flow and
+// carries the safe-area top padding, so no screen has to think about the
+// status bar.
 import React, { useMemo } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { IconButton } from "../ui/IconButton";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
 interface AdminHeaderProps {
   title: string;
-  /** When true a back button replaces the hamburger. */
+  /** When true a back button replaces the menu button. */
   showBack: boolean;
   onMenuPress: () => void;
   onBackPress: () => void;
@@ -35,35 +37,30 @@ export function AdminHeader({
         styles.header,
         {
           paddingTop: insets.top,
-          backgroundColor: theme.colors.surface,
+          backgroundColor: theme.colors.background,
           borderBottomColor: theme.colors.border,
         },
       ]}
     >
       <View style={styles.headerInner}>
-        <Pressable
-          onPress={showBack ? onBackPress : onMenuPress}
-          accessibilityRole="button"
+        <IconButton
+          icon={showBack ? "arrowLeft" : "menu"}
           accessibilityLabel={showBack ? "Go back" : "Open navigation menu"}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.iconBtn,
-            { backgroundColor: pressed ? theme.colors.surfaceHover : "transparent" },
-          ]}
-        >
-          <Text style={[styles.iconText, { color: theme.colors.text }]}>
-            {showBack ? "‹" : "☰"}
-          </Text>
-        </Pressable>
+          onPress={showBack ? onBackPress : onMenuPress}
+          variant="soft"
+          size={38}
+          iconSize={18}
+        />
 
         <Text
+          accessibilityRole="header"
           style={[styles.title, { color: theme.colors.text }]}
           numberOfLines={1}
         >
           {title}
         </Text>
 
-        <ThemeToggle size={40} />
+        <ThemeToggle />
       </View>
     </View>
   );
@@ -75,27 +72,16 @@ const createStyles = (theme: AppTheme) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
     },
     headerInner: {
-      height: 52,
+      height: 58,
       flexDirection: "row",
       alignItems: "center",
-      paddingHorizontal: theme.spacing.sm,
-    },
-    iconBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: theme.radius.md,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    iconText: {
-      fontSize: 24,
-      lineHeight: 28,
-      fontWeight: "600",
+      paddingHorizontal: 12,
+      gap: 12,
     },
     title: {
       flex: 1,
       fontSize: theme.textSizes.lg,
       fontWeight: "700",
-      marginHorizontal: theme.spacing.sm,
+      letterSpacing: -0.4,
     },
   });

@@ -37,14 +37,13 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppTheme } from "../constants/theme";
@@ -72,6 +71,7 @@ import {
 import { notify } from "../utils/notify";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { ScreenHeader } from "../components/ui/ScreenHeader";
 
 /**
  * The fields, in the order they are shown, with the label and the help text that
@@ -329,22 +329,12 @@ export default function InvoiceSettingsScreen() {
             />
           }
         >
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <Pressable
-              onPress={() => router.back()}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-              hitSlop={12}
-            >
-              <Text style={styles.back}>‹ Back</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.headerTitle}>Invoice Business Profile</Text>
-          <Text style={styles.muted}>
-            The details every invoice carries. A workbook&apos;s own value always wins
-            over anything set here, so this only fills in what a workbook leaves out.
-          </Text>
+          {/* Header — the shell app bar owns the back button on this route. */}
+          <ScreenHeader
+            eyebrow="Invoices"
+            title="Business profile"
+            subtitle="The details every invoice carries. A workbook's own value always wins over anything set here, so this only fills in what a workbook leaves out."
+          />
 
           {/* The promise an admin needs before typing anything. */}
           <View style={styles.notice}>
@@ -503,16 +493,13 @@ const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.colors.background },
     flex: { flex: 1 },
-    content: { padding: theme.spacing.lg, paddingBottom: theme.spacing.xl * 2 },
-    centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
-    headerRow: { flexDirection: "row", alignItems: "center", marginBottom: theme.spacing.sm },
-    back: { color: theme.colors.primary, fontSize: theme.textSizes.md },
-    headerTitle: {
-      color: theme.colors.text,
-      fontSize: theme.textSizes.xl,
-      fontWeight: "700",
-      marginBottom: theme.spacing.xs,
+    content: {
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.xl * 2,
     },
+    centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
+
     muted: { color: theme.colors.textMuted, fontSize: theme.textSizes.sm, lineHeight: 20 },
     notice: {
       backgroundColor: theme.colors.surfaceSecondary,

@@ -1,9 +1,20 @@
 // src/components/ui/ConfirmDialog.tsx
-import React, { useEffect, useRef } from "react";
-import { Animated, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { useReducedMotion } from "../../hooks/useReducedMotion";
+import { Icon, type IconName } from "./Icon";
 
 interface ConfirmDialogProps {
   visible: boolean;
@@ -13,6 +24,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   destructive?: boolean;
   busy?: boolean;
+  /** Defaults to a warning triangle for destructive, an info mark otherwise. */
+  icon?: IconName;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -32,34 +45,45 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   destructive = true,
   busy = false,
+  icon,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const { theme } = useTheme();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const reduced = useReducedMotion();
 
   // Subtle scale-in so the dialog feels sprung rather than snapped.
-  const scale = useRef(new Animated.Value(0.92)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const [scale] = useState(() => new Animated.Value(0.94));
+  const [opacity] = useState(() => new Animated.Value(0));
+
   useEffect(() => {
-    if (visible) {
-      scale.setValue(0.92);
-      opacity.setValue(0);
-      Animated.parallel([
-        Animated.spring(scale, {
-          toValue: 1,
-          useNativeDriver: true,
-          friction: 8,
-          tension: 80,
-        }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: theme.motion.fast,
-          useNativeDriver: true,
-        }),
-      ]).start();
+    if (!visible) return;
+    if (reduced) {
+      scale.setValue(1);
+      opacity.setValue(1);
+      return;
     }
-  }, [visible, scale, opacity, theme.motion.fast]);
+    scale.setValue(0.94);
+    opacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 9,
+        tension: 180,
+      }),
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: theme.motion.fast,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [visible, scale, opacity, theme.motion.fast, reduced]);
+
+  const tone = destructive ? theme.colors.danger : theme.colors.primary;
+  const iconName: IconName = icon ?? (destructive ? "alert" : "info");
 
   return (
     <Modal
@@ -70,9 +94,21 @@ export function ConfirmDialog({
       onRequestClose={busy ? undefined : onCancel}
     >
       <View style={styles.backdrop}>
+        {/* Tapping the scrim cancels, unless a destructive operation is in
+            flight and accidental dismissal would hide the outcome. */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={busy ? undefined : onCancel}
+          accessibilityRole="button"
+          accessibilityLabel={cancelLabel}
+        />
         <Animated.View
           style={[styles.card, { opacity, transform: [{ scale }] }]}
+          accessibilityViewIsModal
         >
+          <View style={[styles.iconBubble, { backgroundColor: destructive ? theme.colors.dangerMuted : theme.colors.primaryMuted }]}>
+            <Icon name={iconName} size={22} color={tone} />
+          </View>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
           <View style={styles.actions}>
@@ -80,10 +116,12 @@ export function ConfirmDialog({
               disabled={busy}
               onPress={onCancel}
               accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
               style={({ pressed }) => [
                 styles.button,
                 styles.cancelBtn,
                 pressed && styles.pressed,
+                busy && styles.dimmed,
               ]}
             >
               <Text style={styles.cancelText}>{cancelLabel}</Text>
@@ -93,16 +131,19 @@ export function ConfirmDialog({
               onPress={onConfirm}
               accessibilityRole="button"
               accessibilityLabel={confirmLabel}
+              accessibilityState={{ disabled: busy, busy }}
               style={({ pressed }) => [
                 styles.button,
-                destructive ? styles.dangerBtn : styles.confirmBtn,
+                { backgroundColor: destructive ? theme.colors.danger : theme.colors.primary },
                 pressed && styles.pressed,
-                busy && styles.busyBtn,
+                busy && styles.dimmed,
               ]}
             >
-              <Text style={styles.confirmText}>
-                {busy ? "Working…" : confirmLabel}
-              </Text>
+              {busy ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.confirmText}>{confirmLabel}</Text>
+              )}
             </Pressable>
           </View>
         </Animated.View>
@@ -122,30 +163,36 @@ const createStyles = (theme: AppTheme) =>
     },
     card: {
       width: "100%",
-      maxWidth: 420,
+      maxWidth: 400,
       backgroundColor: theme.colors.surfaceRaised,
-      borderRadius: theme.radius.lg,
+      borderRadius: theme.radius.xl,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      padding: theme.spacing.lg,
-      ...theme.elevation.raised,
+      padding: 22,
+      ...theme.elevation.overlay,
+    },
+    iconBubble: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: theme.spacing.md,
     },
     title: {
       color: theme.colors.text,
       fontSize: theme.textSizes.lg,
       fontWeight: "700",
-      marginBottom: theme.spacing.xs,
+      letterSpacing: -0.3,
+      marginBottom: 6,
     },
     message: {
       color: theme.colors.textMuted,
       fontSize: theme.textSizes.sm,
       lineHeight: 20,
-      marginBottom: theme.spacing.lg,
+      marginBottom: 22,
     },
-    actions: {
-      flexDirection: "row",
-      gap: theme.spacing.sm,
-    },
+    actions: { flexDirection: "row", gap: theme.spacing.sm },
     button: {
       flex: 1,
       minHeight: 48,
@@ -155,30 +202,20 @@ const createStyles = (theme: AppTheme) =>
       paddingHorizontal: theme.spacing.md,
     },
     cancelBtn: {
-      backgroundColor: theme.colors.background,
+      backgroundColor: "transparent",
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.colors.borderStrong,
     },
     cancelText: {
       color: theme.colors.text,
       fontSize: theme.textSizes.md,
       fontWeight: "600",
     },
-    dangerBtn: {
-      backgroundColor: theme.colors.danger,
-    },
-    confirmBtn: {
-      backgroundColor: theme.colors.primary,
-    },
     confirmText: {
-      color: theme.colors.primaryButtonText,
+      color: "#FFFFFF",
       fontSize: theme.textSizes.md,
       fontWeight: "700",
     },
-    busyBtn: {
-      opacity: 0.6,
-    },
-    pressed: {
-      opacity: 0.85,
-    },
+    dimmed: { opacity: 0.7 },
+    pressed: { opacity: 0.82 },
   });
