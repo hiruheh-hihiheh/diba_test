@@ -32,7 +32,7 @@ import {
   downloadCompanyBillsZip,
 } from "../services/companyBills";
 import type { CompanyBillFolder, CompanyBillDocument } from "../types/companyBill";
-import { isPreviewable, formatBytes, validateCompanyBillFile } from "../services/companyBillFiles";
+import { isPreviewable, previewKind, getFormatLabel, formatBytes, validateCompanyBillFile } from "../services/companyBillFiles";
 import { usePageMeta } from "../contexts/PageMetaContext";
 import { useToast } from "../components/ui/Toast";
 import { useConfirm } from "../components/ui/ConfirmDialog";
@@ -73,6 +73,10 @@ export default function CompanyBillsPage() {
   // Modals
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<CompanyBillDocument | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
@@ -230,11 +234,39 @@ export default function CompanyBillsPage() {
   }
 
   async function handlePreview(doc: CompanyBillDocument) {
-    try {
-      const url = await getCompanyBillSignedUrl(doc.storage_path);
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (e) {
-      toast.error({ title: "Preview failed", description: e instanceof Error ? e.message : "Unknown error" });
+    const kind = previewKind(doc.content_type, doc.original_filename);
+    if (kind === "none") {
+      toast.info({ title: "Preview not available", description: "This file format cannot be previewed in the browser. Download it to open with a compatible application." });
+      return;
+    }
+    setPreviewDoc(doc);
+    setPreviewUrl(null);
+    setPreviewText(null);
+    // Fetch signed URL for pdf/image preview.
+    if (kind === "pdf" || kind === "image") {
+      setPreviewLoading(true);
+      try {
+        const url = await getCompanyBillSignedUrl(doc.storage_path);
+        setPreviewUrl(url);
+      } catch (e) {
+        toast.error({ title: "Preview failed", description: e instanceof Error ? e.message : "Unknown error" });
+        setPreviewDoc(null);
+      } finally {
+        setPreviewLoading(false);
+      }
+    }
+    if (kind === "text") {
+      setPreviewLoading(true);
+      try {
+        const bytes = await downloadCompanyBillBytes(doc.storage_path);
+        const text = new TextDecoder().decode(bytes);
+        setPreviewText(text.slice(0, 200000));
+      } catch (e) {
+        toast.error({ title: "Preview failed", description: e instanceof Error ? e.message : "Unknown error" });
+        setPreviewDoc(null);
+      } finally {
+        setPreviewLoading(false);
+      }
     }
   }
 
@@ -486,9 +518,14 @@ export default function CompanyBillsPage() {
                                 <div className="w-9 h-9 rounded-lg bg-bg border border-border flex items-center justify-center shrink-0">
                                   <FileText size={16} className="text-text-muted" />
                                 </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm font-bold text-text truncate">{doc.display_name}</p>
-                                  <p className="text-[11px] text-text-muted truncate">{doc.original_filename} · {formatBytes(doc.byte_size)}</p>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-bold text-text break-words" title={doc.original_filename}>{doc.display_name}</p>
+                                  <p className="text-[11px] text-text-muted break-words" title={doc.original_filename}>{doc.original_filename}</p>
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    <span className="px-1.5 py-0.5 rounded bg-surface-hover text-[10px] font-bold text-text">{getFormatLabel(doc.original_filename, doc.content_type)}</span>
+                                    <span className="text-[10px] text-text-muted">{formatBytes(doc.byte_size)}</span>
+                                    <span className="text-[10px] text-text-muted">{new Date(doc.created_at).toLocaleDateString()}</span>
+                                  </div>
                                 </div>
                               </div>
                             </td>
@@ -500,7 +537,7 @@ export default function CompanyBillsPage() {
                             <td className="px-4 py-3 text-sm text-text-muted">{formatBytes(doc.byte_size)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1.5">
-                                {isPreviewable(doc.content_type) && (
+                                {isPreviewable(doc.content_type, doc.original_filename) && (
                                   <button onClick={() => handlePreview(doc)} title="Preview" className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">
                                     <Eye size={15} />
                                   </button>
@@ -563,7 +600,7 @@ export default function CompanyBillsPage() {
             </select>
           </div>
           <div>
-            <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.xls,.xlsx,application/pdf,image/*" className="block w-full text-sm text-text file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-primary file:text-white file:font-bold file:cursor-pointer" onChange={(e) => { const fs = Array.from(e.target.files ?? []); setUploadFiles(fs); }} />
+            <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.doc,.docx,.rtf,.txt,.odt,.xls,.xlsx,.csv,.ods,.ppt,.pptx,.odp" className="block w-full text-sm text-text file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-primary file:text-white file:font-bold file:cursor-pointer" onChange={(e) => { const fs = Array.from(e.target.files ?? []); setUploadFiles(fs); }} />
             {uploadFiles.length > 0 && (
               <p className="text-xs text-text-muted mt-2">{uploadFiles.length} file(s) selected</p>
             )}
@@ -641,6 +678,31 @@ export default function CompanyBillsPage() {
             <div className="flex items-center justify-end gap-3 pt-2">
               <button onClick={() => setEditDoc(null)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
               <button onClick={handleSaveEdit} className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Save</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Preview modal */}
+      <Modal open={!!previewDoc} onClose={() => { setPreviewDoc(null); setPreviewUrl(null); setPreviewText(null); }} title={previewDoc ? previewDoc.display_name : "Preview"} size="xl">
+        {previewDoc && (
+          <div className="space-y-3">
+            <p className="text-xs text-text-muted break-words">{previewDoc.original_filename}</p>
+            {previewLoading && <div className="flex items-center justify-center py-10"><Loader2 size={24} className="text-primary animate-spin" /></div>}
+            {!previewLoading && previewKind(previewDoc.content_type, previewDoc.original_filename) === "pdf" && previewUrl && (
+              <iframe src={previewUrl} className="w-full h-[70vh] border border-border rounded-xl" title="PDF preview" />
+            )}
+            {!previewLoading && previewKind(previewDoc.content_type, previewDoc.original_filename) === "image" && previewUrl && (
+              <img alt={previewDoc.original_filename} className="max-w-full max-h-[70vh] mx-auto rounded-xl" src={previewUrl} />
+            )}
+            {!previewLoading && previewKind(previewDoc.content_type, previewDoc.original_filename) === "text" && previewText !== null && (
+              <pre className="whitespace-pre-wrap break-words text-xs text-text bg-bg border border-border rounded-xl p-4 max-h-[70vh] overflow-auto">{previewText}</pre>
+            )}
+            {!previewLoading && previewKind(previewDoc.content_type, previewDoc.original_filename) === "none" && (
+              <p className="text-sm text-text-muted">Preview not available for this format. Download the file to open it.</p>
+            )}
+            <div className="flex items-center justify-end gap-3">
+              <button onClick={() => handleDownload(previewDoc)} className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Download</button>
             </div>
           </div>
         )}

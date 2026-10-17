@@ -26,16 +26,6 @@ export interface CompanyBillDocument {
   updated_at: string;
 }
 
-export const COMPANY_BILL_ALLOWED_MIME = [
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-] as const;
-
 export const COMPANY_BILL_MAX_BYTES = 50 * 1024 * 1024;
 
 export function formatBytes(n: number | null): string {
