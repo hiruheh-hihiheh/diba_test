@@ -179,7 +179,7 @@ export default function LoginScreen() {
     >
       {/* Soft copper halos keep the empty space from feeling flat without a
           gradient dependency. They are purely decorative and ignore touches. */}
-      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View style={[StyleSheet.absoluteFill, styles.decorative]}>
         <View style={styles.haloTop} />
         <View style={styles.haloBottom} />
       </View>
@@ -290,6 +290,10 @@ const createStyles = (theme: AppTheme) =>
       flex: 1,
       backgroundColor: theme.colors.background,
       overflow: "hidden",
+    },
+    // The halo layer is decoration only: it must never swallow a tap.
+    decorative: {
+      pointerEvents: "none",
     },
     haloTop: {
       position: "absolute",

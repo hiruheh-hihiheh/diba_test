@@ -249,10 +249,7 @@ export function DragDropProvider({
         {children}
 
         {/* ── Floating ghost overlay ── */}
-        <Animated.View
-          style={[styles.overlayAnchor, overlayStyle]}
-          pointerEvents="none"
-        >
+        <Animated.View style={[styles.overlayAnchor, overlayStyle]}>
           {dragData && (
             <View style={styles.ghost}>
               <View
@@ -292,6 +289,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     position: "absolute",
     width: GHOST_WIDTH,
     zIndex: 9999,
+    // The ghost follows the finger but must never eat the drag gesture.
+    pointerEvents: "none",
   },
   ghost: {
     flexDirection: "row",

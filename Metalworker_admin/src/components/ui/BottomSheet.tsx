@@ -200,7 +200,6 @@ export function BottomSheet({
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.avoider}
-          pointerEvents="box-none"
         >
           <Animated.View
             style={[
@@ -259,7 +258,9 @@ export function BottomSheet({
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
     root: { flex: 1, justifyContent: "flex-end" },
-    avoider: { justifyContent: "flex-end" },
+    // `pointerEvents` lives on the style: the prop form is deprecated and
+    // logs a warning on web builds.
+    avoider: { justifyContent: "flex-end", pointerEvents: "box-none" },
     sheet: {
       backgroundColor: theme.colors.surfaceRaised,
       borderTopLeftRadius: theme.radius.xl,

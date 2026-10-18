@@ -96,8 +96,7 @@ export function NavigationDrawer({
 
   return (
     <View
-      style={styles.overlay}
-      pointerEvents={visible ? "auto" : "none"}
+      style={[styles.overlay, { pointerEvents: visible ? "auto" : "none" }]}
       accessibilityViewIsModal={visible}
       accessibilityLabel="Navigation menu"
     >

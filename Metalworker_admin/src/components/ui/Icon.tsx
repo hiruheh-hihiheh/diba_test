@@ -620,8 +620,7 @@ export function Icon({ name, size = 20, color, strokeWidth = 1.8, style }: IconP
   return (
     <View
       aria-hidden
-      pointerEvents="none"
-      style={[{ width: size, height: size }, style]}
+      style={[{ width: size, height: size, pointerEvents: "none" }, style]}
     >
       {geometry}
     </View>

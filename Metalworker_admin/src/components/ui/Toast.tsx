@@ -65,7 +65,7 @@ export function ToastHost() {
   }, []);
 
   return (
-    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <View style={[StyleSheet.absoluteFill, styles.passThrough]}>
       <ToastStack items={items} onDismiss={dismiss} />
     </View>
   );
@@ -81,10 +81,7 @@ function ToastStack({
   const insets = useSafeAreaInsets();
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={[styles.stack, { top: insets.top + 10 }]}
-    >
+    <View style={[styles.stack, { top: insets.top + 10 }]}>
       {items.map((item) => (
         <ToastCard
           key={item.id}
@@ -195,6 +192,12 @@ const styles = StyleSheet.create({
     left: 14,
     right: 14,
     gap: 8,
+    // Let taps fall through the empty space around the cards. `pointerEvents`
+    // is a style property now; the prop form warns on web.
+    pointerEvents: "box-none",
+  },
+  passThrough: {
+    pointerEvents: "box-none",
   },
 });
 
