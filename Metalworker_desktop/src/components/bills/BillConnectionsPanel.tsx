@@ -69,7 +69,7 @@ export default function BillConnectionsPanel({
           <button
             type="button"
             onClick={onAddJobs}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-sm font-bold text-[var(--theme-primary-text)] hover:bg-primary-hover transition-colors cursor-pointer"
+            className="btn btn-primary"
           >
             Link more jobs
           </button>

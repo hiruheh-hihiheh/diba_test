@@ -198,7 +198,7 @@ export default function JobDrawingModal({ open, onClose, job, onChanged }: Props
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading || loading}
-            className="mr-auto px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             {uploading ? (
               <Loader2 size={16} className="animate-spin" />
@@ -220,7 +220,7 @@ export default function JobDrawingModal({ open, onClose, job, onChanged }: Props
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/25 text-danger text-sm mb-5"
+          className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
         >
           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
           <span className="flex-1">{error}</span>
@@ -253,7 +253,7 @@ export default function JobDrawingModal({ open, onClose, job, onChanged }: Props
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                className="btn btn-primary"
               >
                 Upload drawing
               </button>

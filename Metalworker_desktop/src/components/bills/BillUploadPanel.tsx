@@ -186,7 +186,7 @@ export function BillUploadPanel({
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             <UploadCloud size={17} />
             Choose workbook
@@ -257,7 +257,7 @@ export function BillUploadPanel({
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/30"
+              className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
             >
               <AlertTriangle size={16} className="text-danger shrink-0 mt-0.5" />
               <div className="min-w-0">
@@ -268,7 +268,7 @@ export function BillUploadPanel({
           )}
 
           {result && (
-            <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-success-muted border border-success/30">
+            <div className="flex items-start gap-3 rounded-xl border border-success/25 bg-success-muted px-4 py-3">
               <CheckCircle2 size={16} className="text-success shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-bold text-text">
@@ -301,7 +301,7 @@ export function BillUploadPanel({
             type="button"
             onClick={start}
             disabled={busy || stage === "failed" || !/\.xlsx$/i.test(fileName)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+            className="btn btn-primary"
           >
             {busy ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
             {busy ? "Processing…" : "Upload workbook"}

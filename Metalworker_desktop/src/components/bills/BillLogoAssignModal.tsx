@@ -315,7 +315,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all cursor-pointer"
+              className="btn btn-primary"
             >
               Close
             </button>
@@ -345,7 +345,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
                   else void run();
                 }}
                 disabled={applying || targetCount === 0}
-                className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="btn btn-primary"
               >
                 {applying ? (
                   <>
@@ -405,7 +405,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             )}
 
             {applying && (
-              <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-primary/5 border border-primary/20 text-sm text-text">
+              <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary-muted px-4 py-3">
                 <Loader2 size={15} className="animate-spin text-primary shrink-0" />
                 <span>
                   Assigning logo and regenerating invoice PDFs…
@@ -424,7 +424,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             {loadError && (
               <div
                 role="alert"
-                className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/25 text-danger text-sm"
+                className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
               >
                 {loadError}
               </div>
@@ -569,7 +569,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             <button
               type="button"
               onClick={() => void run()}
-              className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all cursor-pointer"
+              className="btn btn-primary"
             >
               Yes, assign and re-print
             </button>

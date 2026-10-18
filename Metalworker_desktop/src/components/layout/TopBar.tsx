@@ -45,6 +45,22 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
     title: "Bills",
     crumbs: [{ label: "Documents" }, { label: "Bills" }],
   },
+  "/company-bills": {
+    title: "Company Bills",
+    crumbs: [{ label: "Documents" }, { label: "Company Bills" }],
+  },
+  "/bills/create": {
+    title: "Create Bill",
+    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Create" }],
+  },
+  "/bills/logos": {
+    title: "Logo Library",
+    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Logo Library" }],
+  },
+  "/bills/profile": {
+    title: "Invoice Profile",
+    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Invoice Profile" }],
+  },
   "/group-bills": {
     title: "Group Bills",
     crumbs: [{ label: "Documents" }, { label: "Group Bills" }],
@@ -53,7 +69,7 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
     title: "Group Drawings",
     crumbs: [{ label: "Documents" }, { label: "Group Drawings" }],
   },
-  "/folders": { title: "Folders", crumbs: [{ label: "Folders" }] },
+  "/folders": { title: "Folders", crumbs: [{ label: "Organize" }, { label: "Folders" }] },
   "/settings": { title: "Settings", crumbs: [{ label: "Settings" }] },
 };
 
@@ -62,7 +78,7 @@ function resolveRoute(pathname: string) {
   if (pathname.startsWith("/folders/"))
     return {
       title: "Folder",
-      crumbs: [{ label: "Folders", to: "/folders" }, { label: "Folder" }],
+      crumbs: [{ label: "Organize" }, { label: "Folders", to: "/folders" }, { label: "Folder" }],
     };
   if (pathname.startsWith("/dispatches/"))
     return {
@@ -82,20 +98,19 @@ export default function TopBar() {
   const fallback = resolveRoute(location.pathname);
   const title = pageMeta.title ?? fallback.title;
   const crumbs = pageMeta.crumbs ?? fallback.crumbs;
+  const isDark = theme === "dark";
 
   return (
-    <header
-      className="h-[72px] bg-surface/85 backdrop-blur-xl border-b border-border flex items-center gap-3 px-4 sm:px-8 sticky top-0 z-30"
-    >
+    <header className="h-16 bg-bg/85 backdrop-blur-xl border-b border-border flex items-center gap-3 pl-4 pr-4 sm:pl-6 sm:pr-6 sticky top-0 z-30">
       {isMobile && (
         <button
           type="button"
           onClick={openMobile}
           aria-label="Open navigation"
           title="Open navigation"
-          className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+          className="w-9 h-9 shrink-0 -ml-1 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
         >
-          <Menu size={21} />
+          <Menu size={19} />
         </button>
       )}
 
@@ -109,15 +124,12 @@ export default function TopBar() {
             reporting its own record count.
 
             The trail is drawn whenever the page publishes at least one crumb,
-            because "Admin" is already prepended here. The old `length > 1` gate
-            hid the trail entirely on the top-level pages (Dashboard,
-            Dispatches, Folders), which is exactly where a user most needs a home
-            link. A page with no parent — the Dashboard — publishes no crumbs at
-            all, so nothing is drawn. */}
+            because "Admin" is already prepended here. A page with no parent —
+            the Dashboard — publishes no crumbs at all, so nothing is drawn. */}
         {crumbs.length > 0 && (
-          <nav aria-label="Breadcrumb" className="hidden sm:block mb-0.5">
-            <ol className="flex items-center gap-1 text-[11px] text-text-muted">
-              <li className="flex items-center gap-1">
+          <nav aria-label="Breadcrumb" className="hidden sm:block mb-1">
+            <ol className="flex items-center gap-1.5 text-[11px] leading-none text-text-muted">
+              <li className="flex items-center gap-1.5">
                 <Link
                   to="/"
                   className="hover:text-text transition-colors"
@@ -131,8 +143,8 @@ export default function TopBar() {
               {crumbs.map((c, i) => {
                 const last = i === crumbs.length - 1;
                 return (
-                  <li key={`${c.label}-${i}`} className="flex items-center gap-1 min-w-0">
-                    <ChevronRight size={11} className="shrink-0 opacity-60" />
+                  <li key={`${c.label}-${i}`} className="flex items-center gap-1.5 min-w-0">
+                    <ChevronRight size={10} className="shrink-0 opacity-40" />
                     {c.to && !last ? (
                       <Link to={c.to} className="hover:text-text transition-colors truncate">
                         {c.label}
@@ -140,7 +152,7 @@ export default function TopBar() {
                     ) : (
                       <span
                         aria-current={last ? "page" : undefined}
-                        className={`truncate ${last ? "text-text font-semibold" : ""}`}
+                        className={`truncate ${last ? "text-text-secondary font-medium" : ""}`}
                       >
                         {c.label}
                       </span>
@@ -152,41 +164,55 @@ export default function TopBar() {
           </nav>
         )}
 
-        <h1 className="text-lg sm:text-xl font-extrabold text-text truncate leading-tight">
-          {title}
-        </h1>
-
-        {/* The count/filter line is only shown here when the page does not
-            already print it in its own header — printing "12 of 1 240 jobs" in
-            both places is noise, not information. */}
-        {pageMeta.subtitle && !pageMeta.selfTitles && (
-          <p className="text-xs text-text-muted truncate">{pageMeta.subtitle}</p>
-        )}
+        <div className="flex items-baseline gap-2.5 min-w-0">
+          <h1 className="text-[17px] sm:text-[18px] font-semibold text-text truncate leading-tight tracking-[-0.015em]">
+            {title}
+          </h1>
+          {/* The count/filter line is only shown here when the page does not
+              already print it in its own header — printing "12 of 1 240 jobs" in
+              both places is noise, not information. */}
+          {pageMeta.subtitle && !pageMeta.selfTitles && (
+            <>
+              <span aria-hidden="true" className="text-border-hover text-[13px] leading-none">
+                /
+              </span>
+              <p className="hidden md:block text-[12px] text-text-muted truncate leading-none">
+                {pageMeta.subtitle}
+              </p>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         <button
           type="button"
           onClick={toggleTheme}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+          aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+          title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+          className="w-9 h-9 rounded-lg flex items-center justify-center border border-transparent text-text-muted hover:text-text hover:bg-surface-hover hover:border-border transition-colors cursor-pointer"
         >
-          {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+          {isDark ? <Sun size={17} /> : <Moon size={17} />}
         </button>
 
         <div
-          className="flex items-center gap-2.5 pl-2 sm:pl-3 sm:border-l border-border max-w-[9rem] sm:max-w-none"
+          className="flex items-center gap-2 sm:gap-2.5 pl-2 sm:pl-3 sm:border-l border-border min-w-0"
           title={adminUsername ? `Signed in as ${adminUsername}` : undefined}
         >
-          <div className="w-9 h-9 rounded-full bg-primary-muted flex items-center justify-center shrink-0">
-            <User size={17} className="text-primary" />
+          <div className="relative w-8 h-8 rounded-full bg-primary-muted border border-primary/25 flex items-center justify-center shrink-0">
+            <User size={14} className="text-primary" />
+            <span
+              aria-hidden="true"
+              className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-success border-2 border-bg"
+            />
           </div>
-          <div className="hidden sm:block min-w-0">
-            <p className="text-[13px] font-bold text-text truncate leading-tight">
+          <div className="hidden sm:block min-w-0 leading-tight">
+            <p className="text-[12.5px] font-semibold text-text truncate max-w-[11rem]">
               {adminUsername || "Admin"}
             </p>
-            <p className="text-[11px] text-text-muted leading-tight">Administrator</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.09em] text-text-muted leading-tight mt-0.5">
+              Administrator
+            </p>
           </div>
         </div>
       </div>

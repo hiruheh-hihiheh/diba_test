@@ -1,7 +1,15 @@
 // src/components/ui/ConfirmDialog.tsx
 // App-styled replacement for window.confirm / window.alert.
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AlertTriangle, HelpCircle, Loader2 } from "lucide-react";
 import Modal from "./Modal";
 
@@ -48,47 +56,34 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         onClose={() => settle(false)}
         size="sm"
         title={state?.title}
+        tone={state?.tone === "primary" ? "primary" : "danger"}
         footer={
           <>
-            <button
-              type="button"
-              onClick={() => settle(false)}
-              className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
-            >
+            <button type="button" onClick={() => settle(false)} className="btn btn-ghost">
               {state?.cancelLabel ?? "Cancel"}
             </button>
             <button
               type="button"
               autoFocus
               onClick={() => settle(true)}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all cursor-pointer shadow-lg ${
-                state?.tone === "primary"
-                  ? "bg-primary hover:bg-primary-hover shadow-primary/20"
-                  : "bg-danger hover:brightness-110 shadow-danger/20"
-              }`}
+              className={`btn ${state?.tone === "primary" ? "btn-primary" : "btn-danger-solid"}`}
             >
               {state?.confirmLabel ?? "Confirm"}
             </button>
           </>
         }
       >
-        <div className="flex gap-4">
+        <div className="flex gap-3.5">
           <div
-            className={`w-11 h-11 shrink-0 rounded-full flex items-center justify-center ${
+            className={`w-9 h-9 shrink-0 rounded-[10px] flex items-center justify-center border ${
               state?.tone === "primary"
-                ? "bg-primary/10 text-primary"
-                : "bg-danger/10 text-danger"
+                ? "bg-primary-muted border-primary/25 text-primary"
+                : "bg-danger-muted border-danger/25 text-danger"
             }`}
           >
-            {state?.icon ?? (
-              state?.tone === "primary" ? (
-                <HelpCircle size={22} />
-              ) : (
-                <AlertTriangle size={22} />
-              )
-            )}
+            {state?.icon ?? (state?.tone === "primary" ? <HelpCircle size={18} /> : <AlertTriangle size={18} />)}
           </div>
-          <div className="text-sm text-text-muted leading-relaxed pt-1 min-w-0">
+          <div className="text-[13px] text-text-secondary leading-relaxed min-w-0">
             {state?.message}
           </div>
         </div>

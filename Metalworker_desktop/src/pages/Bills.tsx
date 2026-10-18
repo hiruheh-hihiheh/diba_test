@@ -98,9 +98,9 @@ import { jobCountLabel, type BillJobConnection } from "../types/billJobConnectio
 const DEFAULT_PAGE_SIZE = 25;
 
 const selectCls =
-  "bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary";
+  "h-9 rounded-[9px] border border-border bg-surface px-2.5 text-[12.5px] text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
 const inputCls =
-  "bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary";
+  "h-9 rounded-[9px] border border-border bg-surface px-2.5 text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
 
 /**
  * The three ways a bill starts, as links.
@@ -959,11 +959,11 @@ export default function BillsPage() {
   const filtered = !!search.trim() || hasFilters;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 bg-primary-muted">
+          <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
             <FileText size={20} className="text-primary" />
           </div>
           <div className="min-w-0">
@@ -998,7 +998,7 @@ export default function BillsPage() {
           <button
             type="button"
             onClick={() => setUploadOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             <UploadCloud size={17} />
             Upload workbook
@@ -1014,9 +1014,9 @@ export default function BillsPage() {
               type="button"
               onClick={() => setCreateMenuOpen((open) => !open)}
               aria-expanded={createMenuOpen}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border hover:bg-surface-hover text-text text-sm font-bold transition-all cursor-pointer"
-            >
-              <FilePlus2 size={17} />
+            className="btn btn-secondary"
+          >
+            <FilePlus2 size={15} />
               Create Bill
               <ChevronDown size={15} className={createMenuOpen ? "rotate-180 transition-transform" : "transition-transform"} />
             </button>
@@ -1190,7 +1190,7 @@ export default function BillsPage() {
           onRetry={() => load()}
         />
       ) : (
-        <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+        <div className="panel-flat">
           <InlineRefreshBar show={refreshing} />
 
           {/* Select-all across EVERY page, offered only when there is more than this
@@ -1234,7 +1234,7 @@ export default function BillsPage() {
                       setSearch("");
                       clearFilters();
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                    className="btn btn-primary"
                   >
                     Clear search and filters
                   </button>
@@ -1242,7 +1242,7 @@ export default function BillsPage() {
                   <button
                     type="button"
                     onClick={() => setUploadOpen(true)}
-                    className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                    className="btn btn-primary"
                   >
                     Upload workbook
                   </button>
@@ -1252,7 +1252,7 @@ export default function BillsPage() {
           ) : (
             <>
               <div className="overflow-x-auto scrollbar-thin table-scroll">
-                <table className="w-full min-w-[62rem]">
+                <table className="data-table w-full min-w-[62rem]">
                   <thead className="sticky-head">
                     <tr className="border-b border-border">
                       <th className="w-10 px-5 py-3">
@@ -1513,7 +1513,7 @@ export default function BillsPage() {
           type="button"
           onClick={openBillingFolders}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn btn-primary"
         >
           Add to folder
           {/* Files into a BILLING folder, not a job folder — see
@@ -1523,7 +1523,7 @@ export default function BillsPage() {
           type="button"
           onClick={() => setAssignLogoOpen(true)}
           disabled={busy || logoBusy}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn btn-primary"
         >
           <ImagePlus size={13} />
           Assign Logo
@@ -1543,7 +1543,7 @@ export default function BillsPage() {
               ? "Link jobs to the selected bill"
               : "Select exactly one bill on this page to link jobs to it"
           }
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Link2 size={13} />
           Link Jobs
@@ -1561,7 +1561,7 @@ export default function BillsPage() {
           type="button"
           onClick={() => setZipOpen(true)}
           disabled={busy || logoBusy}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn btn-primary"
         >
           <FileArchive size={13} />
           Download ZIP
@@ -1570,7 +1570,7 @@ export default function BillsPage() {
           type="button"
           onClick={handleBulkDelete}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger-muted text-danger text-xs font-bold hover:bg-danger hover:text-[var(--theme-bg)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Trash2 size={13} />
           {selection.count === 1 ? "Delete bill" : `Delete ${selection.count} bills`}
@@ -1772,14 +1772,14 @@ function JobGroupChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+      className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11.5px] font-semibold transition-colors cursor-pointer ${
         active
           ? "border-primary bg-primary text-[var(--theme-primary-text)]"
-          : "border-border bg-surface text-text-secondary hover:border-primary hover:text-primary"
+          : "border-border bg-surface text-text-secondary hover:border-primary/50 hover:text-primary"
       }`}
     >
       {label}
-      <span className={active ? "opacity-80" : "text-text-muted"}>{count}</span>
+      <span className={`tabular-nums ${active ? "opacity-70" : "text-text-muted"}`}>{count}</span>
     </button>
   );
 }

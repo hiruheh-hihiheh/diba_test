@@ -49,7 +49,7 @@ interface LibraryItem {
 }
 
 const inputCls =
-  "w-full px-4 py-3 rounded-xl bg-bg border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-11 py-0 text-[14px]";
 
 function getItemIcon(type: FolderItemType) {
   switch (type) {
@@ -360,13 +360,13 @@ export default function FoldersPage() {
   }
 
   return (
-    <div className="space-y-8 animate-fade-in pb-12">
+    <div className="space-y-5 animate-fade-in pb-12">
       {/* ── Header ──
           No <h1>: the TopBar already says "Folders". The line that remains
           explains what a folder is *for*, which the top bar cannot. */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-4 min-w-0">
-          <div className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
             <FolderOpen size={24} className="text-primary" />
           </div>
           <p className="text-sm text-text-muted min-w-0 max-w-xl">
@@ -387,7 +387,7 @@ export default function FoldersPage() {
             type="button"
             onClick={handleRefresh}
             disabled={refreshing || movingItem}
-            className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-semibold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            className="btn btn-secondary"
           >
             <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Refreshing…" : "Refresh"}
@@ -395,7 +395,7 @@ export default function FoldersPage() {
           <button
             type="button"
             onClick={openAdd}
-            className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             <Plus size={18} /> New Folder
           </button>
@@ -450,7 +450,7 @@ export default function FoldersPage() {
                       <button
                         type="button"
                         onClick={() => setSearch("")}
-                        className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                        className="btn btn-primary"
                       >
                         Clear search
                       </button>
@@ -458,7 +458,7 @@ export default function FoldersPage() {
                       <button
                         type="button"
                         onClick={openAdd}
-                        className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                        className="btn btn-primary"
                       >
                         Create your first folder
                       </button>
@@ -479,18 +479,18 @@ export default function FoldersPage() {
                       onDragLeave={(e) => handleDragLeave(e, folder.id)}
                       onDrop={(e) => handleDrop(e, folder)}
                       className={`
-                        bg-surface border rounded-2xl p-5 transition-all flex flex-col
+                        panel relative p-5 transition-all flex flex-col
                         ${
                           isDragTarget
                             ? "border-primary bg-primary-muted/20 scale-[1.02] shadow-xl shadow-primary/10"
-                            : "border-border hover:border-border-hover"
+                            : "hover:border-border-hover"
                         }
                       `}
                     >
                       {isDragTarget && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface/70 backdrop-blur-sm rounded-2xl animate-fade-in pointer-events-none relative">
-                          <div className="bg-primary text-white font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg">
-                            <CornerRightDown size={18} /> Add to this folder
+                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface/70 backdrop-blur-sm rounded-[14px] animate-fade-in pointer-events-none">
+                          <div className="bg-primary text-[var(--theme-primary-text)] font-semibold text-[12.5px] px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-lg">
+                            <CornerRightDown size={15} /> Add to this folder
                           </div>
                         </div>
                       )}
@@ -500,7 +500,7 @@ export default function FoldersPage() {
                           type="button"
                           onClick={() => navigate(`/folders/${folder.id}`)}
                           aria-label={`Open folder ${folder.name}`}
-                          className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors cursor-pointer"
+                          className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors cursor-pointer"
                         >
                           <FolderOpen size={24} className="text-primary" />
                         </button>
@@ -551,9 +551,9 @@ export default function FoldersPage() {
                           does. */}
                       <Link
                         to={`/folders/${folder.id}`}
-                        className="mt-4 w-full py-2.5 rounded-xl bg-surface-hover/50 hover:bg-primary hover:text-white text-sm font-bold text-text transition-colors flex items-center justify-center gap-2"
+                        className="mt-4 w-full h-9 rounded-lg bg-surface-hover/60 hover:bg-primary hover:text-[var(--theme-primary-text)] text-[12.5px] font-semibold text-text transition-colors flex items-center justify-center gap-1.5"
                       >
-                        Open Folder <ChevronRight size={16} />
+                        Open folder <ChevronRight size={14} />
                       </Link>
                     </div>
                   );
@@ -585,7 +585,7 @@ export default function FoldersPage() {
               />
 
               <div
-                className="flex items-center gap-1.5 bg-surface border border-border rounded-xl p-1.5 overflow-x-auto scrollbar-none"
+                className="segmented max-w-full overflow-x-auto scrollbar-none"
                 role="group"
                 aria-label="Filter library by type"
               >
@@ -598,14 +598,10 @@ export default function FoldersPage() {
                       type="button"
                       onClick={() => setItemsFilter(type)}
                       aria-pressed={active}
-                      className={`px-3.5 py-2 rounded-lg text-[13px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                        active
-                          ? "bg-primary text-white"
-                          : "text-text-muted hover:text-text hover:bg-surface-hover"
-                      }`}
+                      className="seg-item"
                     >
                       {type === "all" ? "All Items" : getItemTypeLabel(type)}
-                      <span className={active ? "opacity-80" : "opacity-60"}>({n})</span>
+                      <span className="tabular-nums opacity-60">{n}</span>
                     </button>
                   );
                 })}
@@ -614,7 +610,7 @@ export default function FoldersPage() {
 
             <div
               ref={libraryRef}
-              className="bg-surface border border-border rounded-2xl overflow-hidden flex flex-col"
+              className="panel-flat flex flex-col"
             >
               <InlineRefreshBar show={refreshing} />
 
@@ -645,7 +641,7 @@ export default function FoldersPage() {
                           setItemsSearch("");
                           setItemsFilter("all");
                         }}
-                        className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                        className="btn btn-primary"
                       >
                         Reset filters
                       </button>
@@ -655,7 +651,7 @@ export default function FoldersPage() {
               ) : (
                 <>
                   <div className="overflow-auto scrollbar-thin table-scroll">
-                    <table className="w-full min-w-[34rem]">
+                    <table className="data-table w-full min-w-[34rem]">
                       <thead className="sticky-head">
                         <tr className="border-b border-border">
                           <th className="w-9" />
@@ -779,7 +775,7 @@ export default function FoldersPage() {
               type="button"
               onClick={handleSave}
               disabled={formLoading}
-              className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+              className="btn btn-primary"
             >
               {formLoading && <Loader2 size={16} className="animate-spin" />}
               {formLoading
@@ -851,7 +847,7 @@ export default function FoldersPage() {
                   setPreviewItem(null);
                   navigate(target.path);
                 }}
-                className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors cursor-pointer flex items-center gap-2"
+                className="btn btn-primary"
               >
                 {itemRoute[previewItem.type].label}
                 <ExternalLink size={14} />
@@ -862,7 +858,7 @@ export default function FoldersPage() {
       >
         {previewItem && (
           <div className="flex items-center gap-4 bg-bg border border-border p-5 rounded-2xl">
-            <div className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-surface border border-border flex items-center justify-center shrink-0">
               {getItemIcon(previewItem.type)}
             </div>
             <div className="min-w-0">

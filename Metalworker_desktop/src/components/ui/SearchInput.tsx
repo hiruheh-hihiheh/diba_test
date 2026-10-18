@@ -76,8 +76,9 @@ export default function SearchInput({
     <div className={className}>
       <div className="relative">
         <Search
-          size={16}
-          className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+          size={15}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+          aria-hidden="true"
         />
         <input
           ref={inputRef}
@@ -88,11 +89,11 @@ export default function SearchInput({
           autoFocus={autoFocus}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder ?? `Search ${scope}…  (press / to focus)`}
-          className={`w-full pl-10 pr-10 py-2.5 rounded-xl bg-surface border text-sm text-text
-            placeholder:text-text-muted/50 transition-all
-            focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary
+          className={`w-full h-9 pl-9 pr-9 rounded-[9px] bg-surface border text-[13px] text-text
+            placeholder:text-text-muted/60 transition-[border-color,box-shadow,background-color]
+            focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary focus:bg-bg
             [&::-webkit-search-cancel-button]:hidden
-            ${isFiltering ? "border-primary/60" : "border-border"}
+            ${isFiltering ? "border-primary/50" : "border-border hover:border-border-hover"}
             ${inputClassName}`}
         />
         {hasQuery && (
@@ -104,21 +105,21 @@ export default function SearchInput({
             }}
             aria-label="Clear search"
             title="Clear search"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
           >
-            <X size={15} />
+            <X size={14} />
           </button>
         )}
       </div>
 
       {/* Result count / active-filter line */}
-      <div className="flex items-center justify-between gap-3 mt-1.5 min-h-[18px]">
-        <p className="text-xs text-text-muted">
+      <div className="flex items-center justify-between gap-3 mt-1.5 min-h-[16px]">
+        <p className="text-[11px] text-text-muted leading-none">
           {hasQuery ? (
             <>
-              <span className="font-semibold text-text">{resultCount}</span>{" "}
+              <span className="font-semibold text-text-secondary">{resultCount}</span>{" "}
               {resultCount === 1 ? "match" : "matches"} for{" "}
-              <span className="font-semibold text-text">“{value.trim()}”</span>
+              <span className="font-semibold text-text-secondary">“{value.trim()}”</span>
               {totalCount !== undefined && ` of ${totalCount}`}
             </>
           ) : totalCount !== undefined ? (
@@ -131,7 +132,7 @@ export default function SearchInput({
           <button
             type="button"
             onClick={() => onChange("")}
-            className="text-xs font-semibold text-primary hover:underline cursor-pointer shrink-0"
+            className="text-[11px] font-semibold text-primary hover:underline cursor-pointer shrink-0"
           >
             Clear
           </button>

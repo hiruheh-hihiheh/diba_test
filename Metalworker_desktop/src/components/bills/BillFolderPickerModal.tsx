@@ -127,7 +127,7 @@ export function BillFolderPickerModal({
             type="button"
             onClick={confirm}
             disabled={!target || saving || billIds.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn btn-primary"
           >
             {saving && <Loader2 size={15} className="animate-spin" />}
             Add to folder

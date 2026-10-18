@@ -68,17 +68,16 @@ interface UsersPageProps {
 
 const accentCls = {
   purple: {
-    chip: "bg-purple-muted text-purple",
+    chip: "bg-purple-muted text-purple border-purple/25",
     dot: "text-purple",
   },
   primary: {
-    chip: "bg-primary-muted text-primary",
+    chip: "bg-primary-muted text-primary border-primary/25",
     dot: "text-primary",
   },
 } as const;
 
-const inputCls =
-  "w-full px-4 py-3 rounded-xl bg-bg border border-border text-[15px] text-text placeholder:text-text-muted/40 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+const inputCls = "field h-11 py-0 text-[14px]";
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString([], {
@@ -411,30 +410,30 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header
           No <h1> and no subtitle: the TopBar already carries "Labour Users" and
           the active/inactive split, and printing the same split again here made
           the screen read as double-titled with two copies of the same numbers. */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <div
-            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+            className={`w-9 h-9 rounded-[10px] border flex items-center justify-center shrink-0 ${
               accentCls[accent].chip
             }`}
           >
             {icon}
           </div>
-          <p className="text-sm text-text-muted min-w-0">
+          <p className="text-[13px] text-text-muted min-w-0 leading-relaxed">
             Accounts that can sign in and submit work.{" "}
-            <span className="text-text font-semibold">{counts.all}</span> total,{" "}
-            <span className="text-text font-semibold">{counts.active}</span> active.
+            <span className="text-text font-semibold tabular-nums">{counts.all}</span> total,{" "}
+            <span className="text-text font-semibold tabular-nums">{counts.active}</span> active.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <IconButton
             label={refreshing ? "Refreshing…" : "Refresh accounts"}
-            icon={<RefreshCw size={17} className={refreshing ? "animate-spin" : ""} />}
+            icon={<RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />}
             onClick={handleRefresh}
             busy={refreshing}
             variant="surface"
@@ -448,9 +447,9 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               setAddPassword("");
               setShowAddModal(true);
             }}
-            className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
-            <Plus size={18} />
+            <Plus size={15} />
             {addLabel}
           </button>
         </div>
@@ -471,34 +470,24 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               placeholder={isProcessor ? "Search processors…" : "Search users…"}
               className="lg:max-w-md"
             />
-            <div
-              className="flex items-center gap-1 bg-surface border border-border rounded-xl p-1.5 self-start"
-              role="group"
-              aria-label="Filter by status"
-            >
+            <div className="segmented self-start" role="group" aria-label="Filter by status">
               {(["all", "active", "inactive"] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
                   onClick={() => setFilter(f)}
                   aria-pressed={filter === f}
-                  className={`px-4 py-2 rounded-lg text-[13px] font-bold transition-all cursor-pointer ${
-                    filter === f
-                      ? "bg-primary text-white"
-                      : "text-text-muted hover:text-text hover:bg-surface-hover"
-                  }`}
+                  className="seg-item"
                 >
                   {f.charAt(0).toUpperCase() + f.slice(1)}{" "}
-                  <span className={filter === f ? "opacity-80" : "opacity-60"}>
-                    ({counts[f]})
-                  </span>
+                  <span className="tabular-nums opacity-60">{counts[f]}</span>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Table */}
-          <div className="bg-surface border border-border rounded-xl overflow-hidden">
+          <div className="panel-flat">
             <InlineRefreshBar show={refreshing} />
 
             {visible.length === 0 ? (
@@ -526,7 +515,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
                         setSearch("");
                         setFilter("all");
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search and filter
                     </button>
@@ -534,7 +523,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
                     <button
                       type="button"
                       onClick={() => setShowAddModal(true)}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       {addLabel}
                     </button>
@@ -543,7 +532,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               />
             ) : (
               <div className="overflow-x-auto scrollbar-thin table-scroll">
-                <table className="w-full min-w-[42rem]">
+                <table className="data-table w-full min-w-[42rem]">
                   <thead className="sticky-head">
                     <tr className="border-b border-border">
                       <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-6 py-4">
@@ -589,10 +578,10 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
                         </td>
                         <td className="px-6 py-4">
                           <span
-                            className={`inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-full whitespace-nowrap ${
+                            className={`badge py-1 px-2.5 rounded-md border ${
                               worker.is_active
-                                ? "bg-success-muted text-success"
-                                : "bg-danger-muted text-danger"
+                                ? "bg-success-muted text-success border-success/25"
+                                : "bg-danger-muted text-danger border-danger/25"
                             }`}
                           >
                             {worker.is_active ? <UserCheck size={14} /> : <UserX size={14} />}
@@ -660,7 +649,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               type="button"
               onClick={() => setShowAddModal(false)}
               disabled={addLoading}
-              className="px-5 py-3 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer disabled:opacity-50"
+              className="btn btn-ghost"
             >
               Cancel
             </button>
@@ -668,7 +657,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               type="button"
               onClick={handleCreate}
               disabled={addLoading}
-              className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2.5"
+              className="btn btn-primary"
             >
               {addLoading ? (
                 <Loader2 size={15} className="animate-spin" />
@@ -782,7 +771,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               type="button"
               onClick={() => setShowEditModal(false)}
               disabled={editLoading}
-              className="px-5 py-3 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-all cursor-pointer disabled:opacity-50"
+              className="btn btn-ghost"
             >
               Cancel
             </button>
@@ -790,7 +779,7 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
               type="button"
               onClick={handleEditSave}
               disabled={editLoading}
-              className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2.5"
+              className="btn btn-primary"
             >
               {editLoading && <Loader2 size={15} className="animate-spin" />}
               {editLoading ? "Saving…" : "Save changes"}

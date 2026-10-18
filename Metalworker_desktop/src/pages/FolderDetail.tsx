@@ -517,7 +517,7 @@ export default function FolderDetail() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in pb-24">
+    <div className="space-y-5 animate-fade-in pb-24">
       {/* ── Header ──
           No <h1>: the TopBar and the breadcrumb trail already name the folder,
           and printing the name a third time meant a long folder name was
@@ -533,7 +533,7 @@ export default function FolderDetail() {
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4 min-w-0">
-            <div className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
               <FolderOpen size={24} className="text-primary" />
             </div>
             <p className="text-sm text-text-muted min-w-0">
@@ -608,7 +608,7 @@ export default function FolderDetail() {
                     <button
                       type="button"
                       onClick={() => setInsideSearch("")}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search
                     </button>
@@ -915,7 +915,7 @@ export default function FolderDetail() {
           type="button"
           onClick={handleBulkRemove}
           disabled={bulkBusy}
-          className="px-3.5 py-2 rounded-lg bg-danger-muted text-danger text-xs font-bold border border-danger/25 hover:bg-danger hover:text-white transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+          className="px-3.5 py-2 rounded-lg bg-danger-muted text-danger text-xs font-bold border border-danger/25 hover:bg-danger hover:text-[var(--theme-bg)] transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
         >
           {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
           Remove from folder
@@ -933,7 +933,7 @@ export default function FolderDetail() {
           type="button"
           onClick={handleBulkAdd}
           disabled={bulkBusy}
-          className="px-3.5 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-hover transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1.5"
+          className="btn btn-primary"
         >
           {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
           Add to folder
@@ -949,7 +949,7 @@ export default function FolderDetail() {
       {billSummary && billSummary.total_bills > 0 && (
         <section className="bg-surface border border-border rounded-2xl p-5">
           <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-9 h-9 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-primary-muted border border-primary/20 flex items-center justify-center shrink-0">
               <Receipt size={17} className="text-primary" />
             </div>
             <div>
@@ -1017,7 +1017,7 @@ export default function FolderDetail() {
                   setPreviewItem(null);
                   navigate(target.path);
                 }}
-                className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors cursor-pointer flex items-center gap-2"
+                className="btn btn-primary"
               >
                 {itemRoute[previewItem.type].label}
                 <ExternalLink size={14} />
@@ -1028,7 +1028,7 @@ export default function FolderDetail() {
       >
         {previewItem && (
           <div className="flex items-center gap-4 bg-bg border border-border p-5 rounded-2xl">
-            <div className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-surface border border-border flex items-center justify-center shrink-0">
               {getItemIcon(previewItem.type)}
             </div>
             <div className="min-w-0">

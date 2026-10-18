@@ -57,7 +57,7 @@ import { useLogoImageUrls } from "../components/bills/useLogoImageUrls";
 import { BillLogoAssignModal } from "../components/bills/BillLogoAssignModal";
 
 const inputCls =
-  "bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary";
+  "field h-9 py-0 text-[13px]";
 
 export default function InvoiceLogosPage() {
   const toast = useToast();
@@ -278,8 +278,8 @@ export default function InvoiceLogosPage() {
       {/* ── Header ─────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text">Logo Library</h1>
-          <p className="text-sm text-text-muted mt-0.5">
+          <p className="text-[13px] font-semibold text-text">Invoice letterheads</p>
+          <p className="text-[12.5px] text-text-muted mt-0.5">
             Add a letterhead once, then print it on any number of invoices.
           </p>
         </div>
@@ -302,7 +302,7 @@ export default function InvoiceLogosPage() {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={adding}
-            className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2 shadow-lg shadow-primary/20"
+            className="btn btn-primary"
           >
             {adding ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
             {adding ? "Adding…" : "Add logo"}
@@ -311,7 +311,7 @@ export default function InvoiceLogosPage() {
               hung button. The exact size is in the message, because "it got
               smaller" without saying how much is not something an admin can
               verify. */}
-          {addingStatus && <p className="text-xs text-secondary">{addingStatus}</p>}
+          {addingStatus && <p className="text-xs text-text-secondary">{addingStatus}</p>}
         </div>
       </div>
 
@@ -346,7 +346,7 @@ export default function InvoiceLogosPage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={adding}
-                className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                className="btn btn-primary"
               >
                 {adding ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
                 Add your first logo
@@ -447,7 +447,7 @@ export default function InvoiceLogosPage() {
               type="button"
               onClick={() => void submitRename()}
               disabled={renaming || !renameValue.trim()}
-              className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="btn btn-primary"
             >
               {renaming ? "Saving…" : "Save"}
             </button>
@@ -502,7 +502,7 @@ export default function InvoiceLogosPage() {
                 type="button"
                 onClick={() => void confirmDelete()}
                 disabled={deleting}
-                className="px-4 py-2.5 rounded-xl bg-danger hover:bg-danger/90 text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="btn btn-danger-solid"
               >
                 {deleting ? "Deleting…" : "Delete logo"}
               </button>
@@ -522,7 +522,7 @@ export default function InvoiceLogosPage() {
             </div>
 
             {usageFailed ? (
-              <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/25 text-danger text-sm">
+              <div className="flex items-start gap-2.5 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-sm text-danger">
                 <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                 <span>
                   Which invoices use this logo could not be checked, so it cannot safely be

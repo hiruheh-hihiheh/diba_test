@@ -37,11 +37,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
+  ChevronRight,
   Copy,
   Eye,
   FilePlus2,
   FolderPlus,
+  Info,
   Loader2,
   Plus,
   Save,
@@ -260,16 +263,18 @@ export default function CreateBillPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4">
-      <div className="rounded-xl border border-border bg-surface overflow-hidden">
-        <header className="px-6 py-5 border-b border-border bg-bg-secondary">
-          <h2 className="text-lg font-bold text-text">Create a bill</h2>
-          <p className="mt-1 text-sm text-text-secondary">
-            All three options produce the same bill, with the same Original, Duplicate and
-            Triplicate PDFs. They differ only in what starts filled in.
+    <div className="max-w-[46rem] mx-auto py-2">
+      <div className="panel-flat">
+        <header className="px-6 py-5 border-b border-border">
+          <h2 className="text-[15px] font-semibold text-text tracking-[-0.01em]">
+            How should this bill start?
+          </h2>
+          <p className="mt-1 text-[12.5px] text-text-muted leading-relaxed max-w-[38rem]">
+            Every option produces the same bill, with the same Original, Duplicate and
+            Triplicate PDFs. They differ only in what is filled in when the form opens.
           </p>
         </header>
-        <div className="p-6 grid gap-3">
+        <div className="p-3 grid gap-1.5">
           <EntryChoice
             icon={<FilePlus2 size={18} />}
             title="Create New Bill"
@@ -293,21 +298,26 @@ export default function CreateBillPage() {
             /* Absent, not disabled. With nothing to copy there is no decision to make, and
                a greyed-out button invites the question "why is that grey?" — which the
                answer "because there are no bills yet" does not help with. */
-            <p className="px-4 py-3 rounded-lg bg-bg-secondary text-sm text-text-muted">
-              <strong className="text-text-secondary">Copy Existing Bill</strong> appears once
-              there is a bill to copy.
+            <p className="flex items-start gap-2.5 px-4 py-3 rounded-lg border border-dashed border-border text-[12px] text-text-muted">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              <span>
+                <strong className="font-semibold text-text-secondary">Copy an existing bill</strong>{" "}
+                appears once there is a bill to copy. Upload a workbook under Bills to create
+                the first one.
+              </span>
             </p>
           )}
         </div>
-        <p className="px-6 pb-6">
+        <div className="px-4 py-3 border-t border-border">
           <button
             type="button"
             onClick={() => navigate("/bills")}
-            className="text-sm font-semibold text-text-muted hover:text-text cursor-pointer"
+            className="btn btn-ghost btn-sm"
           >
-            Back to Bills
+            <ArrowLeft size={14} />
+            Back to bills
           </button>
-        </p>
+        </div>
       </div>
 
       <BillSourcePicker
@@ -1013,7 +1023,7 @@ function CreatorForm({
           {/* ── D. Line Items ───────────────────────────────── */}
           <SectionCard title="D. Line Items" cols={1}>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="data-table w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-text-muted">
                     <th className="w-10 py-1">Sr</th>
@@ -1075,7 +1085,7 @@ function CreatorForm({
                       <button
                         type="button"
                         onClick={addLine}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer"
+                        className="btn btn-primary"
                       >
                         <Plus size={14} />
                         Add line
@@ -1492,7 +1502,7 @@ function CreatorForm({
               type="button"
               onClick={() => void createFolder()}
               disabled={newFolderName.trim() === ""}
-              className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover disabled:opacity-40 cursor-pointer"
+              className="btn btn-primary"
             >
               Create
             </button>
@@ -1531,7 +1541,7 @@ function CreatorForm({
             <button
               type="button"
               onClick={() => void finalize(true)}
-              className="px-4 py-2.5 rounded-xl bg-danger text-white text-sm font-bold hover:opacity-90 cursor-pointer"
+              className="btn btn-danger-solid"
             >
               Generate anyway
             </button>
@@ -1584,13 +1594,19 @@ function EntryChoice({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-start gap-3 w-full text-left px-4 py-3.5 rounded-xl border border-border bg-bg hover:bg-surface-hover transition-colors cursor-pointer"
+      className="group flex items-start gap-3.5 w-full text-left px-4 py-3.5 rounded-[10px] border border-transparent hover:border-border hover:bg-surface-hover transition-colors cursor-pointer"
     >
-      <span className="mt-0.5 text-primary">{icon}</span>
-      <span className="min-w-0">
-        <span className="block text-sm font-bold text-text">{title}</span>
-        <span className="block mt-0.5 text-sm text-text-secondary">{body}</span>
+      <span className="mt-0.5 w-8 h-8 rounded-[8px] border border-primary/25 bg-primary-muted text-primary flex items-center justify-center shrink-0">
+        {icon}
       </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13.5px] font-semibold text-text">{title}</span>
+        <span className="block mt-0.5 text-[12.5px] text-text-muted leading-relaxed">{body}</span>
+      </span>
+      <ChevronRight
+        size={16}
+        className="mt-1.5 shrink-0 text-text-muted/50 group-hover:text-primary group-hover:translate-x-0.5 transition-all"
+      />
     </button>
   );
 }
@@ -1637,7 +1653,7 @@ function SmallButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+      className="btn btn-primary"
     >
       {children}
     </button>

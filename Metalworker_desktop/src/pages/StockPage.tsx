@@ -111,11 +111,11 @@ export interface StockPageConfig {
 }
 
 const inputCls =
-  "w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-10 py-0 text-[13.5px]";
 
 const accentCls = {
-  primary: { chip: "bg-primary-muted text-primary", text: "text-primary" },
-  purple: { chip: "bg-purple-muted text-purple", text: "text-purple" },
+  primary: { chip: "bg-primary-muted text-primary border-primary/25", text: "text-primary" },
+  purple: { chip: "bg-purple-muted text-purple border-purple/25", text: "text-purple" },
 } as const;
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -481,15 +481,15 @@ export default function StockPage<T extends Row>({
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header
           No <h1>: the TopBar already shows the page name, so repeating it here
           made the screen read as double-titled. The count stays because it is
           the only place that reacts to the search box. */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <div
-            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${accentCls[accent].chip}`}
+            className={`w-10 h-10 rounded-[10px] border flex items-center justify-center shrink-0 ${accentCls[accent].chip}`}
           >
             {config.icon}
           </div>
@@ -523,7 +523,7 @@ export default function StockPage<T extends Row>({
           <button
             type="button"
             onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             <Plus size={17} />
             {config.addLabel}
@@ -550,7 +550,7 @@ export default function StockPage<T extends Row>({
             className="lg:max-w-md"
           />
 
-          <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+          <div className="panel-flat">
             <InlineRefreshBar show={refreshing} />
 
             {filtered.length === 0 ? (
@@ -567,7 +567,7 @@ export default function StockPage<T extends Row>({
                     <button
                       type="button"
                       onClick={() => setSearch("")}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search
                     </button>
@@ -575,7 +575,7 @@ export default function StockPage<T extends Row>({
                     <button
                       type="button"
                       onClick={openAdd}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       {config.addLabel}
                     </button>
@@ -585,7 +585,7 @@ export default function StockPage<T extends Row>({
             ) : (
               <>
                 <div className="overflow-x-auto scrollbar-thin table-scroll">
-                  <table className="w-full min-w-[40rem]">
+                  <table className="data-table w-full min-w-[40rem]">
                     <thead className="sticky-head">
                       <tr className="border-b border-border">
                         {config.columns.map((c) => (
@@ -726,7 +726,7 @@ export default function StockPage<T extends Row>({
               type="button"
               onClick={handleSave}
               disabled={saving || uploadingSlot !== null}
-              className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+              className="btn btn-primary"
             >
               {saving && <Loader2 size={15} className="animate-spin" />}
               {saving ? "Saving…" : editing ? "Save changes" : config.addLabel}
@@ -811,7 +811,7 @@ export default function StockPage<T extends Row>({
                             type="button"
                             onClick={() => handleUpload(slot)}
                             disabled={busy}
-                            className="mt-2 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary-hover transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5"
+                            className="btn btn-primary"
                           >
                             {busy ? (
                               <Loader2 size={12} className="animate-spin" />
@@ -876,7 +876,7 @@ export default function StockPage<T extends Row>({
                 setPreview(null);
                 if (row) openAdd();
               }}
-              className="px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               Add another
             </button>

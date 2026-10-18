@@ -80,11 +80,17 @@ export interface PhotoGroupsConfig {
 }
 
 const inputCls =
-  "w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-10 py-0 text-[13.5px]";
 
 const accentCls = {
-  warning: { chip: "bg-warning-muted text-warning", soft: "bg-warning-muted/60 text-warning" },
-  success: { chip: "bg-success-muted text-success", soft: "bg-success-muted/60 text-success" },
+  warning: {
+    chip: "bg-warning-muted text-warning border-warning/25",
+    soft: "bg-warning-muted/60 text-warning",
+  },
+  success: {
+    chip: "bg-success-muted text-success border-success/25",
+    soft: "bg-success-muted/60 text-success",
+  },
 } as const;
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -457,16 +463,16 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header
           No <h1>: the TopBar already carries the page name. What stays is the
           count of *groups* — the rows in the table are groups, so "2 bill
           groups" is what a reader can match against the table below, not the
           section name "group bills". */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <div
-            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${accentCls[accent].chip}`}
+            className={`w-10 h-10 rounded-[10px] border flex items-center justify-center shrink-0 ${accentCls[accent].chip}`}
           >
             {config.icon}
           </div>
@@ -498,7 +504,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
           <button
             type="button"
             onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            className="btn btn-primary"
           >
             <Plus size={17} />
             {config.addLabel}
@@ -521,7 +527,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
             className="lg:max-w-md"
           />
 
-          <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+          <div className="panel-flat">
             <InlineRefreshBar show={refreshing} />
 
             {filtered.length === 0 ? (
@@ -540,7 +546,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
                     <button
                       type="button"
                       onClick={() => setSearch("")}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search
                     </button>
@@ -548,7 +554,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
                     <button
                       type="button"
                       onClick={openAdd}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       {config.addLabel}
                     </button>
@@ -558,7 +564,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
             ) : (
               <>
                 <div className="overflow-x-auto scrollbar-thin table-scroll">
-                  <table className="w-full min-w-[36rem]">
+                  <table className="data-table w-full min-w-[36rem]">
                     <thead className="sticky-head">
                       <tr className="border-b border-border">
                         <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-5 py-3">
@@ -663,7 +669,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
+              className="btn btn-primary"
             >
               {saving && <Loader2 size={15} className="animate-spin" />}
               {saving ? "Saving…" : editing ? "Save changes" : "Create group"}
@@ -812,7 +818,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
             ) : photosError ? (
               <div
                 role="alert"
-                className="px-4 py-3.5 rounded-xl bg-danger-muted border border-danger/25 text-danger"
+                className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
               >
                 <p className="text-sm font-bold flex items-center gap-2">
                   <AlertTriangle size={16} />
@@ -899,7 +905,7 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
                 type="button"
                 onClick={() => handleRemovePhoto(photos[lightbox.index])}
                 disabled={removingPhotoId === photos[lightbox.index]?.id}
-                className="px-4 py-2.5 rounded-xl bg-danger/90 hover:bg-danger text-white text-sm font-bold transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
+                className="btn btn-danger-solid"
               >
                 {removingPhotoId === photos[lightbox.index]?.id ? (
                   <Loader2 size={15} className="animate-spin" />

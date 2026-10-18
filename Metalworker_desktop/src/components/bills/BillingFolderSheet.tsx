@@ -385,7 +385,7 @@ export default function BillingFolderSheet({
                 type="button"
                 onClick={() => void handleCreate()}
                 disabled={creating || newName.trim().length === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-[var(--theme-primary-text)] transition-colors hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="btn btn-primary"
               >
                 <FolderPlus size={14} />
                 {creating ? "Creating…" : "Create"}
@@ -455,7 +455,7 @@ export default function BillingFolderSheet({
                     <button
                       type="button"
                       onClick={() => void handleRename(folder)}
-                      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-[var(--theme-primary-text)] hover:bg-primary-hover cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Save
                     </button>
@@ -929,14 +929,14 @@ function BillingFolderDetail({
             <button
               type="button"
               onClick={() => void handleRemoveSelected()}
-              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-[var(--theme-primary-text)] hover:bg-primary-hover transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               Remove from folder
             </button>
             <button
               type="button"
               onClick={() => setMoveTarget(moveTarget ? null : "choose")}
-              className="rounded-lg bg-primary-muted px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               Move…
             </button>
@@ -983,7 +983,7 @@ function BillingFolderDetail({
                   type="button"
                   onClick={() => void handleMove()}
                   disabled={moveTarget === "choose"}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-[var(--theme-primary-text)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="btn btn-primary"
                 >
                   Move here
                 </button>

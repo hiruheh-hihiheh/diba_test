@@ -51,7 +51,7 @@ const STAGE_TEXT: Record<Exclude<Stage, "idle">, string> = {
 };
 
 const inputCls =
-  "w-full px-5 py-3.5 rounded-xl bg-bg border text-text text-[15px] placeholder:text-text-muted/40 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all duration-200";
+  "field h-11 py-0 text-[14px] bg-bg";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -192,32 +192,52 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-dvh-fallback bg-bg flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-      {/* Background gradient decorations */}
+      {/* Background: one warm wash from the copper accent and a faint grid, so the
+          page has depth without a stack of blurred blobs. Both are decorative. */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <div className="absolute -top-60 -right-60 w-[500px] h-[500px] bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-60 -left-60 w-[500px] h-[500px] bg-purple/5 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/[0.02] rounded-full blur-3xl" />
+        <div className="absolute -top-[28rem] left-1/2 -translate-x-1/2 w-[62rem] h-[46rem] rounded-full bg-primary/[0.07] blur-[120px]" />
+        <div
+          className="absolute inset-0 opacity-[0.35]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, var(--color-border) 1px, transparent 1px), linear-gradient(to bottom, var(--color-border) 1px, transparent 1px)",
+            backgroundSize: "64px 64px",
+            maskImage: "radial-gradient(ellipse at 50% 0%, black, transparent 72%)",
+            WebkitMaskImage: "radial-gradient(ellipse at 50% 0%, black, transparent 72%)",
+          }}
+        />
       </div>
 
-      <div className="w-full max-w-[460px] relative animate-fade-in my-auto">
-        <div className="bg-surface border border-border rounded-3xl p-6 sm:p-9 shadow-2xl shadow-black/30">
-          {/* Logo */}
-          <div className="flex flex-col items-center mb-7 sm:mb-9">
-            <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-4 shadow-xl shadow-primary/30">
-              <Hexagon size={32} className="text-white" />
+      <div className="w-full max-w-[27rem] relative animate-fade-in my-auto">
+        <div className="bg-surface border border-border rounded-2xl p-7 sm:p-8 shadow-[0_40px_90px_-40px_rgba(0,0,0,0.7),0_2px_8px_-2px_rgba(0,0,0,0.35)]">
+          {/* Brand */}
+          <div className="flex items-center gap-2.5 mb-7">
+            <div className="w-9 h-9 rounded-[10px] bg-primary flex items-center justify-center shadow-[0_8px_20px_-10px_rgba(201,128,82,0.9)]">
+              <Hexagon size={18} className="text-[var(--theme-primary-text)]" strokeWidth={2.4} />
             </div>
-            <h1 className="text-[26px] font-extrabold text-text tracking-tight">Admin Portal</h1>
-            <p className="text-sm text-text-muted mt-2 text-center leading-relaxed">
-              Restricted area — authorized administrators only.
+            <div className="leading-none">
+              <p className="text-[12px] font-bold text-text tracking-[0.16em]">METALWORKER</p>
+              <p className="text-[9.5px] font-semibold text-text-muted/80 tracking-[0.18em] mt-1.5">
+                ADMIN CONSOLE
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <h1 className="text-[21px] font-semibold text-text tracking-[-0.02em] leading-tight">
+              Sign in
+            </h1>
+            <p className="text-[12.5px] text-text-muted mt-1.5 leading-relaxed">
+              Restricted area — administrator access only.
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {/* Username */}
             <div>
               <label
                 htmlFor="username"
-                className="block text-[12px] font-bold text-text-muted tracking-[0.1em] mb-2 uppercase"
+                className="label"
               >
                 Username <span className="text-danger">*</span>
               </label>
@@ -267,7 +287,7 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="password"
-                className="block text-[12px] font-bold text-text-muted tracking-[0.1em] mb-2 uppercase"
+                className="label"
               >
                 Password <span className="text-danger">*</span>
               </label>
@@ -323,7 +343,7 @@ export default function LoginPage() {
                 ref={errorRef}
                 role="alert"
                 tabIndex={-1}
-                className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-danger-muted border border-danger/20 animate-scale-in"
+                className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger animate-scale-in"
               >
                 <Shield size={18} className="text-danger shrink-0 mt-0.5" />
                 <p className="text-sm text-danger font-medium leading-relaxed">{error}</p>
@@ -335,7 +355,7 @@ export default function LoginPage() {
               type="submit"
               disabled={loading}
               aria-describedby={loading ? "signin-stage" : undefined}
-              className="w-full py-4 px-5 rounded-xl bg-primary hover:bg-primary-hover text-white text-[15px] font-bold transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2.5 shadow-xl shadow-primary/25 cursor-pointer mt-1"
+              className="btn btn-primary w-full justify-center h-11 text-[14px] mt-1"
             >
               {loading ? (
                 <>
@@ -363,13 +383,13 @@ export default function LoginPage() {
             </p>
           </form>
 
-          <p className="mt-6 pt-5 border-t border-border flex items-center justify-center gap-2 text-xs text-text-muted">
-            <UserX size={13} />
+          <p className="mt-6 pt-5 border-t border-border flex items-center justify-center gap-2 text-[11px] text-text-muted">
+            <UserX size={12} />
             Labour and processor users sign in through the main app.
           </p>
         </div>
 
-        <p className="text-center text-xs text-text-muted/50 mt-6 font-medium">
+        <p className="text-center text-[10.5px] text-text-muted/60 mt-5 font-medium tracking-wide">
           MetalWorker Admin v2.0 — Browser Edition
         </p>
       </div>

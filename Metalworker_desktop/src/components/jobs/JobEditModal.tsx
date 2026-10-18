@@ -104,7 +104,7 @@ const FIELDS: {
 ];
 
 const inputCls =
-  "w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-10 py-0 text-[13.5px]";
 
 function emptyToNull(v: string): string | null {
   return v.trim() === "" ? null : v.trim();
@@ -271,7 +271,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
             type="submit"
             form="job-edit-form"
             disabled={loading || hasBlockingIssues}
-            className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-lg shadow-primary/20"
+            className="btn btn-primary"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
             {loading ? "Saving…" : dirty ? "Save Changes" : "No changes to save"}
@@ -288,7 +288,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
         {error && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/25 text-danger text-sm"
+            className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
           >
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <span>{error}</span>

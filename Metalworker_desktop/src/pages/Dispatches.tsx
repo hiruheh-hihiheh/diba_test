@@ -37,11 +37,9 @@ import {
   Eye,
   Ban,
 } from "lucide-react";
-import {
-  fetchAdminDispatches,
-  getMaterialLabel,
-  getStatusColor,
-} from "../services/dispatch";
+import { fetchAdminDispatches, getMaterialLabel } from "../services/dispatch";
+import StatusPill from "../components/ui/StatusPill";
+import { statusDotClass, statusToneClass } from "../components/ui/statusTone";
 import type { Dispatch, DispatchStatus } from "../types/dispatch";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
@@ -284,15 +282,15 @@ export default function DispatchesPage() {
   const searching = isFiltering;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header
           No <h1> here: the TopBar already carries "Dispatch Management", so
           repeating it made every screen look double-titled. What stays is the
           live count — which reacts to the search box and the status chips, so
           it is the one place worth reading — and the actions. */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-4 min-w-0">
-          <div className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
             <Truck size={24} className="text-primary" />
           </div>
           <div className="min-w-0">
@@ -319,7 +317,7 @@ export default function DispatchesPage() {
             <button
               type="button"
               onClick={toggleAllVisible}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-semibold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+              className="btn btn-secondary"
             >
               {allVisibleExpanded ? <ChevronUp size={16} /> : <ChevronsUpDown size={16} />}
               {allVisibleExpanded ? "Collapse all" : "Expand all"}
@@ -352,7 +350,7 @@ export default function DispatchesPage() {
               className="lg:max-w-md"
             />
             <div
-              className="flex items-center gap-1 bg-surface border border-border rounded-xl p-1.5 overflow-x-auto scrollbar-none"
+              className="segmented max-w-full overflow-x-auto scrollbar-none"
               role="group"
               aria-label="Filter dispatches by status"
             >
@@ -362,26 +360,20 @@ export default function DispatchesPage() {
                   type="button"
                   onClick={() => setFilter(f)}
                   aria-pressed={filter === f}
-                  className={`px-3.5 py-2 rounded-lg text-[13px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                    filter === f
-                      ? "bg-primary text-white"
-                      : "text-text-muted hover:text-text hover:bg-surface-hover"
-                  }`}
+                  className="seg-item"
                 >
                   {f !== "all" && (
                     <StatusDot status={f as DispatchStatus} className="w-2 h-2 rounded-full shrink-0" />
                   )}
                   {f === "all" ? "All" : STATUS_META[f as DispatchStatus].label}
-                  <span className={filter === f ? "opacity-80" : "opacity-60 tabular-nums"}>
-                    ({counts[f]})
-                  </span>
+                  <span className="opacity-60 tabular-nums">{counts[f]}</span>
                 </button>
               ))}
             </div>
           </div>
 
           {/* List */}
-          <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+          <div className="panel-flat">
             <InlineRefreshBar show={refreshing} />
 
             {allGrouped.length === 0 ? (
@@ -415,7 +407,7 @@ export default function DispatchesPage() {
                         setSearch("");
                         setFilter("all");
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search and filter
                     </button>
@@ -436,7 +428,7 @@ export default function DispatchesPage() {
                           to={`/dispatches/${d.id}`}
                           className="w-full flex items-center gap-4 px-5 sm:px-6 py-5 hover:bg-surface-hover/50 transition-colors text-left"
                         >
-                          <div className="w-11 h-11 rounded-xl bg-primary-muted flex items-center justify-center text-primary font-bold text-sm shrink-0">
+                          <div className="w-10 h-10 rounded-full bg-surface-hover border border-border flex items-center justify-center text-text-secondary font-semibold text-[13px] shrink-0">
                             {group.username.charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -472,7 +464,7 @@ export default function DispatchesPage() {
                           aria-expanded={isExpanded}
                           className="w-full flex items-center gap-4 px-5 sm:px-6 py-5 hover:bg-surface-hover/50 transition-colors text-left cursor-pointer"
                         >
-                          <div className="w-11 h-11 rounded-xl bg-primary-muted flex items-center justify-center text-primary font-bold text-sm shrink-0">
+                          <div className="w-10 h-10 rounded-full bg-surface-hover border border-border flex items-center justify-center text-text-secondary font-semibold text-[13px] shrink-0">
                             {group.username.charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -486,13 +478,10 @@ export default function DispatchesPage() {
                               {(Object.keys(statusTally) as DispatchStatus[]).map((s) => (
                                 <span
                                   key={s}
-                                  className="text-[11px] font-bold px-1.5 py-0.5 rounded"
-                                  style={{
-                                    backgroundColor: getStatusColor(s) + "20",
-                                    color: getStatusColor(s),
-                                  }}
+                                  className={`badge border ${statusToneClass(s)}`}
                                 >
-                                  {statusTally[s]} {STATUS_META[s].label.toLowerCase()}
+                                  <span className="tabular-nums">{statusTally[s]}</span>{" "}
+                                  {STATUS_META[s].label.toLowerCase()}
                                 </span>
                               ))}
                             </div>
@@ -552,16 +541,5 @@ export default function DispatchesPage() {
 /* ── Small pieces ───────────────────────────────────── */
 
 function StatusDot({ status, className = "" }: { status: DispatchStatus; className?: string }) {
-  return <span className={className} style={{ backgroundColor: getStatusColor(status) }} aria-hidden="true" />;
-}
-
-function StatusPill({ status }: { status: DispatchStatus }) {
-  return (
-    <span
-      className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide"
-      style={{ backgroundColor: getStatusColor(status) + "20", color: getStatusColor(status) }}
-    >
-      {status}
-    </span>
-  );
+  return <span className={`${statusDotClass(status)} ${className}`} aria-hidden="true" />;
 }

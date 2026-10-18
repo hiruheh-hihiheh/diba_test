@@ -155,7 +155,7 @@ function BillSourcePickerBody({
             <button
               type="button"
               onClick={confirm}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               <Copy size={16} />
               Copy as Draft
@@ -289,7 +289,7 @@ function BillSourcePickerBody({
                   <button
                     type="button"
                     onClick={() => setChosen(row)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-muted text-primary text-xs font-bold hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer"
+                    className="btn btn-primary"
                   >
                     <Check size={14} />
                     Copy

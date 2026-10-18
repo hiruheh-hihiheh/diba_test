@@ -72,7 +72,7 @@ export default function PlaceholderPage() {
         Back to Dashboard
       </Link>
 
-      <div className="bg-surface border border-border rounded-2xl">
+      <div className="panel-flat">
         <EmptyState
           icon={<Construction size={28} />}
           title={
@@ -86,7 +86,7 @@ export default function PlaceholderPage() {
           action={
             <Link
               to="/"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               <Home size={16} />
               Go to Dashboard
@@ -95,7 +95,7 @@ export default function PlaceholderPage() {
         />
       </div>
 
-      <section className="mt-6 bg-surface border border-border rounded-2xl p-5 sm:p-6">
+      <section className="mt-5 panel p-5 sm:p-6">
         <h2 className="text-sm font-bold text-text flex items-center gap-2 mb-1">
           <LayoutGrid size={16} className="text-primary" />
           Working screens

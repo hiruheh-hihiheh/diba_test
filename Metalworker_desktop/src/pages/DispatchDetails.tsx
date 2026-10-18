@@ -47,6 +47,7 @@ import {
   CalendarDays,
   Hash,
 } from "lucide-react";
+import StatusPill from "../components/ui/StatusPill";
 import {
   fetchDispatchById,
   updateDispatch,
@@ -63,7 +64,7 @@ import { ErrorState } from "../components/ui/LoadingState";
 import { isNotFound, readableError } from "../utils/readableError";
 
 const inputCls =
-  "w-full px-4 py-3 rounded-xl bg-bg border border-border text-[15px] text-text placeholder:text-text-muted/40 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-11 py-0 text-[14px]";
 
 const MATERIAL_OPTIONS: { key: MaterialType; label: string }[] = [
   { key: "scrap", label: "Scrap" },
@@ -309,7 +310,7 @@ export default function DispatchDetailsPage() {
 
   if (error || !dispatch) {
     return (
-      <div className="space-y-6 animate-fade-in max-w-2xl">
+      <div className="space-y-5 animate-fade-in max-w-2xl">
         <BackLink onClick={() => navigate("/dispatches")} />
         <ErrorState
           title={errorRetryable ? "Dispatch unavailable" : "Dispatch not found"}
@@ -430,15 +431,7 @@ export default function DispatchDetailsPage() {
                     <CheckCircle2 size={16} />
                     <span className="text-sm font-medium">Status</span>
                   </div>
-                  <span
-                    className="text-[13px] font-bold px-4 py-2 rounded-full uppercase tracking-wide"
-                    style={{
-                      backgroundColor: getStatusColor(dispatch.status) + "20",
-                      color: getStatusColor(dispatch.status),
-                    }}
-                  >
-                    {dispatch.status}
-                  </span>
+                  <StatusPill status={dispatch.status} className="!text-[12px] !px-3 !py-1" />
                 </div>
                 <p className="text-xs text-text-muted mt-2">
                   {STATUS_OPTIONS.find((s) => s.key === dispatch.status)?.hint}
@@ -449,7 +442,7 @@ export default function DispatchDetailsPage() {
                 <button
                   type="button"
                   onClick={startEditing}
-                  className="flex-1 flex items-center justify-center gap-2.5 py-3.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-[15px] font-bold transition-all cursor-pointer"
+                  className="btn btn-primary flex-1 justify-center"
                 >
                   <Pencil size={18} /> Edit Dispatch
                 </button>
@@ -457,7 +450,7 @@ export default function DispatchDetailsPage() {
                   type="button"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="flex items-center justify-center gap-2.5 px-5 py-3.5 rounded-xl bg-danger-muted hover:bg-danger/20 text-danger text-[15px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                  className="btn btn-danger-solid justify-center"
                 >
                   {deleting ? (
                     <Loader2 size={18} className="animate-spin" />
@@ -582,7 +575,7 @@ export default function DispatchDetailsPage() {
                   type="button"
                   onClick={saveChanges}
                   disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2.5 py-3.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-[15px] font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn btn-primary flex-1 justify-center"
                 >
                   {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                   {saving ? "Saving…" : "Save changes"}

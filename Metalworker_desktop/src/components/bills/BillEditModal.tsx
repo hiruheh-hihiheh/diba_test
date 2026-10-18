@@ -520,7 +520,7 @@ export default function BillEditModal({
               onClick={() => void save()}
               disabled={saving || loading || !draft || !dirty}
               title={dirty ? undefined : "No changes to save"}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-sm font-bold text-[var(--theme-primary-text)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
+              className="btn btn-primary"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
               {saving ? "Saving…" : "Save changes"}
@@ -687,7 +687,7 @@ export default function BillEditModal({
             </header>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="data-table w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-[11px] uppercase tracking-wider text-text-muted">
                     <th className="text-left font-bold px-3 py-2 w-14">SR.NO.</th>

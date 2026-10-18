@@ -368,34 +368,44 @@ export default function CompanyBillsPage() {
   const showDocs = view !== "folders" || !!selectedFolderId;
 
   return (
-    <div className="space-y-6 animate-fade-in pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
-            <Building2 size={24} className="text-primary" />
+    <div className="space-y-5 animate-fade-in pb-12">
+      {/* Header — the TopBar owns the page name, so this states what the screen
+          holds and where it differs from customer Bills. */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-[10px] border border-info/25 bg-info-muted flex items-center justify-center shrink-0">
+            <Building2 size={19} className="text-info" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-text">Company Bills</h1>
-            <p className="text-sm text-text-muted">Supplier invoices, purchase bills and company expense documents.</p>
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-text">
+              Uploaded supplier and expense documents
+            </p>
+            <p className="text-[12.5px] text-text-muted mt-0.5 truncate">
+              Kept separate from the customer invoices generated under Bills.
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={handleRefresh} disabled={refreshing} className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-semibold text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer disabled:opacity-60">
-            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={handleRefresh} disabled={refreshing} className="btn btn-secondary">
+            <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
-          <button onClick={() => { setUploadFolderId(selectedFolderId); setUploadOpen(true); }} className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer">
-            <UploadCloud size={18} /> Upload Company Bills
+          <button onClick={() => { setUploadFolderId(selectedFolderId); setUploadOpen(true); }} className="btn btn-primary">
+            <UploadCloud size={16} /> Upload documents
           </button>
         </div>
       </div>
 
       {/* View tabs */}
-      <div className="flex items-center gap-2 border-b border-border pb-2">
+      <div className="segmented" role="group" aria-label="Company bill view">
         {(["folders", "all", "unfiled"] as const).map((v) => (
-          <button key={v} onClick={() => { setView(v); setSelectedFolderId(null); setPage(1); }} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors cursor-pointer ${view === v ? "bg-primary text-white" : "text-text-muted hover:text-text hover:bg-surface-hover"}`}>
-            {v === "folders" ? "Folders" : v === "all" ? "All Company Bills" : "Unfiled"}
+          <button
+            key={v}
+            onClick={() => { setView(v); setSelectedFolderId(null); setPage(1); }}
+            aria-pressed={view === v}
+            className="seg-item"
+          >
+            {v === "folders" ? "Folders" : v === "all" ? "All documents" : "Unfiled"}
           </button>
         ))}
       </div>
@@ -407,8 +417,8 @@ export default function CompanyBillsPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <SearchInput value={search} onChange={setSearch} scope="folders" resultCount={folders.filter((f) => f.name.toLowerCase().includes(search.toLowerCase())).length} totalCount={folders.length} placeholder="Search folders…" className="max-w-md" />
-            <button onClick={() => setCreateFolderOpen(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-bold text-text hover:bg-surface-hover transition-colors cursor-pointer">
-              <FolderPlus size={16} /> New Folder
+            <button onClick={() => setCreateFolderOpen(true)} className="btn btn-secondary">
+              <FolderPlus size={15} /> New folder
             </button>
           </div>
           {foldersLoading ? (
@@ -418,7 +428,7 @@ export default function CompanyBillsPage() {
               {folders.filter((f) => !search.trim() || f.name.toLowerCase().includes(search.toLowerCase())).map((folder) => (
                 <div key={folder.id} className="bg-surface border border-border rounded-2xl p-5 flex flex-col hover:border-border-hover transition-all">
                   <div className="flex items-start justify-between mb-4">
-                    <button onClick={() => { setSelectedFolderId(folder.id); setView("folders"); setPage(1); }} className="w-12 h-12 rounded-xl bg-primary-muted flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors cursor-pointer">
+                    <button onClick={() => { setSelectedFolderId(folder.id); setView("folders"); setPage(1); }} className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors cursor-pointer">
                       <FolderOpen size={24} className="text-primary" />
                     </button>
                     <div className="flex items-center gap-1">
@@ -436,14 +446,14 @@ export default function CompanyBillsPage() {
                       <span className="px-2 py-0.5 rounded-md bg-surface-hover text-text">{folder.billCount ?? 0} document{(folder.billCount ?? 0) === 1 ? "" : "s"}</span>
                     </p>
                   </div>
-                  <button onClick={() => { setSelectedFolderId(folder.id); setPage(1); }} className="mt-4 w-full py-2.5 rounded-xl bg-surface-hover/50 hover:bg-primary hover:text-white text-sm font-bold text-text transition-colors flex items-center justify-center gap-2">
-                    Open Folder <FolderOpen size={16} />
+                  <button onClick={() => { setSelectedFolderId(folder.id); setPage(1); }} className="mt-4 w-full h-9 rounded-lg bg-surface-hover/60 hover:bg-primary hover:text-[var(--theme-primary-text)] text-[12.5px] font-semibold text-text transition-colors flex items-center justify-center gap-2 cursor-pointer">
+                    Open folder <FolderOpen size={14} />
                   </button>
                 </div>
               ))}
               {folders.length === 0 && !foldersLoading && (
                 <div className="col-span-full">
-                  <EmptyState icon={<SearchX size={26} />} title="No folders yet" description="Create a folder to organize your company bills." action={<button onClick={() => setCreateFolderOpen(true)} className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer">Create your first folder</button>} />
+                  <EmptyState icon={<SearchX size={26} />} title="No folders yet" description="Create a folder to organize your company bills." action={<button onClick={() => setCreateFolderOpen(true)} className="btn btn-primary">Create your first folder</button>} />
                 </div>
               )}
             </div>
@@ -463,7 +473,7 @@ export default function CompanyBillsPage() {
           )}
           <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center">
             <SearchInput value={search} onChange={(v: string) => { setSearch(v); setPage(1); }} scope="documents" resultCount={docs.length} totalCount={docsTotal} placeholder="Search by name, supplier, bill number…" className="flex-1 lg:max-w-md" />
-            <select value={sort} onChange={(e) => { setSort(e.target.value as "newest" | "oldest" | "bill_date" | "name"); setPage(1); }} className="bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary">
+            <select value={sort} onChange={(e) => { setSort(e.target.value as "newest" | "oldest" | "bill_date" | "name"); setPage(1); }} className="h-9 rounded-[9px] border border-border bg-surface px-2.5 text-[12.5px] text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary">
               <option value="newest">Newest uploads</option>
               <option value="oldest">Oldest uploads</option>
               <option value="bill_date">Bill date</option>
@@ -471,10 +481,10 @@ export default function CompanyBillsPage() {
             </select>
             {selection.count > 0 && (
               <div className="flex items-center gap-2">
-                <button onClick={handleZipSelected} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-bold text-text hover:bg-surface-hover transition-colors cursor-pointer">
-                  <FileArchive size={16} /> ZIP ({selection.count})
+                <button onClick={handleZipSelected} className="btn btn-secondary">
+                  <FileArchive size={15} /> ZIP ({selection.count})
                 </button>
-                <button onClick={() => { setMoveDocIds([...selection.selected]); setMoveTargetFolderId(null); }} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer">
+                <button onClick={() => { setMoveDocIds([...selection.selected]); setMoveTargetFolderId(null); }} className="btn btn-primary">
                   Move ({selection.count})
                 </button>
               </div>
@@ -492,9 +502,9 @@ export default function CompanyBillsPage() {
                   <SelectAllCheckbox ids={docs.map((d) => d.id)} selection={selection} label="Select all on page" />
                 </div>
               )}
-              <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+              <div className="panel-flat">
                 <div className="overflow-auto scrollbar-thin">
-                  <table className="w-full min-w-[40rem]">
+                  <table className="data-table w-full min-w-[40rem]">
                     <thead className="sticky-head">
                       <tr className="border-b border-border">
                         <th className="w-9" />
@@ -610,7 +620,7 @@ export default function CompanyBillsPage() {
           )}
           <div className="flex items-center justify-end gap-3 pt-2">
             <button onClick={() => { if (!uploading) { setUploadOpen(false); setUploadFiles([]); } }} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
-            <button onClick={handleUpload} disabled={uploading || uploadFiles.length === 0} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+            <button onClick={handleUpload} disabled={uploading || uploadFiles.length === 0} className="btn btn-primary">
               {uploading ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
               {uploading ? "Uploading…" : "Upload"}
             </button>
@@ -624,7 +634,7 @@ export default function CompanyBillsPage() {
           <input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Folder name" className="w-full px-4 py-3 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" onKeyDown={(e) => { if (e.key === "Enter") handleCreateFolder(); }} />
           <div className="flex items-center justify-end gap-3">
             <button onClick={() => setCreateFolderOpen(false)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
-            <button onClick={handleCreateFolder} disabled={creatingFolder || !newFolderName.trim()} className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">{creatingFolder ? "Creating…" : "Create"}</button>
+            <button onClick={handleCreateFolder} disabled={creatingFolder || !newFolderName.trim()} className="btn btn-primary">{creatingFolder ? "Creating…" : "Create"}</button>
           </div>
         </div>
       </Modal>
@@ -635,7 +645,7 @@ export default function CompanyBillsPage() {
           <input value={renameFolderName} onChange={(e) => setRenameFolderName(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" onKeyDown={(e) => { if (e.key === "Enter" && renameFolderId) handleRenameFolder(renameFolderId); }} />
           <div className="flex items-center justify-end gap-3">
             <button onClick={() => setRenameFolderId(null)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
-            <button onClick={() => renameFolderId && handleRenameFolder(renameFolderId)} className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Save</button>
+            <button onClick={() => renameFolderId && handleRenameFolder(renameFolderId)} className="btn btn-primary">Save</button>
           </div>
         </div>
       </Modal>
@@ -677,7 +687,7 @@ export default function CompanyBillsPage() {
             </div>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button onClick={() => setEditDoc(null)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
-              <button onClick={handleSaveEdit} className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Save</button>
+              <button onClick={handleSaveEdit} className="btn btn-primary">Save</button>
             </div>
           </div>
         )}
@@ -702,7 +712,7 @@ export default function CompanyBillsPage() {
               <p className="text-sm text-text-muted">Preview not available for this format. Download the file to open it.</p>
             )}
             <div className="flex items-center justify-end gap-3">
-              <button onClick={() => handleDownload(previewDoc)} className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Download</button>
+              <button onClick={() => handleDownload(previewDoc)} className="btn btn-primary">Download</button>
             </div>
           </div>
         )}
@@ -718,7 +728,7 @@ export default function CompanyBillsPage() {
           </select>
           <div className="flex items-center justify-end gap-3">
             <button onClick={() => setMoveDocIds(null)} className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer">Cancel</button>
-            <button onClick={handleMoveDocs} className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all cursor-pointer">Move</button>
+            <button onClick={handleMoveDocs} className="btn btn-primary">Move</button>
           </div>
         </div>
       </Modal>

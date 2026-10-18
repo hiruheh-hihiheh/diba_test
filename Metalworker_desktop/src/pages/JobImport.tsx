@@ -615,17 +615,17 @@ export default function JobImportPage() {
   /* ── Render ───────────────────────────────────────── */
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* ── Header ──
           No <h1>: the TopBar already says "Import from Excel". What remains
           states the three-step flow, which is the thing a first-time user
           actually needs to know about this page. */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
             <FileSpreadsheet size={22} className="text-primary" />
           </div>
-          <p className="text-sm text-text-muted min-w-0 max-w-xl">
+          <p className="text-[12.5px] text-text-muted min-w-0 max-w-xl leading-relaxed">
             Upload a workbook, check the columns line up, review every row, then
             choose which folder the jobs go into. Nothing is written until you
             confirm.
@@ -657,7 +657,7 @@ export default function JobImportPage() {
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={parsing}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition-all shadow-lg shadow-primary/20 cursor-pointer disabled:opacity-60"
+              className="btn btn-primary"
             >
               {parsing ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />}
               {parsing ? "Reading file…" : "Upload Excel"}
@@ -691,7 +691,7 @@ export default function JobImportPage() {
             const f = e.dataTransfer.files?.[0];
             if (f) handleFile(f);
           }}
-          className={`border-2 border-dashed rounded-3xl bg-surface/30 transition-colors ${
+          className={`border border-dashed rounded-2xl bg-bg-secondary/40 transition-colors ${
             dragging ? "border-primary bg-primary/5" : "border-border"
           }`}
         >
@@ -703,7 +703,7 @@ export default function JobImportPage() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white font-bold transition-all shadow-xl shadow-primary/20 cursor-pointer"
+                className="btn btn-primary"
               >
                 <UploadCloud size={20} />
                 Browse Files
@@ -728,7 +728,7 @@ export default function JobImportPage() {
       {parseError && !parsing && (
         <div
           role="alert"
-          className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-danger-muted border border-danger/25 text-danger"
+          className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
         >
           <AlertTriangle size={18} className="shrink-0 mt-0.5" />
           <div className="flex-1">
@@ -834,7 +834,7 @@ export default function JobImportPage() {
                   <button
                     type="button"
                     onClick={handleReset}
-                    className="px-3.5 py-2 rounded-lg bg-primary text-xs font-bold text-white hover:bg-primary-hover transition-colors cursor-pointer"
+                    className="btn btn-primary"
                   >
                     Import another file
                   </button>
@@ -874,7 +874,7 @@ export default function JobImportPage() {
           {importError && (
             <div
               role="alert"
-              className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-danger-muted border border-danger/25 text-danger"
+              className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
             >
               <AlertTriangle size={18} className="shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -1121,7 +1121,7 @@ export default function JobImportPage() {
                       setRowSearch("");
                       setRowFilter("all");
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                    className="btn btn-primary"
                   >
                     Show all rows
                   </button>
@@ -1130,7 +1130,7 @@ export default function JobImportPage() {
             ) : (
               <>
                 <div className="overflow-auto scrollbar-thin max-h-[60vh]">
-                  <table className="w-full min-w-[64rem]">
+                  <table className="data-table w-full min-w-[64rem]">
                     <thead className="sticky-head">
                       <tr className="border-b border-border">
                         <th className="w-11 px-4 py-3">
@@ -1374,7 +1374,7 @@ export default function JobImportPage() {
                   setShowConfirm(true);
                 }}
                 disabled={!canStartImport}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-success hover:bg-success/90 text-white text-sm font-bold transition-all shadow-lg shadow-success/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none whitespace-nowrap"
+                className="btn btn-primary w-full justify-center"
               >
                 <Database size={17} />
                 Import {rowSelection.count} row{rowSelection.count === 1 ? "" : "s"}
@@ -1403,7 +1403,7 @@ export default function JobImportPage() {
             <button
               type="button"
               onClick={handleImport}
-              className="px-5 py-2.5 rounded-xl bg-success hover:bg-success/90 text-white text-sm font-bold transition-all shadow-lg shadow-success/20 cursor-pointer"
+              className="btn btn-primary"
             >
               Import {rowSelection.count} row{rowSelection.count === 1 ? "" : "s"}
             </button>

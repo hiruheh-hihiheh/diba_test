@@ -157,7 +157,7 @@ export function BillDetailModal({
               <button
                 type="button"
                 onClick={() => onEdit(bill)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-sm font-bold text-[var(--theme-primary-text)] hover:opacity-90 transition-opacity cursor-pointer"
+                className="btn btn-primary"
               >
                 <Pencil size={15} /> Edit bill
               </button>
@@ -244,7 +244,7 @@ export function BillDetailModal({
               <p className="text-sm text-text-muted">This invoice has no line items.</p>
             ) : (
               <div className="overflow-x-auto scrollbar-thin border border-border rounded-xl">
-                <table className="w-full min-w-[34rem] text-sm">
+                <table className="data-table w-full min-w-[34rem] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-bg-secondary">
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">#</th>

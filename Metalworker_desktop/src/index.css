@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
    METALWORKER ADMIN — DESIGN SYSTEM
-   ═══════════════════════════════════════════ */
+   "Graphite & Copper"
+
+   A desktop-first system: warm graphite surfaces, one copper accent,
+   hairline borders instead of shadows, and dense, scannable tables.
+   The accent is *copper*, so filled controls carry dark ink rather than
+   white — that keeps 5.7:1 contrast on the fill AND lets the same token
+   be used as body-sized text on a surface (also 5.7:1).
+   ═══════════════════════════════════════════════════════════════ */
 
 @theme {
   --color-bg: var(--theme-bg);
@@ -10,18 +17,21 @@
   --color-surface: var(--theme-surface);
   --color-surface-hover: var(--theme-surface-hover);
   --color-surface-active: var(--theme-surface-active);
+  --color-sidebar: var(--theme-sidebar);
   --color-primary: var(--theme-primary);
   --color-primary-hover: var(--theme-primary-hover);
   --color-primary-muted: var(--theme-primary-muted);
   --color-primary-text: var(--theme-primary-text);
-  --color-success: #10B981;
-  --color-success-muted: #10B98120;
-  --color-danger: #EF4444;
-  --color-danger-muted: #EF444420;
-  --color-warning: #F59E0B;
-  --color-warning-muted: #F59E0B20;
-  --color-purple: #8B5CF6;
-  --color-purple-muted: #8B5CF620;
+  --color-success: var(--theme-success);
+  --color-success-muted: var(--theme-success-muted);
+  --color-danger: var(--theme-danger);
+  --color-danger-muted: var(--theme-danger-muted);
+  --color-warning: var(--theme-warning);
+  --color-warning-muted: var(--theme-warning-muted);
+  --color-purple: var(--theme-purple);
+  --color-purple-muted: var(--theme-purple-muted);
+  --color-info: var(--theme-info);
+  --color-info-muted: var(--theme-info-muted);
   --color-text: var(--theme-text);
   --color-text-secondary: var(--theme-text-secondary);
   --color-text-muted: var(--theme-text-muted);
@@ -34,49 +44,87 @@
   --color-connection: var(--theme-connection);
   --color-connection-muted: var(--theme-connection-muted);
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  /* Elevation is warm and very shallow: graphite reads as depth through
+     surface steps, not through drop shadows. These are only used on things
+     that genuinely float — dialogs, popovers, the bulk bar. */
+  --shadow-float: 0 24px 60px -24px rgb(0 0 0 / 0.75), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.18);
 }
 
 :root {
-  /* DARK MODE (Default, Netflix-inspired) */
-  --theme-bg: #000000;
-  --theme-bg-secondary: #0A0A0A;
-  --theme-surface: #141414;
-  --theme-surface-hover: #1F1F1F;
-  --theme-surface-active: #262626;
-  --theme-primary: #E50914;
-  --theme-primary-hover: #B20710;
-  --theme-primary-muted: #E5091420;
-  --theme-primary-text: #FFFFFF;
-  --theme-text: #FFFFFF;
-  --theme-text-secondary: #E5E5E5;
-  --theme-text-muted: #A3A3A3;
-  --theme-border: #2A2A2A;
-  --theme-border-hover: #404040;
-  /* Dark mode wires are red: the dark primary is itself a red, so a blue wire would
-     read as a second, unrelated accent against it. */
-  --theme-connection: #EF4444;
-  --theme-connection-muted: #EF444426;
+  /* ── DARK (default): graphite ink ─────────────────────────── */
+  --theme-bg: #0b0c0e;
+  --theme-bg-secondary: #0f1113;
+  --theme-surface: #15171b;
+  --theme-surface-hover: #1c1f24;
+  --theme-surface-active: #24282e;
+  --theme-sidebar: #090a0c;
+
+  --theme-primary: #c98052;
+  --theme-primary-hover: #dc9569;
+  --theme-primary-muted: rgb(201 128 82 / 0.13);
+  --theme-primary-text: #1a1108;
+
+  --theme-text: #f4f1ec;
+  --theme-text-secondary: #d8d3cb;
+  --theme-text-muted: #928d85;
+
+  --theme-border: #23262b;
+  --theme-border-hover: #383c43;
+
+  /* Semantic colours are tuned per theme so small badge text clears 4.5:1
+     against the surface it sits on. A single mid-tone green cannot do that in
+     both a near-black and a near-white theme. */
+  --theme-success: #4cc38a;
+  --theme-success-muted: rgb(76 195 138 / 0.12);
+  --theme-danger: #f0786e;
+  --theme-danger-muted: rgb(240 120 110 / 0.12);
+  --theme-warning: #e6b15c;
+  --theme-warning-muted: rgb(230 177 92 / 0.12);
+  --theme-purple: #b49bfa;
+  --theme-purple-muted: rgb(180 155 250 / 0.12);
+  --theme-info: #7fb0f5;
+  --theme-info-muted: rgb(127 176 245 / 0.12);
+
+  --theme-connection: #c98052;
+  --theme-connection-muted: rgb(201 128 82 / 0.2);
 }
 
 [data-theme="light"] {
-  /* LIGHT MODE (Clean white admin) */
-  --theme-bg: #FFFFFF;
-  --theme-bg-secondary: #F7F7F7;
-  --theme-surface: #FFFFFF;
-  --theme-surface-hover: #F3F4F6;
-  --theme-surface-active: #E5E7EB;
-  --theme-primary: #2563EB;
-  --theme-primary-hover: #1D4ED8;
-  --theme-primary-muted: #2563EB20;
-  --theme-primary-text: #000000;
-  --theme-text: #111111;
-  --theme-text-secondary: #333333;
-  --theme-text-muted: #666666;
-  --theme-border: #E5E7EB;
-  --theme-border-hover: #D1D5DB;
-  /* Light mode wires are blue — the same blue as this theme's primary. */
-  --theme-connection: #2563EB;
-  --theme-connection-muted: #2563EB26;
+  /* ── LIGHT: warm paper ────────────────────────────────────── */
+  --theme-bg: #f4f2ee;
+  --theme-bg-secondary: #eae7e1;
+  --theme-surface: #ffffff;
+  --theme-surface-hover: #f6f4f0;
+  --theme-surface-active: #e8e4dc;
+  --theme-sidebar: #fbfaf8;
+
+  --theme-primary: #9a5220;
+  --theme-primary-hover: #7e4117;
+  --theme-primary-muted: rgb(154 82 32 / 0.1);
+  --theme-primary-text: #ffffff;
+
+  --theme-text: #191817;
+  --theme-text-secondary: #3c3934;
+  --theme-text-muted: #6f6a62;
+
+  --theme-border: #e2ddd4;
+  --theme-border-hover: #c9c2b6;
+
+  --theme-success: #12784f;
+  --theme-success-muted: rgb(18 120 79 / 0.1);
+  --theme-danger: #b0271c;
+  --theme-danger-muted: rgb(176 39 28 / 0.09);
+  --theme-warning: #8a5a0b;
+  --theme-warning-muted: rgb(138 90 11 / 0.1);
+  --theme-purple: #5b3ecf;
+  --theme-purple-muted: rgb(91 62 207 / 0.09);
+  --theme-info: #1f5fbf;
+  --theme-info-muted: rgb(31 95 191 / 0.09);
+
+  --theme-connection: #9a5220;
+  --theme-connection-muted: rgb(154 82 32 / 0.16);
 }
 
 @layer base {
@@ -90,7 +138,7 @@
   html {
     font-family: var(--font-sans);
     font-size: 16px;
-    line-height: 1.6;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background-color: var(--color-bg);
@@ -110,16 +158,38 @@
   }
 
   /* ── TYPOGRAPHY SCALE ────────────────────── */
-  h1 { font-size: 1.75rem; line-height: 1.3; font-weight: 800; letter-spacing: -0.02em; }
-  h2 { font-size: 1.375rem; line-height: 1.35; font-weight: 700; letter-spacing: -0.01em; }
-  h3 { font-size: 1.125rem; line-height: 1.4; font-weight: 700; }
+  h1 { font-size: 1.625rem; line-height: 1.25; font-weight: 700; letter-spacing: -0.022em; }
+  h2 { font-size: 1.25rem;  line-height: 1.3;  font-weight: 650; letter-spacing: -0.015em; }
+  h3 { font-size: 1.0625rem; line-height: 1.4; font-weight: 650; letter-spacing: -0.008em; }
   p  { font-size: 0.9375rem; line-height: 1.6; }
+
+  /* Numerals line up in every table and metric. Inter's proportional digits
+     make a column of counts look ragged; tabular ones read as data. */
+  table,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+
+  /* Chrome renders a number input's spinners as a hard grey block that
+     ignores the theme. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
 }
 
 /* ── SCROLLBAR ───────────────────────────── */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -128,23 +198,27 @@
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-hover);
+  background-clip: content-box;
 }
 
 /* ── FOCUS STYLES ────────────────────────── */
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* ── SELECTION ───────────────────────────── */
 ::selection {
   background-color: var(--color-primary);
-  color: white;
+  color: var(--theme-primary-text);
 }
 
 /* ── TABLE ENHANCEMENTS ──────────────────── */
@@ -166,7 +240,7 @@ th {
    lists. `none` keeps the painted result identical and creates no containing
    block. Modals are additionally portalled to <body>. */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -195,16 +269,15 @@ th {
 }
 
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
+  from { opacity: 0; transform: scale(0.97); }
   to { opacity: 1; transform: none; }
 }
 
 /* Entrance for full-viewport overlays (dialog backdrop, image viewer).
-   Opacity only, deliberately: `fadeIn` translates the element 10px downwards,
-   so a `fixed inset-0` overlay using it sat 10px below the top of the window
-   for the length of the animation — leaving an undimmed strip of the page
-   showing above the backdrop, and pushing 10px of the overlay off the bottom.
-   `opacity` is not a containing block, so nothing inside is affected either. */
+   Opacity only, deliberately: `fadeIn` translates the element, so a
+   `fixed inset-0` overlay using it sat below the top of the window for the
+   length of the animation — leaving an undimmed strip of the page showing
+   above the backdrop. `opacity` is not a containing block either. */
 @keyframes overlayIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -217,7 +290,7 @@ th {
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(16px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -238,7 +311,7 @@ th {
 
 @layer utilities {
   .animate-fade-in {
-    animation: fadeIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .animate-appear {
@@ -247,7 +320,7 @@ th {
 
   /* For `position: fixed` overlays that must cover the viewport exactly. */
   .animate-overlay-in {
-    animation: overlayIn 0.18s ease-out both;
+    animation: overlayIn 0.16s ease-out both;
   }
 
   .animate-slide-in-left {
@@ -255,7 +328,7 @@ th {
   }
 
   .animate-slide-in-right {
-    animation: slideInRight 0.4s ease-out both;
+    animation: slideInRight 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .animate-slide-out-right {
@@ -263,7 +336,7 @@ th {
   }
 
   .animate-scale-in {
-    animation: scaleIn 0.25s ease-out both;
+    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .animate-spin {
@@ -299,18 +372,21 @@ th {
     scrollbar-color: var(--color-border) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: var(--color-border);
-    border-radius: 3px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 6px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background: var(--color-border-hover);
+    background-clip: content-box;
   }
 
   /* Override hard-coded text-white on primary buttons to use theme's primary text color */
@@ -318,6 +394,305 @@ th {
   .bg-primary .text-white {
     color: var(--theme-primary-text) !important;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPONENT PRIMITIVES
+   Small, semantic classes used by new markup. They are plain CSS so
+   they compose with Tailwind utilities without a second design
+   vocabulary, and so the same control looks identical on every page.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* These live in Tailwind's component layer on purpose. Unlayered CSS beats
+   every layered utility regardless of specificity, so a `.btn` up here would
+   silently ignore `w-full`, `h-11` and `text-[14px]` on the element using it.
+   Placing them in `components` keeps the primitives as defaults and lets the
+   utilities written on each control still win. */
+@layer components {
+/* ── PANELS ───────────────────────────────── */
+.panel {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+}
+
+.panel-flat {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* A section label inside a panel header: 11px, spaced, muted. */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.hairline {
+  height: 1px;
+  background-color: var(--color-border);
+}
+
+/* ── BUTTONS ──────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.375rem;
+  padding: 0 0.875rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease,
+    box-shadow 140ms ease, filter 140ms ease;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: var(--theme-primary-text);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.14) inset,
+    0 8px 18px -12px color-mix(in srgb, var(--color-primary) 80%, transparent);
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
+}
+
+.btn-ghost {
+  background-color: transparent;
+  color: var(--color-text-muted);
+}
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.btn-danger {
+  background-color: var(--color-danger-muted);
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 24%, transparent);
+}
+.btn-danger:hover:not(:disabled) {
+  background-color: var(--color-danger);
+  color: var(--theme-bg);
+}
+
+.btn-danger-solid {
+  background-color: var(--color-danger);
+  color: var(--theme-bg);
+}
+.btn-danger-solid:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn-lg {
+  height: 2.75rem;
+  padding: 0 1.125rem;
+  font-size: 14px;
+  border-radius: 11px;
+}
+
+.btn-sm {
+  height: 2rem;
+  padding: 0 0.6875rem;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+
+/* ── FORM CONTROLS ────────────────────────── */
+.field {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.field::placeholder {
+  color: color-mix(in srgb, var(--color-text-muted) 70%, transparent);
+}
+
+.field:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.field:focus,
+.field:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-muted);
+  background-color: var(--color-surface);
+}
+
+.field:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ── SEGMENTED CONTROL ────────────────────── */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+}
+
+.seg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.875rem;
+  padding: 0 0.6875rem;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  white-space: nowrap;
+}
+
+.seg-item:hover {
+  color: var(--color-text);
+  background-color: var(--color-surface-hover);
+}
+
+.seg-item[aria-pressed="true"],
+.seg-item[data-active="true"] {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12), 0 0 0 1px var(--color-border);
+}
+
+/* ── BADGES ───────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DATA TABLES
+   Every list in the app is a table. One class (`.data-table`) on the
+   <table> element gives all of them the same header treatment, row
+   rhythm, hover feedback and alignment — the utilities already on the
+   cells still win for anything page-specific (column visibility,
+   sticky actions), because those are single-class utilities and this
+   selector is more specific.
+   ═══════════════════════════════════════════════════════════════ */
+.data-table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The header is the one part of a table that is styled centrally: 10.5px,
+   tracked, uppercase, on a faint tint. Doing it here rather than per page is
+   what makes six different list screens read as one product. The selector is
+   deliberately specific so it beats the `text-xs`/`px-4 py-3` utilities the
+   pages still carry. */
+.data-table thead th {
+  height: 2.5rem;
+  padding: 0 1rem;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  /* Alignment is deliberately NOT set here. This rule lives outside Tailwind's
+     layers, so it would beat the `text-right` on a frozen Actions column no
+     matter its specificity. Each header keeps its own alignment utility. */
+  color: var(--color-text-muted);
+  background-color: color-mix(in srgb, var(--color-surface-hover) 45%, var(--color-surface));
+  vertical-align: middle;
+}
+
+/* The action column keeps its right alignment; the header row's tint has to
+   reach the sticky cell too, otherwise the frozen column shows the row
+   scrolling behind it. */
+.data-table thead th.sticky-actions,
+.data-table tbody td.sticky-actions {
+  background-color: var(--color-surface);
+}
+.data-table thead th.sticky-actions {
+  background-color: color-mix(in srgb, var(--color-surface-hover) 45%, var(--color-surface));
+}
+
+/* Body cells keep every per-page utility (`text-sm`, `text-text-muted`,
+   `px-4 py-3.5`, selection tints). `:where()` contributes no specificity, so
+   these are only defaults for cells that do not set the property themselves. */
+:where(.data-table) tbody td {
+  vertical-align: middle;
+}
+
+:where(.data-table) tbody tr {
+  transition: background-color 120ms ease;
+}
+
+:where(.data-table) tbody tr:hover {
+  background-color: color-mix(in srgb, var(--color-surface-hover) 45%, transparent);
+}
+
+/* Row content that carries the record's identity reads as a link, not as
+   body text. */
+:where(.data-table) tbody td strong,
+:where(.data-table) tbody td b {
+  color: var(--color-text);
+  font-weight: 650;
+}
+
+/* ── TABLE NUMBER COLUMNS ─────────────────── */
+.cell-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ── STICKY TABLE HEADERS ──────────────────── */
@@ -328,7 +703,7 @@ th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background-color: var(--color-surface);
+  background-color: color-mix(in srgb, var(--color-surface-hover) 45%, var(--color-surface));
 }
 
 /**
@@ -344,19 +719,19 @@ th {
  * Capping the wrapper makes it a real scrollport, so the header pins, the frozen
  * Actions column pins, and the table stops growing without bound.
  *
- * The allowance covers the surrounding chrome: top bar, page header and
- * toolbar, and the pagination footer plus page padding. That is roughly 22rem
+ * The allowance covers the surrounding chrome: top bar (4rem), page header and
+ * toolbar, and the pagination footer plus page padding. That is roughly 21rem
  * on these pages, so on a normal window the table plus its pagination fit
  * without the page itself scrolling. `max(14rem, …)` puts a floor under the
  * table on short windows — otherwise a 420px-tall window would leave ~70px of
  * table, which is worse than letting the page scroll.
  */
 .table-scroll {
-  max-height: max(14rem, calc(100vh - 22rem));
+  max-height: max(14rem, calc(100vh - 21rem));
 }
 @supports (height: 100dvh) {
   .table-scroll {
-    max-height: max(14rem, calc(100dvh - 22rem));
+    max-height: max(14rem, calc(100dvh - 21rem));
   }
 }
 
@@ -375,8 +750,8 @@ th {
   content: "";
   position: absolute;
   inset-block: 0;
-  inset-inline-start: -12px;
-  width: 12px;
+  inset-inline-start: -14px;
+  width: 14px;
   pointer-events: none;
   background: linear-gradient(to right, transparent, var(--color-surface));
 }
@@ -385,10 +760,23 @@ th {
 }
 
 /* ── RESPONSIVE LAYOUT HELPERS ────────────── */
-/* Fallback for browsers without dynamic viewport units. */
-@supports not (height: 100dvh) {
+/* Full-height screens (login, the shell) with a static fallback for browsers
+   that do not understand `dvh`. These used to sit inside `@supports not
+   (height: 100dvh)` only, which meant the class did nothing at all in a modern
+   browser — the login card then rode at the top of a short page instead of
+   being centred. */
+.h-dvh-fallback {
+  height: 100vh;
+}
+.min-h-dvh-fallback {
+  min-height: 100vh;
+}
+@supports (height: 100dvh) {
   .h-dvh-fallback {
-    height: 100vh;
+    height: 100dvh;
+  }
+  .min-h-dvh-fallback {
+    min-height: 100dvh;
   }
 }
 

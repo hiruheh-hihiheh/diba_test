@@ -13,17 +13,19 @@ const variantCls: Record<Variant, string> = {
     "text-text-muted hover:text-text hover:bg-surface-hover border border-transparent",
   surface:
     "bg-surface text-text-muted hover:text-text hover:bg-surface-hover border border-border",
+  // Destructive actions sit quietly in a row until they are pointed at. A column
+  // of permanently red buttons makes every list look like it is on fire.
   danger:
-    "bg-danger-muted text-danger hover:bg-danger hover:text-white border border-transparent",
+    "text-text-muted hover:text-danger hover:bg-danger-muted border border-transparent",
   success:
-    "bg-success-muted text-success hover:bg-success hover:text-white border border-transparent",
+    "text-text-muted hover:text-success hover:bg-success-muted border border-transparent",
   primary:
     "bg-primary-muted text-primary hover:bg-primary hover:text-[var(--theme-primary-text)] border border-transparent",
 };
 
 const sizeCls: Record<Size, string> = {
-  sm: "w-8 h-8 rounded-lg",
-  md: "w-10 h-10 rounded-xl",
+  sm: "w-7 h-7 rounded-[7px]",
+  md: "w-9 h-9 rounded-[9px]",
 };
 
 interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "title"> {
@@ -67,7 +69,7 @@ export default function IconButton({
         type="button"
         aria-label={label}
         disabled={disabled || busy}
-        className={`inline-flex items-center justify-center shrink-0 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${variantCls[variant]} ${sizeCls[size]} ${className}`}
+        className={`inline-flex items-center justify-center shrink-0 transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${variantCls[variant]} ${sizeCls[size]} ${className}`}
         {...rest}
       >
         {busy ? <SpinnerGlyph /> : icon}
@@ -94,7 +96,7 @@ export default function IconButton({
           the window; the text wraps instead. */}
       <span
         role="tooltip"
-        className={`hidden pointer-events-none absolute z-[150] rounded-lg border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-text shadow-xl group-hover/ib:block group-focus-within/ib:block max-w-[min(16rem,70vw)] whitespace-normal break-words leading-snug ${placement}`}
+        className={`hidden pointer-events-none absolute z-[150] rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-semibold text-text shadow-[0_10px_24px_-12px_rgba(0,0,0,0.7)] group-hover/ib:block group-focus-within/ib:block max-w-[min(16rem,70vw)] whitespace-normal break-words leading-snug ${placement}`}
       >
         {label}
       </span>

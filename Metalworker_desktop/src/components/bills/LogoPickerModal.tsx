@@ -178,7 +178,7 @@ export function LogoPickerModal({
             type="button"
             onClick={confirm}
             disabled={chosen === null && !allowNone}
-            className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="btn btn-primary"
           >
             {chosen === null ? "Remove logo" : "Use this logo"}
           </button>
@@ -221,7 +221,7 @@ export function LogoPickerModal({
         {loadError && (
           <div
             role="alert"
-            className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-danger-muted border border-danger/25 text-danger text-sm"
+            className="flex items-start gap-3 rounded-xl border border-danger/25 bg-danger-muted px-4 py-3 text-[13px] text-danger"
           >
             {loadError}
           </div>

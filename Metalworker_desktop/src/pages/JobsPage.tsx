@@ -114,7 +114,7 @@ interface JobsPageProps {
 }
 
 const inputCls =
-  "w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-sm text-text placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all";
+  "field h-10 py-0 text-[13.5px]";
 
 /** How many "available jobs" rows are mounted at once. See availableVisible. */
 const AVAILABLE_PAGE = 60;
@@ -848,9 +848,9 @@ export default function JobsPage({
           same words as a button — so the page appeared to be titled twice, and
           the one down here looked like a heading but navigated somewhere. What
           remains is the count and the actions. */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-primary-muted flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-[10px] border border-primary/25 bg-primary-muted flex items-center justify-center shrink-0">
             <Briefcase size={20} className="text-primary" />
           </div>
           <div className="min-w-0">
@@ -895,20 +895,12 @@ export default function JobsPage({
             </button>
           )}
 
-          <div
-            className="flex bg-surface border border-border rounded-xl p-1"
-            role="group"
-            aria-label="View"
-          >
+          <div className="segmented" role="group" aria-label="View">
             <button
               type="button"
               onClick={goToFolders}
               aria-pressed={viewMode === "folders" && !selectedFolder}
-              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                viewMode === "folders" && !selectedFolder
-                  ? "bg-primary text-white shadow-md shadow-primary/20"
-                  : "text-text-muted hover:text-text hover:bg-surface-hover"
-              }`}
+              className="seg-item"
             >
               Folders
             </button>
@@ -921,11 +913,7 @@ export default function JobsPage({
                 setJobSearch("");
               }}
               aria-pressed={viewMode === "all"}
-              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-                viewMode === "all"
-                  ? "bg-primary text-white shadow-md shadow-primary/20"
-                  : "text-text-muted hover:text-text hover:bg-surface-hover"
-              }`}
+              className="seg-item"
             >
               All Jobs
             </button>
@@ -1036,7 +1024,7 @@ export default function JobsPage({
                     <button
                       type="button"
                       onClick={() => setFolderSearch("")}
-                      className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                      className="btn btn-primary"
                     >
                       Clear search
                     </button>
@@ -1048,7 +1036,7 @@ export default function JobsPage({
                           setCreatingFolder(true);
                           setNewFolderName("");
                         }}
-                        className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                        className="btn btn-primary"
                       >
                         Create a folder
                       </button>
@@ -1083,7 +1071,7 @@ export default function JobsPage({
                               setSelectedFolder(folder);
                               setJobSearch("");
                             }}
-                            className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform shrink-0 cursor-pointer"
+                            className="btn btn-primary justify-center"
                             aria-label={`Open folder ${folder.name}`}
                           >
                             <FolderIcon size={20} className="fill-primary/20" />
@@ -1196,7 +1184,7 @@ export default function JobsPage({
                         <button
                           type="button"
                           onClick={() => setJobSearch("")}
-                          className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                          className="btn btn-primary"
                         >
                           Clear search
                         </button>
@@ -1204,14 +1192,14 @@ export default function JobsPage({
                         <button
                           type="button"
                           onClick={() => setShowAddPanel(true)}
-                          className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors cursor-pointer"
+                          className="btn btn-primary"
                         >
                           Add jobs to this folder
                         </button>
                       ) : (
                         <a
                           href="/jobs/import"
-                          className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover transition-colors"
+                          className="btn btn-primary"
                         >
                           Import from Excel
                         </a>
@@ -1243,7 +1231,7 @@ export default function JobsPage({
                           onHover={setHoveredWire}
                           onUnlink={(node, link) => void handleUnlinkFromRail(node, link)}
                         />
-                      <table className="w-full whitespace-nowrap relative z-[2]">
+                      <table className="data-table w-full whitespace-nowrap relative z-[2]">
                         <thead className="sticky-head">
                           <tr className="border-b border-border">
                             {canSelect && (
@@ -1543,7 +1531,7 @@ export default function JobsPage({
                       type="button"
                       onClick={handleAddSelected}
                       disabled={addingJobs}
-                      className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-hover transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="btn btn-primary flex-1 justify-center"
                     >
                       {addingJobs ? (
                         <>
@@ -1622,7 +1610,7 @@ export default function JobsPage({
                             type="button"
                             onClick={() => handleAddOne(j)}
                             disabled={busy}
-                            className="px-2 py-1 text-[10px] font-bold rounded bg-primary/10 text-primary hover:bg-primary hover:text-white transition-colors cursor-pointer shrink-0 disabled:opacity-50 flex items-center gap-1"
+                            className="px-2 py-1 text-[10px] font-bold rounded bg-primary/10 text-primary hover:bg-primary hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer shrink-0 disabled:opacity-50 flex items-center gap-1"
                           >
                             {busy ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
                             Add
@@ -1692,7 +1680,7 @@ export default function JobsPage({
           <button
             type="button"
             onClick={() => setLinkModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-connection-muted text-connection text-xs font-bold hover:bg-connection hover:text-[var(--theme-primary-text)] transition-colors cursor-pointer whitespace-nowrap"
           >
             <Link2 size={13} />
             Link to Bill
@@ -1765,7 +1753,7 @@ export default function JobsPage({
             <button
               type="button"
               onClick={handleCreateFolder}
-              className="px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover shadow-lg shadow-primary/20 transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               Create folder
             </button>
@@ -1817,7 +1805,7 @@ export default function JobsPage({
             <button
               type="button"
               onClick={handleRenameFolder}
-              className="px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary-hover shadow-lg shadow-primary/20 transition-colors cursor-pointer"
+              className="btn btn-primary"
             >
               Save name
             </button>

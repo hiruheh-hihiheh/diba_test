@@ -216,7 +216,7 @@ function groupFields(fields: FieldSpec[]): { title: string; hint: string; fields
 }
 
 const inputCls =
-  "w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary";
+  "field text-[13.5px]";
 
 export default function InvoiceSettingsPage() {
   const toast = useToast();
@@ -387,9 +387,9 @@ export default function InvoiceSettingsPage() {
   const groups = useMemo(() => groupFields(FIELDS), []);
 
   return (
-    <div className="flex flex-col gap-5 max-w-4xl animate-fade-in">
+    <div className="flex flex-col gap-5 max-w-5xl animate-fade-in">
       {/* The promise an admin needs before typing anything. */}
-      <div className="rounded-xl border border-border bg-surface-raised p-4">
+      <div className="rounded-xl border border-border bg-surface p-4">
         <div className="flex items-start gap-2.5">
           <Building2 size={18} className="text-primary mt-0.5 shrink-0" />
           <div className="min-w-0">
@@ -435,9 +435,9 @@ export default function InvoiceSettingsPage() {
           }}
         >
           {groups.map((group) => (
-            <section key={group.title} className="rounded-xl border border-border bg-surface p-5">
-              <h2 className="text-sm font-bold text-text">{group.title}</h2>
-              {group.hint && <p className="text-xs text-text-muted mt-0.5">{group.hint}</p>}
+            <section key={group.title} className="panel p-5">
+              <h2 className="text-[13.5px] font-semibold text-text">{group.title}</h2>
+              {group.hint && <p className="text-[11.5px] text-text-muted mt-1">{group.hint}</p>}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 mt-4">
                 {group.fields.map((field) => {
@@ -456,7 +456,7 @@ export default function InvoiceSettingsPage() {
                     >
                       <label
                         htmlFor={`profile-${field.key}`}
-                        className="block text-xs font-medium text-text-secondary mb-1.5"
+                        className="label"
                       >
                         {field.label}
                       </label>
@@ -514,11 +514,11 @@ export default function InvoiceSettingsPage() {
             </section>
           ))}
 
-          <div className="flex items-center gap-3 sticky bottom-4 self-start rounded-xl border border-border bg-surface px-4 py-3 shadow-lg">
+          <div className="flex flex-wrap items-center gap-2.5 sticky bottom-4 z-10 w-full rounded-xl border border-border bg-surface/95 backdrop-blur px-3 py-2.5 shadow-[0_16px_40px_-20px_rgba(0,0,0,0.7)]">
             <button
               type="submit"
               disabled={saving || (!editing && profile !== null)}
-              className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+              className="btn btn-primary"
             >
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               {saving ? "Saving…" : "Save business profile"}
@@ -528,14 +528,14 @@ export default function InvoiceSettingsPage() {
               <button
                 type="button"
                 onClick={onDiscard}
-                className="px-4 py-2.5 rounded-xl border border-border text-text text-sm font-semibold hover:bg-surface-hover transition-all cursor-pointer flex items-center gap-2"
+                className="btn btn-secondary"
               >
                 <RotateCcw size={16} />
                 Discard
               </button>
             )}
 
-            <span className="text-xs text-text-muted ml-1">
+            <span className="text-[11.5px] text-text-muted ml-auto mr-1">
               {profile
                 ? `Last saved ${new Date(
                     profile.updated_at ?? profile.created_at

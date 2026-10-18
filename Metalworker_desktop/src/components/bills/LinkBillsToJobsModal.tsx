@@ -183,7 +183,7 @@ export default function LinkBillsToJobsModal({
             type="button"
             onClick={() => void submit()}
             disabled={saving || picked.size === 0 || willCreate === 0}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-sm font-bold text-[var(--theme-primary-text)] hover:bg-primary-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="btn btn-primary"
           >
             <Link2 size={14} />
             {willCreate === 0 && picked.size > 0

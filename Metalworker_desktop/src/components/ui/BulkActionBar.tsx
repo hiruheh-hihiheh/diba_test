@@ -58,32 +58,36 @@ export default function BulkActionBar({
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-auto flex flex-wrap items-center gap-2 sm:gap-3 pl-4 pr-2 py-2.5 rounded-2xl bg-surface border border-border shadow-2xl animate-slide-up max-w-full"
+        className="pointer-events-auto flex flex-wrap items-center gap-2 sm:gap-3 pl-2.5 pr-1.5 py-1.5 rounded-xl bg-surface border border-border shadow-[0_20px_48px_-20px_rgba(0,0,0,0.8),0_1px_2px_rgba(0,0,0,0.3)] animate-slide-up max-w-full"
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="inline-flex items-center justify-center min-w-7 h-7 px-2 rounded-lg bg-primary text-[13px] font-extrabold text-white tabular-nums shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 pl-0.5">
+          <span className="inline-flex items-center justify-center min-w-[1.625rem] h-[1.625rem] px-1.5 rounded-[6px] bg-primary text-[12px] font-bold text-[var(--theme-primary-text)] tabular-nums shrink-0">
             {count}
           </span>
-          <span className="text-sm font-semibold text-text whitespace-nowrap">
+          <span className="text-[12.5px] font-semibold text-text whitespace-nowrap">
             {itemLabel} selected
           </span>
           {context && (
-            <span className="hidden sm:inline text-sm text-text-muted truncate max-w-[16rem]">
+            <span className="hidden sm:inline text-[12px] text-text-muted truncate max-w-[16rem]">
               in {context}
             </span>
           )}
         </div>
 
-        {children && <div className="flex items-center gap-2 flex-wrap">{children}</div>}
+        {children && (
+          <div className="flex items-center gap-1.5 flex-wrap border-l border-border pl-2.5">
+            {children}
+          </div>
+        )}
 
         <button
           type="button"
           onClick={onClear}
           aria-label={clearLabel}
           title={clearLabel}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
         >
-          <X size={16} />
+          <X size={15} />
         </button>
       </div>
     </div>,

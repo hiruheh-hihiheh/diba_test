@@ -114,9 +114,9 @@ export default function Pagination({
   return (
     <nav
       aria-label="Pagination"
-      className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-border shrink-0"
+      className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 h-[3.25rem] border-t border-border bg-bg-secondary/40 shrink-0"
     >
-      <div className="flex items-center gap-3 text-xs text-text-muted">
+      <div className="flex items-center gap-4 text-[11.5px] text-text-muted">
         {showPager ? (
           <span>
             {from === 0 ? "0" : <span className="font-semibold text-text">{from}</span>}
@@ -139,7 +139,7 @@ export default function Pagination({
               value={pageSize}
               onChange={(e) => setPageSize(Number(e.target.value))}
               aria-label="Rows per page"
-              className="bg-surface border border-border rounded-lg px-2 py-1 text-xs text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
+              className="h-7 rounded-md border border-border bg-surface px-1.5 text-[11.5px] font-medium text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
             >
               {pageSizeOptions.map((s) => (
                 <option key={s} value={s}>
@@ -152,24 +152,17 @@ export default function Pagination({
       </div>
 
       {showPager && (
-        <div className="flex items-center gap-1">
-          <PagerButton
-            onClick={() => setPage(1)}
-            disabled={page === 1}
-            label="First page"
-          >
-            <ChevronsLeft size={15} />
+        <div className="flex items-center gap-0.5">
+          <PagerButton onClick={() => setPage(1)} disabled={page === 1} label="First page">
+            <ChevronsLeft size={14} />
           </PagerButton>
-          <PagerButton
-            onClick={() => setPage(page - 1)}
-            disabled={page === 1}
-            label="Previous page"
-          >
-            <ChevronLeft size={15} />
+          <PagerButton onClick={() => setPage(page - 1)} disabled={page === 1} label="Previous page">
+            <ChevronLeft size={14} />
           </PagerButton>
 
-          <span className="px-3 text-xs font-semibold text-text tabular-nums">
-            Page {page} of {totalPages}
+          <span className="px-2.5 text-[11.5px] font-semibold text-text-secondary tabular-nums whitespace-nowrap">
+            {page}
+            <span className="text-text-muted font-normal"> / {totalPages}</span>
           </span>
 
           <PagerButton
@@ -177,14 +170,14 @@ export default function Pagination({
             disabled={page === totalPages}
             label="Next page"
           >
-            <ChevronRight size={15} />
+            <ChevronRight size={14} />
           </PagerButton>
           <PagerButton
             onClick={() => setPage(totalPages)}
             disabled={page === totalPages}
             label="Last page"
           >
-            <ChevronsRight size={15} />
+            <ChevronsRight size={14} />
           </PagerButton>
         </div>
       )}
@@ -210,7 +203,7 @@ function PagerButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-muted"
+      className="w-7 h-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-muted"
     >
       {children}
     </button>

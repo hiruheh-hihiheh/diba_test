@@ -18,9 +18,9 @@
 import type { ReactNode } from "react";
 
 export const inputCls =
-  "w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm text-text placeholder:text-text-muted/40 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all disabled:opacity-60 disabled:cursor-not-allowed";
+  "field h-9 py-0 text-[13px]";
 
-export const labelCls = "block text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1";
+export const labelCls = "label";
 
 /** One labelled field. `hint` sits under the control rather than in a tooltip. */
 export function Field({

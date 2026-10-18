@@ -44,25 +44,28 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-const toneStyles: Record<ToastTone, { icon: ReactNode; ring: string; iconColor: string }> = {
+const toneStyles: Record<
+  ToastTone,
+  { icon: ReactNode; accent: string; iconColor: string }
+> = {
   success: {
-    icon: <CheckCircle2 size={20} />,
-    ring: "border-success/40",
+    icon: <CheckCircle2 size={17} />,
+    accent: "bg-success",
     iconColor: "text-success",
   },
   error: {
-    icon: <AlertCircle size={20} />,
-    ring: "border-danger/40",
+    icon: <AlertCircle size={17} />,
+    accent: "bg-danger",
     iconColor: "text-danger",
   },
   warning: {
-    icon: <AlertTriangle size={20} />,
-    ring: "border-warning/40",
+    icon: <AlertTriangle size={17} />,
+    accent: "bg-warning",
     iconColor: "text-warning",
   },
   info: {
-    icon: <Info size={20} />,
-    ring: "border-primary/40",
+    icon: <Info size={17} />,
+    accent: "bg-primary",
     iconColor: "text-primary",
   },
 };
@@ -81,22 +84,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }, 160);
   }, []);
 
-  const push = useCallback(
-    (options: ToastOptions | string) => {
-      const opts: ToastOptions = typeof options === "string" ? { description: options } : options;
-      const id = nextId.current++;
-      const item: ToastItem = {
-        id,
-        tone: opts.tone ?? "success",
-        duration: opts.duration ?? 4500,
-        title: opts.title,
-        description: opts.description,
-      };
-      // Cap the stack so a burst of errors cannot cover the screen.
-      setToasts((prev) => [...prev.slice(-3), item]);
-    },
-    []
-  );
+  const push = useCallback((options: ToastOptions | string) => {
+    const opts: ToastOptions = typeof options === "string" ? { description: options } : options;
+    const id = nextId.current++;
+    const item: ToastItem = {
+      id,
+      tone: opts.tone ?? "success",
+      duration: opts.duration ?? 4500,
+      title: opts.title,
+      description: opts.description,
+    };
+    // Cap the stack so a burst of errors cannot cover the screen.
+    setToasts((prev) => [...prev.slice(-3), item]);
+  }, []);
 
   const value = useMemo<ToastContextValue>(
     () => ({
@@ -128,7 +128,7 @@ function ToastViewport({
 
   return createPortal(
     <div
-      className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 w-[min(24rem,calc(100vw-2rem))] pointer-events-none"
+      className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 w-[min(23rem,calc(100vw-2rem))] pointer-events-none"
       role="status"
       aria-live="polite"
     >
@@ -151,15 +151,23 @@ function ToastCard({ item, dismiss }: { item: ToastItem; dismiss: (id: number) =
 
   return (
     <div
-      className={`pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-xl bg-surface border ${style.ring} shadow-2xl ${
-        item.leaving ? "animate-slide-out-right pointer-events-none" : "animate-slide-in-right"
-      }`}
+      className={`pointer-events-auto relative overflow-hidden flex items-start gap-2.5 pl-4 pr-2.5 py-3 rounded-xl bg-surface border border-border
+        shadow-[0_20px_44px_-20px_rgba(0,0,0,0.75),0_1px_2px_rgba(0,0,0,0.3)] ${
+          item.leaving ? "animate-slide-out-right pointer-events-none" : "animate-slide-in-right"
+        }`}
     >
-      <span className={`shrink-0 mt-0.5 ${style.iconColor}`}>{style.icon}</span>
+      <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${style.accent}`} />
+      <span className={`shrink-0 mt-px ${style.iconColor}`}>{style.icon}</span>
       <div className="flex-1 min-w-0">
-        {item.title && <p className="text-sm font-bold text-text">{item.title}</p>}
+        {item.title && (
+          <p className="text-[13px] font-semibold text-text leading-snug">{item.title}</p>
+        )}
         {item.description && (
-          <p className={`text-[13px] text-text-muted ${item.title ? "mt-0.5" : ""} break-words`}>
+          <p
+            className={`text-[12.5px] text-text-muted leading-relaxed break-words ${
+              item.title ? "mt-0.5" : ""
+            }`}
+          >
             {item.description}
           </p>
         )}
@@ -169,9 +177,9 @@ function ToastCard({ item, dismiss }: { item: ToastItem; dismiss: (id: number) =
         onClick={() => dismiss(item.id)}
         disabled={item.leaving}
         aria-label="Dismiss notification"
-        className="shrink-0 p-1 -m-1 rounded text-text-muted hover:text-text transition-colors cursor-pointer disabled:cursor-default"
+        className="shrink-0 p-1 -m-0.5 rounded text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer disabled:cursor-default"
       >
-        <X size={15} />
+        <X size={14} />
       </button>
     </div>
   );
