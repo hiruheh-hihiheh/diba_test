@@ -129,7 +129,7 @@ export default function JobImportPage() {
 
   const isRowEligible = useCallback(
     (r: ParsedExcelRow) =>
-      r.errors.length === 0 && !!r.normalized.job_no && r.normalized.job_type !== null,
+      r.rowKind === "job" && r.errors.length === 0 && !!r.normalized.job_no && r.normalized.job_type !== null,
     []
   );
 
@@ -357,9 +357,11 @@ export default function JobImportPage() {
         rows: selectedRows,
         summary: {
           totalRows: selectedRows.length,
-          validRows: selectedRows.filter((r) => r.warnings.length === 0).length,
+          validRows: selectedRows.filter((r) => r.warnings.length === 0 && r.rowKind === "job").length,
           warningRows: selectedRows.filter((r) => r.warnings.length > 0).length,
           errorRows: selectedRows.filter((r) => r.errors.length > 0).length,
+          continuationRows: selectedRows.filter((r) => r.rowKind === "continuation").length,
+          needsReviewRows: selectedRows.filter((r) => r.rowKind === "needs_review").length,
           labourRows: selectedRows.filter((r) => r.normalized.job_type === "labour").length,
           withMaterialRows: selectedRows.filter((r) => r.normalized.job_type === "with_material")
             .length,

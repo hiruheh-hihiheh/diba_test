@@ -319,6 +319,70 @@ export async function processJobImport(
     }
   }
 
+  // ---------- Continuation rows: attach components to parent jobs ----------
+  const jobIdByKey = new Map<string, string>();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rowResults[i];
+    const row = rows[i];
+    if (r?.jobId && row.rowKind === "job" && row.normalized.job_no && row.normalized.job_type) {
+      jobIdByKey.set(`${row.normalized.job_no}-${row.normalized.job_type}`, r.jobId);
+    }
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.rowKind !== "continuation") continue;
+    const parentKey = row.parentJobKey;
+    const parentJobId = parentKey ? jobIdByKey.get(parentKey) : undefined;
+    const component = (row.normalized.tool_part || row.normalized.tool_description || "").trim();
+
+    if (!parentJobId) {
+      // Try to find parent in DB.
+      if (row.normalized.job_no && row.normalized.job_type) {
+        const { data: parent } = await supabase
+          .from("jobs")
+          .select("id")
+          .eq("job_no", row.normalized.job_no)
+          .eq("job_type", row.normalized.job_type)
+          .maybeSingle();
+        if (parent?.id) {
+          jobIdByKey.set(parentKey as string, parent.id);
+        }
+      }
+    }
+
+    const resolvedParentId = parentKey ? jobIdByKey.get(parentKey) : undefined;
+
+    if (!resolvedParentId) {
+      skippedCount++;
+      const msg = `Continuation row could not be matched to parent job ${row.normalized.job_no ?? ""}.`;
+      logError(row.rowNumber, null, null, msg, row.raw);
+      rowResults[i] = { rowNumber: row.rowNumber, status: "skipped", message: msg };
+      continue;
+    }
+
+    if (component) {
+      const { data: job } = await supabase
+        .from("jobs")
+        .select("tool_part")
+        .eq("id", resolvedParentId)
+        .single();
+      const current = (job?.tool_part ?? "").trim();
+      if (!current.includes(component)) {
+        const next = current ? `${current}\n${component}` : component;
+        await supabase.from("jobs").update({ tool_part: next }).eq("id", resolvedParentId);
+      }
+    }
+
+    skippedCount++;
+    rowResults[i] = {
+      rowNumber: row.rowNumber,
+      status: "skipped",
+      message: `Continuation attached to job ${row.normalized.job_no}`,
+      jobId: resolvedParentId,
+    };
+  }
+
   // ---------- Folder linking ----------
   if (folderId) {
     const jobIdsToAdd = rowResults

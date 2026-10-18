@@ -114,7 +114,16 @@ export function parseDate(value: unknown): string | null {
   return null;
 }
 
-export function parseRow(raw: Record<string, unknown>, rowIndex: number): ParsedExcelRow {
+export function parseRow(
+  raw: Record<string, unknown>,
+  rowIndex: number,
+  options?: {
+    isContinuation?: boolean;
+    parentJobNo?: string | null;
+    parentJobType?: "labour" | "with_material" | null;
+    hasJobTypeColumn?: boolean;
+  }
+): ParsedExcelRow {
   const normalized: ParsedExcelRow["normalized"] = {
     job_type: null,
     job_no: null,
@@ -134,6 +143,8 @@ export function parseRow(raw: Record<string, unknown>, rowIndex: number): Parsed
   const warnings: string[] = [];
   const errors: string[] = [];
 
+  const isContinuation = options?.isContinuation === true;
+
   // Create a canonical lookup for the raw row
   const rowCanonical: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(raw)) {
@@ -144,22 +155,36 @@ export function parseRow(raw: Record<string, unknown>, rowIndex: number): Parsed
     }
   }
 
-  // 1. Job No
-  if (rowCanonical.job_no !== undefined) normalized.job_no = String(rowCanonical.job_no).trim();
+  // Continuation rows inherit identifying fields from the parent job.
+  if (isContinuation) {
+    if (options?.parentJobNo) normalized.job_no = options.parentJobNo;
+    if (options?.parentJobType) normalized.job_type = options.parentJobType;
+  } else {
+    // 1. Job No
+    if (rowCanonical.job_no !== undefined) normalized.job_no = String(rowCanonical.job_no).trim();
+  }
 
   // 2. Job Type
-  const rawType = rowCanonical.job_type;
-  if (rawType !== undefined) {
-    const t = String(rawType).toUpperCase().trim();
-    if (t === "L" || t === "LABOUR") {
-      normalized.job_type = "labour";
-    } else if (t === "BO" || t === "M" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)" || t === "W/M") {
-      normalized.job_type = "with_material";
+  if (!isContinuation) {
+    const rawType = rowCanonical.job_type;
+    if (rawType !== undefined) {
+      const t = String(rawType).toUpperCase().trim();
+      if (t === "L" || t === "LABOUR") {
+        normalized.job_type = "labour";
+      } else if (t === "BO" || t === "M" || t === "WITH MATERIAL" || t === "WITH MATERIAL (BO)" || t === "W/M") {
+        normalized.job_type = "with_material";
+      } else {
+        warnings.push(`Unknown job type value: "${rawType}"`);
+      }
+    } else if (options?.hasJobTypeColumn) {
+      warnings.push("Missing Job Type value");
     } else {
-      warnings.push(`Unknown job type value: "${rawType}"`);
+      warnings.push("Missing Job Type column");
     }
-  } else {
-    warnings.push("Missing Job Type column");
+  }
+
+  if (isContinuation) {
+    warnings.push(`Continuation row attached to job ${options?.parentJobNo ?? ""}`);
   }
 
   // 3. Dates
@@ -203,15 +228,32 @@ export function parseRow(raw: Record<string, unknown>, rowIndex: number): Parsed
   for (const v of Object.values(normalized)) {
     if (v !== null && v !== "") hasData = true;
   }
-  
+  // For continuation rows, component text counts as data even if job fields inherited.
+  if (isContinuation) {
+    const comp = rowCanonical.tool_description ?? rowCanonical.tool_part;
+    if (comp !== undefined && String(comp).trim() !== "") hasData = true;
+  }
+
   if (!hasData) {
     errors.push("Empty or invalid row");
-  } else if (!normalized.job_no) {
+  } else if (!isContinuation && !normalized.job_no) {
     errors.push("Missing Job No");
   }
 
+  const rowKind: import("../types/jobImport").JobImportRowKind = isContinuation
+    ? "continuation"
+    : errors.length > 0
+      ? "needs_review"
+      : "job";
+
+  const parentJobKey = isContinuation && options?.parentJobNo && options?.parentJobType
+    ? `${options.parentJobNo}-${options.parentJobType}`
+    : null;
+
   return {
     rowNumber: rowIndex,
+    rowKind,
+    parentJobKey,
     raw,
     normalized,
     warnings,
@@ -276,10 +318,25 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
 
         const sheet = workbook.Sheets[bestSheet];
         const jsonWithEmpty = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as unknown[][];
-        
+
         const headerRowIndex = sheetHeaderRowIndices[bestSheet];
         const headers = jsonWithEmpty[headerRowIndex].map(String);
-        
+
+        const hasJobTypeColumn = headers.some((h) => NORMALIZED_TO_CANONICAL[normalizeHeader(h)] === "job_type");
+
+        // Detect vertical merges that indicate continuation rows. A merge covering
+        // multiple rows in the identifying columns (0..4) means the later rows
+        // belong to the job in the first row of that merge.
+        const mergeParent = new Map<number, number>();
+        const merges = (sheet["!merges"] as Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> | undefined) ?? [];
+        for (const m of merges) {
+          if (m.e.r <= m.s.r) continue;
+          if (m.s.c > 4) continue; // only identifying columns
+          for (let r = m.s.r + 1; r <= m.e.r; r++) {
+            if (!mergeParent.has(r)) mergeParent.set(r, m.s.r);
+          }
+        }
+
         const parsedRows: ParsedExcelRow[] = [];
         const seenJobNos = new Set<string>();
 
@@ -296,9 +353,33 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
             }
           }
 
-          const parsed = parseRow(raw, i + 1);
-          
-          if (parsed.normalized.job_no) {
+          const parentRowIdx = mergeParent.get(i);
+          const isContinuation = parentRowIdx !== undefined;
+
+          // Resolve parent job info if continuation.
+          let parentJobNo: string | null = null;
+          let parentJobType: "labour" | "with_material" | null = null;
+          if (isContinuation && parentRowIdx !== undefined && parentRowIdx >= 0) {
+            const parentArr = jsonWithEmpty[parentRowIdx];
+            const parentRaw: Record<string, unknown> = {};
+            if (parentArr) {
+              for (let col = 0; col < headers.length; col++) {
+                if (headers[col]) parentRaw[headers[col]] = parentArr[col];
+              }
+            }
+            const parentParsed = parseRow(parentRaw, parentRowIdx + 1, { hasJobTypeColumn });
+            parentJobNo = parentParsed.normalized.job_no;
+            parentJobType = parentParsed.normalized.job_type;
+          }
+
+          const parsed = parseRow(raw, i + 1, {
+            isContinuation,
+            parentJobNo,
+            parentJobType,
+            hasJobTypeColumn,
+          });
+
+          if (parsed.rowKind === "job" && parsed.normalized.job_no) {
             const jobKey = `${parsed.normalized.job_no}-${parsed.normalized.job_type}`;
             if (seenJobNos.has(jobKey)) {
               parsed.warnings.push(`Possible duplicate row for Job No: ${parsed.normalized.job_no} (${parsed.normalized.job_type})`);
@@ -335,13 +416,17 @@ function buildSummary(rows: ParsedExcelRow[]): ImportPreviewSummary {
     validRows: 0,
     warningRows: 0,
     errorRows: 0,
+    continuationRows: 0,
+    needsReviewRows: 0,
     labourRows: 0,
     withMaterialRows: 0,
     unknownJobTypeRows: 0
   };
 
   for (const r of rows) {
-    if (r.errors.length > 0) summary.errorRows++;
+    if (r.rowKind === "continuation") summary.continuationRows++;
+    else if (r.rowKind === "needs_review") summary.needsReviewRows++;
+    else if (r.errors.length > 0) summary.errorRows++;
     else if (r.warnings.length > 0) summary.warningRows++;
     else summary.validRows++;
 

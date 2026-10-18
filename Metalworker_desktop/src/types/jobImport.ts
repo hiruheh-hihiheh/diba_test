@@ -1,5 +1,9 @@
+export type JobImportRowKind = "job" | "continuation" | "needs_review" | "invalid";
+
 export interface ParsedExcelRow {
   rowNumber: number;
+  rowKind: JobImportRowKind;
+  parentJobKey: string | null;
   raw: Record<string, unknown>;
   normalized: {
     job_type: "labour" | "with_material" | null;
@@ -26,6 +30,8 @@ export interface ImportPreviewSummary {
   validRows: number;
   warningRows: number;
   errorRows: number;
+  continuationRows: number;
+  needsReviewRows: number;
   labourRows: number;
   withMaterialRows: number;
   unknownJobTypeRows: number;
