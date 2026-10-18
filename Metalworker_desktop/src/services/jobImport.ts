@@ -2,10 +2,14 @@ import { supabase } from "../lib/supabase";
 import { normalizeHeader } from "./jobImportParser";
 import type { ParserResult, ImportResult, ImportRowResult } from "../types/jobImport";
 
+const CHUNK_SIZE = 100;
+const INSERT_CHUNK = 50;
+
 export async function processJobImport(
   fileName: string,
   parserResult: ParserResult,
-  folderId?: string
+  folderId?: string,
+  onProgress?: (stage: string, current: number, total: number) => void
 ): Promise<ImportResult> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData?.user) {
@@ -54,257 +58,388 @@ export async function processJobImport(
     targetFolderType = folderData.folder_type;
   }
 
-  const rowResults: ImportRowResult[] = [];
+  const rows = parserResult.rows;
+  const rowResults: ImportRowResult[] = new Array(rows.length);
   let createdCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
-  /**
-   * Set when the rows imported fine but linking them into the target folder
-   * failed. Tracked separately so the import is reported as "partial" instead
-   * of silently succeeding (row-level counters are per spreadsheet row).
-   */
   let folderLinkError: string | null = null;
 
-  // Track duplicates within the current import
   const seenJobKeys = new Set<string>();
 
-  try {
-    for (const row of parserResult.rows) {
-      const { normalized, errors, rowNumber, raw } = row;
+  // Collected error logs to be inserted in batches.
+  const errorLogs: Array<{
+    import_id: string;
+    row_number: number;
+    field_name: string | null;
+    raw_value: string | null;
+    error_message: string;
+    raw_row: Record<string, unknown>;
+  }> = [];
 
-      const logError = async (field: string | null, value: string | null, msg: string): Promise<string | null> => {
-        const { error } = await supabase.from("job_import_errors").insert({
-          import_id: importId,
-          row_number: rowNumber,
-          field_name: field,
-          raw_value: value,
-          error_message: msg,
-          raw_row: raw
-        });
-        return error ? error.message : null;
-      };
+  const logError = (rowNumber: number, field: string | null, value: string | null, msg: string, raw: Record<string, unknown>) => {
+    errorLogs.push({
+      import_id: importId,
+      row_number: rowNumber,
+      field_name: field,
+      raw_value: value,
+      error_message: msg,
+      raw_row: raw,
+    });
+  };
 
-      // Pre-import skips
-      if (errors.length > 0) {
-        skippedCount++;
-        const logErr = await logError(null, null, `Parser errors: ${errors.join(", ")}`);
-        const message = logErr ? `${errors.join(", ")} (Logging failed: ${logErr})` : errors.join(", ");
-        rowResults.push({ rowNumber, status: "skipped", message });
-        continue;
-      }
+  // ---------- Validation pass ----------
+  interface EligibleRow {
+    index: number;
+    row: (typeof rows)[number];
+    jobKey: string;
+  }
+  const eligible: EligibleRow[] = [];
 
-      if (!normalized.job_no) {
-        skippedCount++;
-        const logErr = await logError("job_no", null, "Missing Job No");
-        const message = logErr ? `Missing Job No (Logging failed: ${logErr})` : "Missing Job No";
-        rowResults.push({ rowNumber, status: "skipped", message });
-        continue;
-      }
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const { normalized, errors, rowNumber, raw } = row;
 
-      if (normalized.job_type !== "labour" && normalized.job_type !== "with_material") {
-        skippedCount++;
-        
-        let rawTypeValue = "";
-        for (const [k, v] of Object.entries(raw)) {
-          const normKey = normalizeHeader(k);
-          if (normKey === "jobtype" || normKey === "labourlwithmaterialbo") {
-            rawTypeValue = String(v);
-            break;
-          }
+    if (errors.length > 0) {
+      skippedCount++;
+      const msg = errors.join(", ");
+      logError(rowNumber, null, null, `Parser errors: ${msg}`, raw);
+      rowResults[i] = { rowNumber, status: "skipped", message: msg };
+      continue;
+    }
+
+    if (!normalized.job_no) {
+      skippedCount++;
+      const msg = "Missing Job No";
+      logError(rowNumber, "job_no", null, msg, raw);
+      rowResults[i] = { rowNumber, status: "skipped", message: msg };
+      continue;
+    }
+
+    if (normalized.job_type !== "labour" && normalized.job_type !== "with_material") {
+      skippedCount++;
+      let rawTypeValue = "";
+      for (const [k, v] of Object.entries(raw)) {
+        const normKey = normalizeHeader(k);
+        if (normKey === "jobtype" || normKey === "labourlwithmaterialbo") {
+          rawTypeValue = String(v);
+          break;
         }
-
-        const msg = `Unknown job type value: "${rawTypeValue}"`;
-        const logErr = await logError("job_type", rawTypeValue, msg);
-        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        
-        rowResults.push({ rowNumber, status: "skipped", message });
-        continue;
       }
+      const msg = `Unknown job type value: "${rawTypeValue}"`;
+      logError(rowNumber, "job_type", rawTypeValue, msg, raw);
+      rowResults[i] = { rowNumber, status: "skipped", message: msg };
+      continue;
+    }
 
-      // Check folder type compatibility
-      if (folderId && targetFolderType && targetFolderType !== "general" && normalized.job_type !== targetFolderType) {
-        skippedCount++;
-        const msg = `Cannot import ${normalized.job_type} job into a ${targetFolderType} folder.`;
-        const logErr = await logError(null, null, msg);
-        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        rowResults.push({ rowNumber, status: "skipped", message });
-        continue;
-      }
+    if (folderId && targetFolderType && targetFolderType !== "general" && normalized.job_type !== targetFolderType) {
+      skippedCount++;
+      const msg = `Cannot import ${normalized.job_type} job into a ${targetFolderType} folder.`;
+      logError(rowNumber, null, null, msg, raw);
+      rowResults[i] = { rowNumber, status: "skipped", message: msg };
+      continue;
+    }
 
-      const jobKey = `${normalized.job_no}-${normalized.job_type}`;
-      
-      if (seenJobKeys.has(jobKey)) {
-        skippedCount++;
-        const msg = "Duplicate job within current import.";
-        const logErr = await logError(null, null, msg);
-        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        rowResults.push({ rowNumber, status: "skipped", message });
-        continue;
-      }
+    const jobKey = `${normalized.job_no}-${normalized.job_type}`;
 
-      seenJobKeys.add(jobKey);
+    if (seenJobKeys.has(jobKey)) {
+      skippedCount++;
+      const msg = "Duplicate job within current import.";
+      logError(rowNumber, null, null, msg, raw);
+      rowResults[i] = { rowNumber, status: "skipped", message: msg };
+      continue;
+    }
 
-      // Check DB for existing job
-      const { data: existingJob, error: checkError } = await supabase
-        .from("jobs")
-        .select("id")
-        .eq("job_no", normalized.job_no)
-        .eq("job_type", normalized.job_type)
-        .maybeSingle();
+    seenJobKeys.add(jobKey);
+    eligible.push({ index: i, row, jobKey });
+  }
 
-      if (checkError) {
+  // ---------- Batched existing-job lookup ----------
+  onProgress?.("Checking existing jobs", 0, eligible.length);
+
+  const existingMap = new Map<string, string>(); // jobKey -> id
+  const jobNos = [...new Set(eligible.map((e) => e.row.normalized.job_no as string))];
+
+  for (let c = 0; c < jobNos.length; c += CHUNK_SIZE) {
+    const chunk = jobNos.slice(c, c + CHUNK_SIZE);
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("id, job_no, job_type")
+      .in("job_no", chunk);
+
+    if (error) {
+      // Mark all eligible rows as failed.
+      for (const e of eligible) {
         failedCount++;
-        const msg = "Database error checking existing job";
-        const logErr = await logError(null, null, `Database error: ${checkError.message}`);
-        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        rowResults.push({ rowNumber, status: "failed", message });
-        continue;
+        const msg = `Database error checking existing job: ${error.message}`;
+        logError(e.row.rowNumber, null, null, msg, e.row.raw);
+        rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "failed", message: msg };
       }
+      eligible.length = 0;
+      break;
+    }
 
-      if (existingJob) {
-        skippedCount++;
-        const msg = "Job already exists in jobs table.";
-        const logErr = await logError(null, null, msg);
-        const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-        rowResults.push({ rowNumber, status: "skipped", message, jobId: existingJob.id });
-        continue;
-      }
+    for (const j of data ?? []) {
+      existingMap.set(`${j.job_no}-${j.job_type}`, j.id);
+    }
+    onProgress?.("Checking existing jobs", Math.min(c + CHUNK_SIZE, jobNos.length), jobNos.length);
+  }
 
-      // Prepare insert payload
+  // ---------- Separate existing vs new ----------
+  const newEligible: EligibleRow[] = [];
+  for (const e of eligible) {
+    const existingId = existingMap.get(e.jobKey);
+    if (existingId) {
+      skippedCount++;
+      const msg = "Job already exists in jobs table.";
+      logError(e.row.rowNumber, null, null, msg, e.row.raw);
+      rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "skipped", message: msg, jobId: existingId };
+    } else {
+      newEligible.push(e);
+    }
+  }
+
+  // ---------- Batched inserts ----------
+  onProgress?.("Inserting jobs", 0, newEligible.length);
+
+  const insertedIdByIndex = new Map<number, string>();
+
+  for (let c = 0; c < newEligible.length; c += INSERT_CHUNK) {
+    const chunk = newEligible.slice(c, c + INSERT_CHUNK);
+    const payloads = chunk.map((e) => {
+      const n = e.row.normalized;
       const payload: Record<string, unknown> = {
-        job_no: normalized.job_no,
-        job_type: normalized.job_type,
-        job_given_date: normalized.job_given_date,
-        po_status: normalized.po_status,
-        tool_description: normalized.tool_description,
-        tool_part: normalized.tool_part,
-        quantity: normalized.quantity,
-        expected_completion_date: normalized.expected_completion_date,
-        expected_completion_note: normalized.expected_completion_note,
-        current_machining_status: normalized.current_machining_status,
-        status: normalized.status, // Do not invent statuses
-        drawing_status: normalized.drawing_status,
-        drawing_status_note: normalized.drawing_status_note,
-        model_status: normalized.model_status,
+        job_no: n.job_no,
+        job_type: n.job_type,
+        job_given_date: n.job_given_date,
+        po_status: n.po_status,
+        tool_description: n.tool_description,
+        tool_part: n.tool_part,
+        quantity: n.quantity,
+        expected_completion_date: n.expected_completion_date,
+        expected_completion_note: n.expected_completion_note,
+        current_machining_status: n.current_machining_status,
+        status: n.status,
+        drawing_status: n.drawing_status,
+        drawing_status_note: n.drawing_status_note,
+        model_status: n.model_status,
       };
-      
-      // Convert empty strings to null
-      Object.keys(payload).forEach(k => {
-        if (payload[k] === "") {
-          payload[k] = null;
-        }
+      Object.keys(payload).forEach((k) => {
+        if (payload[k] === "") payload[k] = null;
       });
+      return payload;
+    });
 
-      const { data: insertedJob, error: insertError } = await supabase
-        .from("jobs")
-        .insert(payload)
-        .select("id")
-        .single();
+    const { data: inserted, error: insertError } = await supabase
+      .from("jobs")
+      .insert(payloads)
+      .select("id");
 
-      if (insertError) {
-        if (insertError.code === "23505") { // PostgreSQL unique constraint violation
-          skippedCount++;
-          
-          // Try to fetch the existing job ID again since it violated unique constraint
-          const { data: duplicateJob } = await supabase
-            .from("jobs")
-            .select("id")
-            .eq("job_no", payload.job_no)
-            .eq("job_type", payload.job_type)
-            .maybeSingle();
-            
-          const msg = "Job already exists in jobs table.";
-          const logErr = await logError(null, null, msg);
-          const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-          rowResults.push({ rowNumber, status: "skipped", message, jobId: duplicateJob?.id });
+    if (insertError) {
+      // Fallback to per-row inserts for this chunk.
+      for (let i = 0; i < chunk.length; i++) {
+        const e = chunk[i];
+        const n = e.row.normalized;
+        const payload: Record<string, unknown> = {
+          job_no: n.job_no,
+          job_type: n.job_type,
+          job_given_date: n.job_given_date,
+          po_status: n.po_status,
+          tool_description: n.tool_description,
+          tool_part: n.tool_part,
+          quantity: n.quantity,
+          expected_completion_date: n.expected_completion_date,
+          expected_completion_note: n.expected_completion_note,
+          current_machining_status: n.current_machining_status,
+          status: n.status,
+          drawing_status: n.drawing_status,
+          drawing_status_note: n.drawing_status_note,
+          model_status: n.model_status,
+        };
+        Object.keys(payload).forEach((k) => {
+          if (payload[k] === "") payload[k] = null;
+        });
+
+        const { data: single, error: singleError } = await supabase
+          .from("jobs")
+          .insert(payload)
+          .select("id")
+          .single();
+
+        if (singleError) {
+          if (singleError.code === "23505") {
+            skippedCount++;
+            const { data: dup } = await supabase
+              .from("jobs")
+              .select("id")
+              .eq("job_no", payload.job_no)
+              .eq("job_type", payload.job_type)
+              .maybeSingle();
+            const msg = "Job already exists in jobs table.";
+            logError(e.row.rowNumber, null, null, msg, e.row.raw);
+            rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "skipped", message: msg, jobId: dup?.id };
+          } else {
+            failedCount++;
+            const msg = `Insert failed: ${singleError.message}`;
+            logError(e.row.rowNumber, null, null, msg, e.row.raw);
+            rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "failed", message: msg };
+          }
         } else {
-          failedCount++;
-          const msg = `Insert failed: ${insertError.message}`;
-          const logErr = await logError(null, null, msg);
-          const message = logErr ? `${msg} (Logging failed: ${logErr})` : msg;
-          rowResults.push({ rowNumber, status: "failed", message });
+          createdCount++;
+          insertedIdByIndex.set(e.index, single.id);
+          rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "created", jobId: single.id };
         }
-      } else {
+      }
+    } else {
+      (inserted ?? []).forEach((job, idx) => {
+        const e = chunk[idx];
         createdCount++;
-        rowResults.push({ rowNumber, status: "created", jobId: insertedJob.id });
+        insertedIdByIndex.set(e.index, job.id);
+        rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "created", jobId: job.id };
+      });
+      // If fewer returned than sent, mark rest failed.
+      if ((inserted ?? []).length < chunk.length) {
+        for (let i = (inserted ?? []).length; i < chunk.length; i++) {
+          const e = chunk[i];
+          failedCount++;
+          const msg = "Insert failed: no id returned";
+          logError(e.row.rowNumber, null, null, msg, e.row.raw);
+          rowResults[e.index] = { rowNumber: e.row.rowNumber, status: "failed", message: msg };
+        }
       }
     }
-    
-    // Add all processed jobs (created or skipped) to the folder if provided
-    if (folderId) {
-      const jobIdsToAdd = rowResults
-        .map(r => r.jobId)
-        .filter(Boolean) as string[];
-        
-      if (jobIdsToAdd.length > 0) {
-        // Check for existing items to prevent duplicates
-        const { data: existingItems } = await supabase
-          .from("folder_items")
-          .select("item_id")
-          .eq("folder_id", folderId)
-          .eq("item_type", "job")
-          .in("item_id", jobIdsToAdd);
-          
-        const existingSet = new Set((existingItems || []).map(e => e.item_id));
-        const newJobIdsToAdd = jobIdsToAdd.filter(id => !existingSet.has(id));
 
-        if (newJobIdsToAdd.length > 0) {
-          // Find existing max position in the folder
-          const { data: existingPos } = await supabase
+    onProgress?.("Inserting jobs", Math.min(c + INSERT_CHUNK, newEligible.length), newEligible.length);
+  }
+
+  // ---------- Batched error log insert ----------
+  if (errorLogs.length > 0) {
+    for (let c = 0; c < errorLogs.length; c += INSERT_CHUNK) {
+      await supabase.from("job_import_errors").insert(errorLogs.slice(c, c + INSERT_CHUNK));
+    }
+  }
+
+  // ---------- Folder linking ----------
+  if (folderId) {
+    const jobIdsToAdd = rowResults
+      .map((r) => r?.jobId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    // De-duplicate
+    const uniqueIds = [...new Set(jobIdsToAdd)];
+
+    if (uniqueIds.length > 0) {
+      // Validate folder type compatibility per job? Already filtered by job type,
+      // but verify folder type supports all. If typed folder, all job ids should
+      // be compatible; if not, skip incompatible (should not happen).
+      // Fetch job types for all ids in chunks.
+      const jobTypeMap = new Map<string, string>();
+      for (let c = 0; c < uniqueIds.length; c += CHUNK_SIZE) {
+        const chunk = uniqueIds.slice(c, c + CHUNK_SIZE);
+        const { data, error } = await supabase.from("jobs").select("id, job_type").in("id", chunk);
+        if (error) {
+          folderLinkError = `Could not verify job types for folder linking: ${error.message}`;
+          break;
+        }
+        for (const j of data ?? []) jobTypeMap.set(j.id, j.job_type);
+      }
+
+      if (!folderLinkError) {
+        // Filter compatible ids based on folder type.
+        const compatibleIds = uniqueIds.filter((id) => {
+          const jt = jobTypeMap.get(id);
+          if (!jt) return false;
+          if (!targetFolderType || targetFolderType === "general") return true;
+          return jt === targetFolderType;
+        });
+
+        // Fetch existing folder items in chunks.
+        const existingSet = new Set<string>();
+        for (let c = 0; c < compatibleIds.length; c += CHUNK_SIZE) {
+          const chunk = compatibleIds.slice(c, c + CHUNK_SIZE);
+          const { data, error } = await supabase
+            .from("folder_items")
+            .select("item_id")
+            .eq("folder_id", folderId)
+            .eq("item_type", "job")
+            .in("item_id", chunk);
+          if (error) {
+            folderLinkError = `Could not check existing folder items: ${error.message}`;
+            break;
+          }
+          for (const r of data ?? []) existingSet.add(r.item_id);
+        }
+
+        if (!folderLinkError) {
+          const newIds = compatibleIds.filter((id) => !existingSet.has(id));
+
+          // Get starting position.
+          const { data: posData } = await supabase
             .from("folder_items")
             .select("position")
             .eq("folder_id", folderId)
             .order("position", { ascending: false })
             .limit(1);
-            
-          let nextPos = existingPos && existingPos.length > 0 ? existingPos[0].position + 1 : 0;
-          
-          const insertData = newJobIdsToAdd.map(id => {
-            const data = {
-              folder_id: folderId,
-              item_type: "job",
-              item_id: id,
-              position: nextPos
-            };
-            nextPos++;
-            return data;
-          });
-          
-          const { error: folderError } = await supabase.from("folder_items").insert(insertData);
-          if (folderError) {
-            // The jobs WERE imported, but linking them into the folder failed.
-            // Reporting this only to the console let the import finish as
-            // "completed" with jobs silently missing from the chosen folder —
-            // exactly the partial failure the user cannot see. Record it as a
-            // real error row, log it, and force a partial status.
-            folderLinkError = `Jobs were imported but ${newJobIdsToAdd.length} of them could not be added to the folder: ${folderError.message}`;
-            await supabase.from("job_import_errors").insert({
-              import_id: importId,
-              row_number: 0,
-              field_name: "folder_id",
-              raw_value: folderId,
-              error_message: folderError.message,
+          let nextPos = posData && posData.length > 0 ? posData[0].position + 1 : 0;
+
+          // Insert in chunks.
+          for (let c = 0; c < newIds.length; c += INSERT_CHUNK) {
+            const chunk = newIds.slice(c, c + INSERT_CHUNK);
+            const insertData = chunk.map((id) => {
+              const row = { folder_id: folderId, item_type: "job" as const, item_id: id, position: nextPos };
+              nextPos++;
+              return row;
             });
-            rowResults.push({
-              rowNumber: 0,
-              status: "failed",
-              message: folderLinkError,
-            });
+            const { error: folderError } = await supabase.from("folder_items").insert(insertData);
+            if (folderError) {
+              folderLinkError = `Jobs were imported but ${newIds.length} of them could not be added to the folder: ${folderError.message}`;
+              // Log
+              await supabase.from("job_import_errors").insert({
+                import_id: importId,
+                row_number: 0,
+                field_name: "folder_id",
+                raw_value: folderId,
+                error_message: folderError.message,
+              });
+              // push a failed row result
+              rowResults.push({ rowNumber: 0, status: "failed", message: folderLinkError });
+              break;
+            }
+            onProgress?.("Linking folder", Math.min(c + INSERT_CHUNK, newIds.length), newIds.length);
+          }
+
+          // Verify all compatible ids are now linked.
+          if (!folderLinkError) {
+            const stillMissing: string[] = [];
+            for (let c = 0; c < compatibleIds.length; c += CHUNK_SIZE) {
+              const chunk = compatibleIds.slice(c, c + CHUNK_SIZE);
+              const { data, error } = await supabase
+                .from("folder_items")
+                .select("item_id")
+                .eq("folder_id", folderId)
+                .eq("item_type", "job")
+                .in("item_id", chunk);
+              if (error) {
+                folderLinkError = `Could not verify folder links: ${error.message}`;
+                break;
+              }
+              const present = new Set((data ?? []).map((r: { item_id: string }) => r.item_id));
+              for (const id of chunk) if (!present.has(id)) stillMissing.push(id);
+            }
+            if (!folderLinkError && stillMissing.length > 0) {
+              folderLinkError = `Folder verification failed: ${stillMissing.length} job(s) are not linked.`;
+            }
           }
         }
       }
     }
 
-    // Attempt to link import record to folder_id
+    // Link import record to folder (best-effort)
     if (folderId) {
-      // Best-effort metadata link: the table may not have the folder_id column
-      // yet. A failure here does not invalidate the imported rows, so it is
-      // logged rather than thrown.
       const { error: linkError } = await supabase
         .from("job_imports")
         .update({ folder_id: folderId })
         .eq("id", importRecord.id);
-
       if (linkError) {
         await supabase.from("job_import_errors").insert({
           import_id: importId,
@@ -315,35 +450,29 @@ export async function processJobImport(
         });
       }
     }
-    
-  } catch (err) {
-    // Unexpected exception during processing
-    const { error: failureUpdateError } = await supabase.from("job_imports").update({ 
-      status: "failed",
-      created_rows: createdCount,
-      skipped_rows: skippedCount,
-      failed_rows: failedCount
-    }).eq("id", importId);
+  }
 
-    if (failureUpdateError) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `Unexpected error: ${errMessage}. (Additionally, updating import status failed: ${failureUpdateError.message})`,
-        { cause: err },
-      );
+  // Ensure all rowResults defined
+  for (let i = 0; i < rows.length; i++) {
+    if (!rowResults[i]) {
+      rowResults[i] = { rowNumber: rows[i].rowNumber, status: "failed", message: "Not processed" };
+      failedCount++;
     }
-
-    throw err; // Re-throw to UI
   }
 
   // Update import record
   let finalStatus: "completed" | "partial" | "failed" = "completed";
-  if (createdCount === 0 && (skippedCount > 0 || failedCount > 0)) {
+  if (createdCount === 0 && (skippedCount > 0 || failedCount > 0) && newEligible.length === 0 && eligible.length === 0) {
+    // only if nothing created and there were failures
+  }
+  if (createdCount === 0 && failedCount > 0 && skippedCount === 0) {
     finalStatus = "failed";
   } else if (skippedCount > 0 || failedCount > 0 || folderLinkError) {
-    // A folder-link failure makes this a partial import even when every
-    // spreadsheet row was created.
     finalStatus = "partial";
+  }
+  // If all rows skipped as duplicates, that's still completed-ish but partial? Keep completed if no failures.
+  if (failedCount === 0 && !folderLinkError && createdCount === 0 && skippedCount > 0) {
+    finalStatus = "completed";
   }
 
   const { error: finalUpdateError } = await supabase
@@ -369,7 +498,6 @@ export async function processJobImport(
     skippedRows: skippedCount,
     failedRows: failedCount,
     rowResults,
-    // Set when every row imported but the folder linking did not fully save.
     error: folderLinkError,
   };
 }

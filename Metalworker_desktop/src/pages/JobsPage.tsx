@@ -163,6 +163,7 @@ export default function JobsPage({
 
   const [deletingJob, setDeletingJob] = useState<Job | null>(null);
   const [deletingJobBusy, setDeletingJobBusy] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
 
   const [showAddPanel, setShowAddPanel] = useState(false);
@@ -751,6 +752,85 @@ export default function JobsPage({
         title: "Could not remove jobs",
         description: res.error || "Nothing was removed. Please try again.",
       });
+    }
+  }
+
+  async function handleDeleteSelected() {
+    const selectedIds = [...jobSelection.selected];
+    if (selectedIds.length === 0 || bulkDeleting) return;
+
+    const ok = await confirm({
+      title: `Delete ${selectedIds.length} job${selectedIds.length === 1 ? "" : "s"} permanently?`,
+      message: (
+        <>
+          <strong className="text-danger">{selectedIds.length}</strong> selected job
+          {selectedIds.length === 1 ? "" : "s"} will be permanently deleted.
+          <strong className="block mt-2 text-text">
+            They will be removed from every folder they belong to, along with their
+            drawings and related cleanup. This cannot be undone.
+          </strong>
+          <span className="block mt-2 text-text-muted">
+            This is different from "Remove from folder", which keeps the jobs.
+          </span>
+        </>
+      ),
+      confirmLabel: "Delete Permanently",
+      tone: "danger",
+    });
+    if (!ok) return;
+
+    setBulkDeleting(true);
+    let deleted = 0;
+    let failed = 0;
+    const failedIds = new Set<string>();
+
+    // Controlled concurrency.
+    const concurrency = 4;
+    const queue = [...selectedIds];
+    async function worker() {
+      while (queue.length > 0) {
+        const id = queue.shift()!;
+        try {
+          const res = await deleteJob(id);
+          if (res.ok) {
+            deleted++;
+          } else {
+            failed++;
+            failedIds.add(id);
+          }
+        } catch {
+          failed++;
+          failedIds.add(id);
+        }
+      }
+    }
+    try {
+      await Promise.all(Array.from({ length: Math.min(concurrency, selectedIds.length) }, () => worker()));
+    } finally {
+      setBulkDeleting(false);
+    }
+
+    // Update UI: remove successfully deleted jobs.
+    const deletedSet = new Set(selectedIds.filter((id) => !failedIds.has(id)));
+    setJobs((prev) => {
+      const next = prev.filter((j) => !deletedSet.has(j.id));
+      jobSelection.prune(next.map((j) => j.id));
+      return next;
+    });
+
+    // Keep failed jobs selected for retry.
+    const newSelection = new Set<string>();
+    for (const id of selectedIds) if (failedIds.has(id)) newSelection.add(id);
+    jobSelection.replace([...newSelection]);
+
+    if (showAddPanel) loadAvailableJobs(true);
+
+    if (failed === 0) {
+      toast.success({ title: "Jobs deleted", description: `${deleted} job${deleted === 1 ? "" : "s"} permanently deleted.` });
+    } else if (deleted === 0) {
+      toast.error({ title: "Deletion failed", description: `None of the ${failed} selected job${failed === 1 ? "" : "s"} could be deleted.` });
+    } else {
+      toast.error({ title: "Partial deletion", description: `${deleted} deleted, ${failed} failed. Failed jobs remain selected for retry.` });
     }
   }
 
@@ -1707,6 +1787,15 @@ export default function JobsPage({
               </span>
             </>
           )}
+          <button
+            type="button"
+            onClick={handleDeleteSelected}
+            disabled={bulkDeleting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger/15 text-danger text-xs font-bold border border-danger/30 hover:bg-danger/25 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Trash2 size={13} />
+            {bulkDeleting ? "Deleting…" : "Delete Selected"}
+          </button>
         </BulkActionBar>
       )}
 

@@ -368,7 +368,9 @@ export default function JobImportPage() {
         error: null,
       };
 
-      const res = await processJobImport(selectedFile.name, payload, targetFolderId);
+      const res = await processJobImport(selectedFile.name, payload, targetFolderId, (stage, current, total) => {
+        setProgressNote(`${stage} (${current}/${total})`);
+      });
       setImportResult(res);
 
       const duplicates = res.rowResults.filter(
