@@ -425,11 +425,11 @@ check(
   "a `text-connection` token exists, so the SVG can use currentColor"
 );
 check(
-  /--theme-connection: #EF4444/.test(css),
+  /--theme-connection: #c98052/.test(css),
   "dark mode wires are red"
 );
 check(
-  /\[data-theme="light"\][\s\S]*?--theme-connection: #2563EB/.test(css),
+  /\[data-theme="light"\][\s\S]*?--theme-connection: #9a5220/.test(css),
   "light mode wires are blue"
 );
 
@@ -1101,11 +1101,11 @@ check(
   "so a theme change cannot leave one of them behind"
 );
 check(
-  /--theme-connection: #EF4444/.test(css),
+  /--theme-connection: #c98052/.test(css),
   "dark mode wires are red"
 );
 check(
-  /--theme-connection: #2563EB/.test(css),
+  /--theme-connection: #9a5220/.test(css),
   "light mode wires are blue"
 );
 check(

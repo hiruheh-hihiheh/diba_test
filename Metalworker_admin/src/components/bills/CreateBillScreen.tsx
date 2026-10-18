@@ -1163,9 +1163,8 @@ function CreatorForm({
             />
             <Field
               styles={styles}
-              label="Reverse charge GST"
-              hint="Printed as a value, not as a yes/no. Leave blank if it does not apply."
-              keyboard="decimal-pad"
+              label="GST payable on reverse charge"
+              hint="Left blank, the row still prints."
               value={reverseChargeGst ?? ""}
               onChange={setReverseChargeGst}
             />

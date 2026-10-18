@@ -197,7 +197,7 @@ export function BillEditScreen({
       cgstRate: n(row.cgst_rate),
       sgstRate: n(row.sgst_rate),
       igstRate: n(row.igst_rate),
-      reverseChargeGst: n(row.reverse_charge_gst),
+      reverseChargeGst: s(row.reverse_charge_gst),
       roundOff: n(row.round_off),
       amountInWords: s(row.amount_in_words),
       regenerateWords: false,
@@ -374,7 +374,7 @@ export function BillEditScreen({
       cgst_rate: parseNumber(d.cgstRate),
       sgst_rate: parseNumber(d.sgstRate),
       igst_rate: parseNumber(d.igstRate),
-      reverse_charge_gst: parseNumber(d.reverseChargeGst),
+      reverse_charge_gst: d.reverseChargeGst.trim() === "" ? null : d.reverseChargeGst.trim(),
       round_off: parseNumber(d.roundOff),
       amount_in_words: d.regenerateWords ? null : d.amountInWords || null,
       bank_details: Object.fromEntries(
@@ -664,7 +664,6 @@ export function BillEditScreen({
                 styles={styles}
                 value={draft.reverseChargeGst}
                 onChange={(v) => set("reverseChargeGst", v)}
-                keyboardType="decimal-pad"
               />
               <Field
                 label="Total invoice amount in words"
