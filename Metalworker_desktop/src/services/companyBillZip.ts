@@ -30,7 +30,6 @@ export async function buildCompanyBillZip(
 
   const included: ZipOutcome["included"] = [];
   const failed: ZipOutcome["failed"] = [];
-  let totalInput = 0;
   const slots: (Promise<Uint8Array> | undefined)[] = new Array(total);
   let next = 0;
   const startNext = () => {
@@ -55,7 +54,7 @@ export async function buildCompanyBillZip(
       const f = new ZipDeflate(entry.filename, { level: 6 });
       zip.add(f);
       f.push(bytes, true);
-      totalInput += bytes.byteLength;
+
       included.push({ filename: entry.filename, bytes: bytes.byteLength });
     }
   }

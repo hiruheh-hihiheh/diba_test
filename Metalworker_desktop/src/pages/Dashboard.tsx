@@ -39,7 +39,7 @@ import { fetchWorkers } from "../services/admin";
 import { fetchAdminDispatches, getMaterialLabel } from "../services/dispatch";
 import type { Profile } from "../types/profile";
 import type { Dispatch } from "../types/dispatch";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { InlineRefreshBar } from "../components/ui/LoadingState";
 
 /* ═══════════════════════════════════════════
@@ -210,7 +210,8 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    const timer = setTimeout(() => { void loadData(); }, 0);
+    return () => clearTimeout(timer);
   }, [loadData]);
 
   async function handleRefresh() {

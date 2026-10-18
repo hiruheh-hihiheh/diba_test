@@ -42,12 +42,13 @@ import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import IconButton from "../components/ui/IconButton";
 import ImageLightbox, { type LightboxImage } from "../components/ui/ImageLightbox";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { readableError } from "../utils/readableError";
-import Pagination, { usePagination } from "../components/ui/Pagination";
+import Pagination from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 
 /* ── Shapes ─────────────────────────────────────────── */
 
@@ -177,7 +178,8 @@ export default function PhotoGroupsPage<T extends PhotoGroup, P extends GroupPho
   );
 
   useEffect(() => {
-    load();
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function handleRefresh() {

@@ -19,7 +19,7 @@ import {
   formatMoney,
 } from "../../services/bills";
 import { BILL_COPIES, BILL_COPY_LABEL, type Bill, type BillCopy } from "../../types/bill";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 import IconButton from "../ui/IconButton";
 
 type BillSource = Pick<

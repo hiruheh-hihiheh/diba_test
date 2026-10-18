@@ -53,8 +53,8 @@ import {
   UserRound,
 } from "lucide-react";
 
-import { usePageMeta } from "../contexts/PageMetaContext";
-import { useToast } from "../components/ui/Toast";
+import { usePageMeta } from "../hooks/usePageMeta";
+import { useToast } from "../hooks/useToast";
 import Modal from "../components/ui/Modal";
 import {
   Calculated,

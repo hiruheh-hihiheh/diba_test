@@ -49,7 +49,7 @@ function isValidCalendarDate(y: number, m: number, d: number): boolean {
   return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
-export function parseDate(value: any): string | null {
+export function parseDate(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" && value.trim() === "") return null;
   
@@ -114,7 +114,7 @@ export function parseDate(value: any): string | null {
   return null;
 }
 
-export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExcelRow {
+export function parseRow(raw: Record<string, unknown>, rowIndex: number): ParsedExcelRow {
   const normalized: ParsedExcelRow["normalized"] = {
     job_type: null,
     job_no: null,
@@ -135,7 +135,7 @@ export function parseRow(raw: Record<string, any>, rowIndex: number): ParsedExce
   const errors: string[] = [];
 
   // Create a canonical lookup for the raw row
-  const rowCanonical: Record<string, any> = {};
+  const rowCanonical: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(raw)) {
     const norm = normalizeHeader(key);
     const canonical = NORMALIZED_TO_CANONICAL[norm];
@@ -234,7 +234,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
 
         for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as any[][];
+          const json = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as unknown[][];
           
           let bestHeaderScore = -1;
           let bestHeaderRowIndex = -1;
@@ -275,7 +275,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
         }
 
         const sheet = workbook.Sheets[bestSheet];
-        const jsonWithEmpty = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as any[][];
+        const jsonWithEmpty = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true }) as unknown[][];
         
         const headerRowIndex = sheetHeaderRowIndices[bestSheet];
         const headers = jsonWithEmpty[headerRowIndex].map(String);
@@ -289,7 +289,7 @@ export async function parseExcelFile(file: File): Promise<ParserResult> {
             continue;
           }
 
-          const raw: Record<string, any> = {};
+          const raw: Record<string, unknown> = {};
           for (let col = 0; col < headers.length; col++) {
             if (headers[col]) {
               raw[headers[col]] = rowArr[col];

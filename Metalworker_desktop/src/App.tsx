@@ -1,8 +1,8 @@
 // src/App.tsx
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "./hooks/useAuth";
-import { ThemeProvider } from "./contexts/ThemeContext";
+import { AuthProvider } from "./hooks/AuthProvider";
+import { ThemeProvider } from "./contexts/ThemeProvider";
 import { ToastProvider } from "./components/ui/Toast";
 import { ConfirmProvider } from "./components/ui/ConfirmDialog";
 import AdminLayout from "./layouts/AdminLayout";

@@ -31,14 +31,15 @@ import {
   addFolderItem,
 } from "../services/folders";
 import type { AdminFolder, FolderItemType } from "../types/folder";
-import { usePageMeta } from "../contexts/PageMetaContext";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
+import { usePageMeta } from "../hooks/usePageMeta";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import Modal from "../components/ui/Modal";
 import IconButton from "../components/ui/IconButton";
-import Pagination, { usePagination } from "../components/ui/Pagination";
+import Pagination from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { readableError } from "../utils/readableError";
 
@@ -157,7 +158,8 @@ export default function FoldersPage() {
   }, []);
 
   useEffect(() => {
-    load();
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function handleRefresh() {
@@ -190,10 +192,7 @@ export default function FoldersPage() {
   /* The library can hold every job in the system, so it is paginated rather
      than rendering thousands of rows at once. */
   const itemPagination = usePagination(filteredItems.length, 25);
-  const pageItems = useMemo(
-    () => itemPagination.pageItems(filteredItems),
-    [itemPagination.pageItems, filteredItems]
-  );
+  const pageItems = itemPagination.pageItems(filteredItems);
 
   usePageMeta(
     {

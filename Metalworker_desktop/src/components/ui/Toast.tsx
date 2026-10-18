@@ -2,15 +2,14 @@
 // Consistent, non-blocking success / error feedback. Replaces window.alert.
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { ToastContext, type ToastContextValue } from "../../contexts/ToastContext";
 import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, Info, X, AlertCircle } from "lucide-react";
 
@@ -31,18 +30,6 @@ interface ToastItem extends Required<Omit<ToastOptions, "description" | "title">
   /** Set while the toast is animating out, just before it is removed. */
   leaving?: boolean;
 }
-
-type ToastFn = (options: ToastOptions | string) => void;
-
-interface ToastContextValue {
-  success: ToastFn;
-  error: ToastFn;
-  info: ToastFn;
-  warning: ToastFn;
-  toast: ToastFn;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
 
 const toneStyles: Record<
   ToastTone,
@@ -183,10 +170,4 @@ function ToastCard({ item, dismiss }: { item: ToastItem; dismiss: (id: number) =
       </button>
     </div>
   );
-}
-
-export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error("useToast must be used within a ToastProvider");
-  return ctx;
 }

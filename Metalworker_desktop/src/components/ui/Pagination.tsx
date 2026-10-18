@@ -3,7 +3,7 @@
 // the underlying result set shrinks, and the first visible row is brought back
 // into view after a page change so the table header stays meaningful.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 
 const PAGE_SIZES = [25, 50, 100, 200] as const;
@@ -19,49 +19,6 @@ export interface PaginationResult {
   totalPages: number;
   rangeStart: number;
   rangeEnd: number;
-}
-
-export function usePagination(totalItems: number, initialPageSize = 50): PaginationResult {
-  const [page, setPageRaw] = useState(1);
-  const [pageSize, setPageSizeRaw] = useState(initialPageSize);
-
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-
-  // Clamp when the result set shrinks (a filter, or a delete on the last page).
-  useEffect(() => {
-    setPageRaw((p: number) => (p > totalPages ? totalPages : p < 1 ? 1 : p));
-  }, [totalPages]);
-
-  const setPageSize = useMemo(
-    () => (n: number) => {
-      setPageSizeRaw(n);
-      setPageRaw(1);
-    },
-    []
-  );
-
-  const pageItems = useMemo(
-    () => <T,>(items: T[]) => {
-      const start = (page - 1) * pageSize;
-      return items.slice(start, start + pageSize);
-    },
-    [page, pageSize]
-  );
-
-  const rangeStart = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
-  const rangeEnd = Math.min(page * pageSize, totalItems);
-
-  return {
-    page,
-    pageSize,
-    setPage: (p) => setPageRaw(Math.min(Math.max(1, p), totalPages)),
-    setPageSize,
-    pageItems,
-    totalItems,
-    totalPages,
-    rangeStart,
-    rangeEnd,
-  };
 }
 
 interface PaginationProps extends Omit<PaginationResult, "rangeStart" | "rangeEnd" | "pageItems"> {

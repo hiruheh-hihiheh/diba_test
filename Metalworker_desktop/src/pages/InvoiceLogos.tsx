@@ -45,8 +45,8 @@ import {
   type PickedInvoiceLogo,
 } from "../services/invoiceLogos";
 import type { InvoiceLogo } from "../types/invoiceLogo";
-import { usePageMeta } from "../contexts/PageMetaContext";
-import { useToast } from "../components/ui/Toast";
+import { usePageMeta } from "../hooks/usePageMeta";
+import { useToast } from "../hooks/useToast";
 import EmptyState from "../components/ui/EmptyState";
 import SearchInput from "../components/ui/SearchInput";
 import Modal, { ModalCancel } from "../components/ui/Modal";
@@ -134,7 +134,8 @@ export default function InvoiceLogosPage() {
   );
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   const visible = useMemo(() => {

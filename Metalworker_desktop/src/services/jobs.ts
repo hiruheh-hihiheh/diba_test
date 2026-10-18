@@ -258,7 +258,7 @@ export async function addMultipleJobsToFolder(folderId: string, jobIds: string[]
   const { data: jobsData } = await supabase.from(TABLE).select("job_type").in("id", jobIds);
 
   if (folderData && jobsData && folderData.folder_type && folderData.folder_type !== "general") {
-    const invalidJob = jobsData.find((j: any) => j.job_type !== folderData.folder_type);
+    const invalidJob = jobsData.find((j: { job_type?: string }) => j.job_type !== folderData.folder_type);
     if (invalidJob) {
       return { ok: false, error: `Cannot add ${invalidJob.job_type} job to a ${folderData.folder_type} folder.` };
     }

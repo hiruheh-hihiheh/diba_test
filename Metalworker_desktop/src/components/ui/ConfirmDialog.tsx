@@ -2,14 +2,13 @@
 // App-styled replacement for window.confirm / window.alert.
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { ConfirmContext } from "../../contexts/ConfirmContext";
 import { AlertTriangle, HelpCircle, Loader2 } from "lucide-react";
 import Modal from "./Modal";
 
@@ -23,9 +22,7 @@ export interface ConfirmOptions {
   icon?: ReactNode;
 }
 
-type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
-
-const ConfirmContext = createContext<ConfirmFn | null>(null);
+export type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ConfirmOptions | null>(null);
@@ -96,11 +93,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
  * Returns an async `confirm()` that shows the in-app dialog.
  * Replaces `window.confirm`, which blocks the thread and ignores the theme.
  */
-export function useConfirm(): ConfirmFn {
-  const ctx = useContext(ConfirmContext);
-  if (!ctx) throw new Error("useConfirm must be used within a ConfirmProvider");
-  return ctx;
-}
+
 
 /* ── Small inline "are you sure" busy button ─────────────────── */
 

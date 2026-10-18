@@ -63,17 +63,18 @@ import BillingFolderSheet from "../components/bills/BillingFolderSheet";
 import BulkOperationOverlay, {
   type BulkOperation,
 } from "../components/bills/BulkOperationOverlay";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { useSelection } from "../hooks/useSelection";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import Modal from "../components/ui/Modal";
 import IconButton from "../components/ui/IconButton";
 import AnchoredPopover from "../components/ui/AnchoredPopover";
 import Pagination from "../components/ui/Pagination";
-import SelectAllCheckbox, { selectionStats } from "../components/ui/SelectAllCheckbox";
+import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
+import { selectionStats } from "../utils/selectionStats";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -307,10 +308,6 @@ export default function BillsPage() {
 
   useEffect(() => {
     const wanted = visibleLogoKey ? visibleLogoKey.split(",") : [];
-    if (wanted.length === 0) {
-      setLogoNames(new Map());
-      return;
-    }
     let cancelled = false;
     fetchLogosByIds(wanted)
       .then((next) => {

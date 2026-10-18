@@ -57,9 +57,9 @@ import {
 } from "../services/dispatch";
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
 import ImageLightbox from "../components/ui/ImageLightbox";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { ErrorState } from "../components/ui/LoadingState";
 import { isNotFound, readableError } from "../utils/readableError";
 
@@ -159,7 +159,8 @@ export default function DispatchDetailsPage() {
   );
 
   useEffect(() => {
-    loadDispatch();
+    const timer = setTimeout(() => { void loadDispatch(); }, 0);
+    return () => clearTimeout(timer);
   }, [loadDispatch]);
 
   const dirty = useMemo(() => {

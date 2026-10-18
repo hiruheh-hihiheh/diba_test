@@ -1,4 +1,4 @@
-﻿// src/pages/JobsLabour.tsx
+// src/pages/JobsLabour.tsx
 // Labour jobs view. Behaviour lives in the shared JobsPage so that a fix here
 // cannot drift away from the With Material view.
 

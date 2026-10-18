@@ -39,7 +39,7 @@ import Modal, { ModalCancel } from "../ui/Modal";
 import EmptyState from "../ui/EmptyState";
 import SearchInput from "../ui/SearchInput";
 import { useLogoImageUrls } from "./useLogoImageUrls";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 
 export interface LogoPickerModalProps {
   open: boolean;
@@ -96,26 +96,27 @@ export function LogoPickerModal({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      setLoadError(null);
+      setSearch("");
+      setChosen(currentLogoId);
 
-    setLoading(true);
-    setLoadError(null);
-    setSearch("");
-    setChosen(currentLogoId);
-
-    fetchInvoiceLogos()
-      .then((rows) => {
-        if (cancelled) return;
-        setLogos(rows);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "The logo library could not be loaded.");
-        setLoading(false);
-      });
-
+      fetchInvoiceLogos()
+        .then((rows) => {
+          if (cancelled) return;
+          setLogos(rows);
+          setLoading(false);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setLoadError(err instanceof Error ? err.message : "The logo library could not be loaded.");
+          setLoading(false);
+        });
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
     /* `currentLogoId` is deliberately NOT a dependency: it changes when the bill's
        logo changes, and re-reading the whole library then would be a fetch the

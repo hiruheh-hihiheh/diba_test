@@ -44,8 +44,9 @@ import type { Dispatch, DispatchStatus } from "../types/dispatch";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import IconButton from "../components/ui/IconButton";
-import Pagination, { usePagination } from "../components/ui/Pagination";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import Pagination from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 
 function formatDate(dateStr: string): string {
@@ -125,16 +126,20 @@ export default function DispatchesPage() {
   }, []);
 
   useEffect(() => {
-    loadDispatches();
+    const timer = setTimeout(() => { void loadDispatches(); }, 0);
+    return () => clearTimeout(timer);
   }, [loadDispatches]);
 
   /* Keep the URL in step with the visible filters, so a filtered view can be
      bookmarked, shared and reached from the dashboard stat cards. */
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (filter !== "all") next.set("status", filter);
-    if (search.trim()) next.set("q", search.trim());
-    setSearchParams(next, { replace: true });
+    const timer = setTimeout(() => {
+      const next = new URLSearchParams();
+      if (filter !== "all") next.set("status", filter);
+      if (search.trim()) next.set("q", search.trim());
+      setSearchParams(next, { replace: true });
+    }, 0);
+    return () => clearTimeout(timer);
   }, [filter, search, setSearchParams]);
 
   async function handleRefresh() {
@@ -217,10 +222,13 @@ export default function DispatchesPage() {
   /* First paint once data lands. */
   useEffect(() => {
     if (seeded || allGrouped.length === 0) return;
-    setSeeded(true);
-    if (dispatches.length <= ALWAYS_OPEN_LIMIT) {
-      setExpandedUsers(new Set(allGrouped.map((g) => g.username)));
-    }
+    const timer = setTimeout(() => {
+      setSeeded(true);
+      if (dispatches.length <= ALWAYS_OPEN_LIMIT) {
+        setExpandedUsers(new Set(allGrouped.map((g) => g.username)));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allGrouped.length, dispatches.length, seeded]);
 

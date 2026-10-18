@@ -33,9 +33,9 @@ import {
 } from "../services/companyBills";
 import type { CompanyBillFolder, CompanyBillDocument } from "../types/companyBill";
 import { isPreviewable, previewKind, getFormatLabel, formatBytes, validateCompanyBillFile } from "../services/companyBillFiles";
-import { usePageMeta } from "../contexts/PageMetaContext";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
+import { usePageMeta } from "../hooks/usePageMeta";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import { useSelection } from "../hooks/useSelection";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
@@ -135,15 +135,16 @@ export default function CompanyBillsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadFolders().then(() => { if (!cancelled) setFoldersLoading(false); });
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      loadFolders().then(() => { if (!cancelled) setFoldersLoading(false); });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [loadFolders]);
 
   useEffect(() => {
     if (view === "folders" && !selectedFolderId) return; // folder grid shown, no docs
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadDocs();
+    const timer = setTimeout(() => { loadDocs(); }, 0);
+    return () => clearTimeout(timer);
   }, [loadDocs, view, selectedFolderId]);
 
   async function handleRefresh() {
@@ -335,7 +336,7 @@ export default function CompanyBillsPage() {
 
   async function handleSaveEdit() {
     if (!editDoc) return;
-    const patch: any = {
+    const patch: Partial<CompanyBillDocument> = {
       display_name: editForm.display_name ?? editDoc.display_name,
       supplier_name: editForm.supplier_name ?? null,
       bill_number: editForm.bill_number ?? null,

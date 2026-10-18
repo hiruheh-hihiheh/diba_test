@@ -95,7 +95,7 @@ export function validateCompanyBillFile(file: File): { ok: true; mime: string } 
 }
 
 export function safeFilename(name: string): string {
-  const cleaned = name.replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "");
+  const cleaned = name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "");
   return cleaned || "file";
 }
 

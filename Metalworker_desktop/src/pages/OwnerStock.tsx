@@ -3,7 +3,8 @@
 // only the field list, labels and service calls differ between the two.
 
 import { Package } from "lucide-react";
-import StockPage, { formatAmount, type StockPageConfig } from "./StockPage";
+import StockPage, { type StockPageConfig } from "./StockPage";
+import { formatAmount } from "../utils/stockFormat";
 import {
   fetchOwnerStocks,
   createOwnerStock,

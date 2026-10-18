@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 
 import Modal from "../ui/Modal";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 import {
   bankPartsOf,
   fetchBill,

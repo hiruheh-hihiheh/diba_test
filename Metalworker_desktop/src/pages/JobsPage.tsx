@@ -86,14 +86,16 @@ import {
   type BillNodeBox,
 } from "../components/jobs/wireGeometry";
 import { useConnectionWires, type WireHover } from "../hooks/useConnectionWires";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { useSelection } from "../hooks/useSelection";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
-import SelectAllCheckbox, { selectionStats } from "../components/ui/SelectAllCheckbox";
-import Pagination, { usePagination } from "../components/ui/Pagination";
+import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
+import { selectionStats } from "../utils/selectionStats";
+import Pagination from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 import Modal from "../components/ui/Modal";
 import BulkActionBar from "../components/ui/BulkActionBar";
 import IconButton from "../components/ui/IconButton";
@@ -296,17 +298,26 @@ export default function JobsPage({
      list belongs to one folder, so carrying a selection across folders would
      add jobs to the wrong destination. */
   useEffect(() => {
-    availableSelection.clear();
-    setAvailableSearch("");
+    const timer = setTimeout(() => {
+      availableSelection.clear();
+      setAvailableSearch("");
+    }, 0);
+    return () => clearTimeout(timer);
   }, [selectedFolder?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (showingFolders) loadFolders();
-    else loadJobs();
+    const timer = setTimeout(() => {
+      if (showingFolders) loadFolders();
+      else loadJobs();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [showingFolders, loadFolders, loadJobs]);
 
   useEffect(() => {
-    if (showAddPanel && selectedFolder) loadAvailableJobs();
+    const timer = setTimeout(() => {
+      if (showAddPanel && selectedFolder) loadAvailableJobs();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [showAddPanel, selectedFolder, loadAvailableJobs]);
 
   async function handleRefresh() {
@@ -378,10 +389,7 @@ export default function JobsPage({
   }, [availableJobs, availableSearch]);
 
   const pagination = usePagination(filteredJobs.length, 50);
-  const pageJobs = useMemo(
-    () => pagination.pageItems(filteredJobs),
-    [pagination.pageItems, filteredJobs]
-  );
+  const pageJobs = pagination.pageItems(filteredJobs);
 
   const pageJobIds = useMemo(() => pageJobs.map((j) => j.id), [pageJobs]);
 

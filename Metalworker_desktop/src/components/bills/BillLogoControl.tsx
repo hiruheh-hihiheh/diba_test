@@ -33,7 +33,7 @@ import {
 import { billLogoIsStale, type BillLogoState } from "../../types/invoiceLogo";
 import LogoPickerModal from "./LogoPickerModal";
 import { LogoThumbnail } from "./LogoThumbnail";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 
 interface BillLogoControlProps {
   billId: string;

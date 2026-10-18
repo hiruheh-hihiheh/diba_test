@@ -3,8 +3,8 @@
 import { useLocation, Link } from "react-router-dom";
 import { Sun, Moon, Menu, ChevronRight, User } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
-import { useTheme } from "../../contexts/ThemeContext";
-import { useCurrentPageMeta } from "../../contexts/PageMetaContext";
+import { useTheme } from "../../hooks/useTheme";
+import { useCurrentPageMeta } from "../../hooks/usePageMeta";
 import { useSidebar } from "../../hooks/useSidebar";
 
 /**

@@ -4,8 +4,9 @@ import { useEffect } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Hexagon, Loader2 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { SidebarProvider, useSidebar } from "../hooks/useSidebar";
-import { PageMetaProvider } from "../contexts/PageMetaContext";
+import { SidebarProvider } from "../contexts/SidebarContext";
+import { useSidebar } from "../hooks/useSidebar";
+import { PageMetaProvider } from "../contexts/PageMetaProvider";
 import Sidebar from "../components/layout/Sidebar";
 import TopBar from "../components/layout/TopBar";
 

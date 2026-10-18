@@ -32,10 +32,10 @@ import {
   reorderFolderItems,
 } from "../services/folders";
 import type { AdminFolder, FolderItemDisplay, FolderItemType } from "../types/folder";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { useSelection } from "../hooks/useSelection";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import Modal from "../components/ui/Modal";
@@ -213,7 +213,8 @@ export default function FolderDetail() {
   );
 
   useEffect(() => {
-    load();
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   /* Bill totals are loaded on their own, deliberately separate from `load`.
@@ -224,6 +225,7 @@ export default function FolderDetail() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    const timer = setTimeout(() => {
     fetchFolderBillSummary(id)
       .then((s) => {
         if (!cancelled) {
@@ -238,8 +240,10 @@ export default function FolderDetail() {
           err instanceof Error ? err.message : "The bill totals could not be loaded."
         );
       });
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [id, folderItems.length]);
 

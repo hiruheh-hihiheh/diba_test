@@ -52,11 +52,12 @@ import Modal from "../components/ui/Modal";
 import EmptyState from "../components/ui/EmptyState";
 import SearchInput from "../components/ui/SearchInput";
 import IconButton from "../components/ui/IconButton";
-import Pagination, { usePagination } from "../components/ui/Pagination";
+import Pagination from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 import SelectAllCheckbox from "../components/ui/SelectAllCheckbox";
 import { useSelection } from "../hooks/useSelection";
-import { useToast } from "../components/ui/Toast";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { useToast } from "../hooks/useToast";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { readableError } from "../utils/readableError";
 
 type RowFilter = "all" | "ready" | "warnings" | "errors";
@@ -211,10 +212,7 @@ export default function JobImportPage() {
   }, [result, rowFilter, rowSearch, isRowEligible]);
 
   const rowPagination = usePagination(filteredRows.length, 50);
-  const pageRows = useMemo(
-    () => rowPagination.pageItems(filteredRows),
-    [rowPagination.pageItems, filteredRows]
-  );
+  const pageRows = rowPagination.pageItems(filteredRows);
 
   /* ── File handling ────────────────────────────────── */
 

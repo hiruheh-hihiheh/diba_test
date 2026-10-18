@@ -1,13 +1,13 @@
 // src/components/jobs/JobEditModal.tsx
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Save, AlertTriangle } from "lucide-react";
 import type { Job, JobInput } from "../../types/job";
 import { updateJob } from "../../services/jobs";
 import { getJobTypeLabel } from "../../types/job";
 import Modal from "../ui/Modal";
-import { useToast } from "../ui/Toast";
-import { useConfirm } from "../ui/ConfirmDialog";
+import { useToast } from "../../hooks/useToast";
+import { useConfirm } from "../../hooks/useConfirm";
 
 interface Props {
   open: boolean;
@@ -130,10 +130,11 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
 
   /* Snapshot of the values as loaded, used to detect unsaved edits and to
      restore them if a failed save leaves the dialog open. */
-  const initialRef = useRef<FormState | null>(null);
+  const [baseline, setBaseline] = useState<FormState | null>(null);
 
   useEffect(() => {
-    if (job && open) {
+    if (!(job && open)) return;
+    const timer = setTimeout(() => {
       const next: FormState = {
         job_no: job.job_no,
         job_given_date: job.job_given_date,
@@ -149,21 +150,22 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
         drawing_status_note: job.drawing_status_note,
         model_status: job.model_status,
       };
-      initialRef.current = next;
+      setBaseline(next);
       setFormData(next);
       setError(null);
       setShowValidation(false);
-    }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [job, open]);
 
   const dirty = useMemo(() => {
-    if (!initialRef.current) return false;
-    const init = initialRef.current;
+    if (!baseline) return false;
+    const init = baseline;
     return FIELDS.some(
       (sec) =>
         sec.items.some((f) => (formData[f.key] ?? null) !== (init[f.key] ?? null)) || false
     );
-  }, [formData]);
+  }, [formData, baseline]);
 
   const dateIssues = useMemo(() => {
     const out: Partial<Record<keyof FormState, string>> = {};
@@ -229,7 +231,7 @@ export default function JobEditModal({ open, onClose, job, onSaved }: Props) {
         return;
       }
       setLoading(false);
-      initialRef.current = { ...(initialRef.current as FormState) };
+      setBaseline({ ...(baseline as FormState) });
       toast.success({
         title: "Job saved",
         description: `${job.job_no || "Job"} was updated.`,

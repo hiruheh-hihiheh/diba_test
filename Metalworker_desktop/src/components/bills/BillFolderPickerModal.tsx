@@ -15,7 +15,7 @@ import Modal from "../ui/Modal";
 import SearchInput from "../ui/SearchInput";
 import EmptyState from "../ui/EmptyState";
 import { ErrorState } from "../ui/LoadingState";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 import { addMultipleItemsToFolder, fetchFolders } from "../../services/folders";
 import type { AdminFolder } from "../../types/folder";
 

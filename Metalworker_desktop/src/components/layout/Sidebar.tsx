@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { useSidebar } from "../../hooks/useSidebar";
-import { useConfirm } from "../ui/ConfirmDialog";
+import { useConfirm } from "../../hooks/useConfirm";
 
 interface NavItem {
   label: string;

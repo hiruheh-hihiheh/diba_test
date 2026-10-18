@@ -43,7 +43,7 @@ import { formatBillDate } from "../../services/bills";
 import Modal, { ModalCancel } from "../ui/Modal";
 import EmptyState from "../ui/EmptyState";
 import SearchInput from "../ui/SearchInput";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 
 /**
  * Above this many bills, the apply asks first.
@@ -102,14 +102,17 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
      than inheriting the previous one's ticked rows. */
   useEffect(() => {
     if (!open) return;
-    setSearch("");
-    setPage(1);
-    setPicked(new Set());
-    setSelectAllMatching(false);
-    setApplying(false);
-    setProgress(null);
-    setReport(null);
-    setConfirming(false);
+    const timer = setTimeout(() => {
+      setSearch("");
+      setPage(1);
+      setPicked(new Set());
+      setSelectAllMatching(false);
+      setApplying(false);
+      setProgress(null);
+      setReport(null);
+      setConfirming(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [open, logo?.id]);
 
   /* Debounced so a fast typist does not fire a request per keystroke. 250ms is
@@ -144,7 +147,8 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
   }, [open, search, page]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   /**

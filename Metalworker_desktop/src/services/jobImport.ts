@@ -171,7 +171,7 @@ export async function processJobImport(
       }
 
       // Prepare insert payload
-      const payload: Record<string, any> = {
+      const payload: Record<string, unknown> = {
         job_no: normalized.job_no,
         job_type: normalized.job_type,
         job_given_date: normalized.job_given_date,

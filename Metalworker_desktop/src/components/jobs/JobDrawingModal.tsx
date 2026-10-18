@@ -26,8 +26,8 @@ import { getJobTypeLabel } from "../../types/job";
 import Modal from "../ui/Modal";
 import EmptyState from "../ui/EmptyState";
 import IconButton from "../ui/IconButton";
-import { useToast } from "../ui/Toast";
-import { useConfirm } from "../ui/ConfirmDialog";
+import { useToast } from "../../hooks/useToast";
+import { useConfirm } from "../../hooks/useConfirm";
 
 interface Props {
   open: boolean;

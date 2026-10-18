@@ -48,8 +48,8 @@ import {
   type ProfileFieldErrors,
   type ProfileFieldKey,
 } from "../types/invoiceBusinessProfile";
-import { usePageMeta } from "../contexts/PageMetaContext";
-import { useToast } from "../components/ui/Toast";
+import { usePageMeta } from "../hooks/usePageMeta";
+import { useToast } from "../hooks/useToast";
 import { ErrorState } from "../components/ui/LoadingState";
 
 /** The variables a stored string may use. Kept in step with the server's list. */

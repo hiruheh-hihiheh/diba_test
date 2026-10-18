@@ -29,7 +29,7 @@ import {
   type BillUploadResult,
   type BillUploadStage,
 } from "../../types/bill";
-import { useToast } from "../ui/Toast";
+import { useToast } from "../../hooks/useToast";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 

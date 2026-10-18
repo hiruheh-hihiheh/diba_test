@@ -47,9 +47,9 @@ import Modal from "../components/ui/Modal";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
 import IconButton from "../components/ui/IconButton";
-import { useToast } from "../components/ui/Toast";
-import { useConfirm } from "../components/ui/ConfirmDialog";
-import { usePageMeta } from "../contexts/PageMetaContext";
+import { useToast } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
+import { usePageMeta } from "../hooks/usePageMeta";
 import { ErrorState, InlineRefreshBar } from "../components/ui/LoadingState";
 import { readableError } from "../utils/readableError";
 import { useSearchParams } from "react-router-dom";
@@ -162,7 +162,8 @@ export default function UsersPage({ role, noun, addLabel, accent, icon }: UsersP
   );
 
   useEffect(() => {
-    loadWorkers();
+    const timer = setTimeout(() => { void loadWorkers(); }, 0);
+    return () => clearTimeout(timer);
   }, [loadWorkers]);
 
   async function handleRefresh() {
