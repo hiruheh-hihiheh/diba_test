@@ -718,7 +718,7 @@ export function billFromRecord(
     igst,
     totalGst,
     amountAfterTax,
-    reverseChargeGst: num(record.reverse_charge_gst),
+    reverseChargeGst: text(record.reverse_charge_gst),
     roundOff: num(record.round_off),
     amountInWords: text(record.amount_in_words),
     jobKind: text(record.job_kind),

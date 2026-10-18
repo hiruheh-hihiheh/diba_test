@@ -303,7 +303,7 @@ export function patchFromRecord(record: BillRecord | null): BillPatch {
   set("cgst_rate", numberOrNull(r.cgst_rate));
   set("sgst_rate", numberOrNull(r.sgst_rate));
   set("igst_rate", numberOrNull(r.igst_rate));
-  set("reverse_charge_gst", numberOrNull(r.reverse_charge_gst));
+  set("reverse_charge_gst", textOrNull(r.reverse_charge_gst));
   set("round_off", numberOrNull(r.round_off));
 
   set("bank_details", bankFromRecord(record.bank_details));
@@ -607,8 +607,10 @@ export function validateForFinalize(input: FinalizeInput): CreatorFieldError[] {
     }
   });
 
-  if (numberOrNull(patch.reverse_charge_gst) !== null && (numberOrNull(patch.reverse_charge_gst) as number) < 0) {
-    add("reverse_charge_gst", "Reverse charge GST cannot be negative.");
+  const rc = patch.reverse_charge_gst;
+  if (rc !== null && rc !== undefined && rc !== "Yes" && rc !== "No") {
+    const n = numberOrNull(rc);
+    if (n !== null && n < 0) add("reverse_charge_gst", "Reverse charge GST cannot be negative.");
   }
   /* A round-off larger than the bill itself is a typo, and it is the one figure whose
      cause is a single stray keystroke.

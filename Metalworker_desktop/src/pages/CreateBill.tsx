@@ -1121,8 +1121,16 @@ function CreatorForm({
               <NumberInput value={values.igst_rate ?? ""} onChange={(v) => setField("igst_rate", v)} align="right" />
             </Field>
 
-            <Field label="Reverse charge GST" hint="Printed as a value, not as a yes/no. Leave blank if it does not apply.">
-              <NumberInput value={reverseChargeGst ?? ""} onChange={setReverseChargeGst} align="right" />
+            <Field label="GST payable on reverse charge" hint="Left blank, the row still prints.">
+              <select
+                value={reverseChargeGst ?? ""}
+                onChange={(e) => setReverseChargeGst(e.target.value === "" ? null : e.target.value)}
+                className="w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Not specified</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
             </Field>
             <Field label="Round off" hint="Leave blank and the total is not rounded.">
               <NumberInput value={roundOff ?? ""} onChange={setRoundOff} align="right" />

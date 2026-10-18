@@ -448,11 +448,18 @@ export function applyPatch(patch: BillPatch): CleanedBill {
       case "igst_rate":
         values[key] = cleanRate(rawValue, key);
         break;
-      case "reverse_charge_gst":
-        values[key] = cleanNumber(rawValue, "Reverse charge GST") === null
-          ? null
-          : round2(cleanNumber(rawValue, "Reverse charge GST")!);
+      case "reverse_charge_gst": {
+        const rc = rawValue === null || rawValue === undefined ? "" : String(rawValue).trim();
+        if (rc === "" ) {
+          values[key] = null;
+        } else if (rc === "Yes" || rc === "No") {
+          values[key] = rc;
+        } else {
+          const n = cleanNumber(rc, "Reverse charge GST");
+          values[key] = n === null ? null : round2(n);
+        }
         break;
+      }
       case "round_off":
         // Negative round-off is normal and correct: it is how a total rounds DOWN.
         values[key] = cleanNumber(rawValue, "Round off") === null

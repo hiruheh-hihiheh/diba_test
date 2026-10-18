@@ -217,7 +217,7 @@ export interface BillCopy {
   igst: number | null;
   totalGst: number | null;
   amountAfterTax: number | null;
-  reverseChargeGst: number | null;
+  reverseChargeGst: number | string | null;
   roundOff: number | null;
   amountInWords: string | null;
   jobKind: string | null;

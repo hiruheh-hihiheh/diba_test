@@ -252,6 +252,16 @@ const FOOTER_BASELINE = 822.09;
    ────────────────────────────────────────────── */
 
 /** Indian digit grouping: 12,345.00 */
+function reverseChargeValue(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value).trim();
+  if (s === "") return "";
+  if (s === "Yes" || s === "No") return s;
+  const n = Number(s.replace(/,/g, ""));
+  if (Number.isFinite(n)) return money(n);
+  return s;
+}
+
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
   const negative = value < 0;
@@ -1237,7 +1247,7 @@ function totalRows(bill: BillCopy): TotalRow[] {
     { label: "Total Amount After Tax", value: money(bill.amountAfterTax), bold: true, boxed: true },
     {
       label: "GST Payable on Reverse Charge",
-      value: bill.reverseChargeGst === null ? "" : money(bill.reverseChargeGst),
+      value: reverseChargeValue(bill.reverseChargeGst),
     },
     { label: "Round Off", value: money(bill.roundOff) },
   ];

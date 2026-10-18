@@ -584,7 +584,7 @@ export function buildPatch(options: BuildPatchOptions): Record<string, unknown> 
      customer owes. */
   if (options.roundOff !== undefined) patch.round_off = readNumber(options.roundOff);
   if (options.reverseChargeGst !== undefined) {
-    patch.reverse_charge_gst = readNumber(options.reverseChargeGst);
+    patch.reverse_charge_gst = options.reverseChargeGst === null ? null : String(options.reverseChargeGst).trim() || null;
   }
   if (options.amountInWords !== undefined) {
     patch.amount_in_words =

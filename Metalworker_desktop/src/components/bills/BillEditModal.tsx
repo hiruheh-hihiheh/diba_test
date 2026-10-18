@@ -152,7 +152,7 @@ function toDraft(bill: Bill, items: BillLineItem[]): Draft {
     cgstRate: n(bill.cgst_rate),
     sgstRate: n(bill.sgst_rate),
     igstRate: n(bill.igst_rate),
-    reverseChargeGst: n(bill.reverse_charge_gst),
+    reverseChargeGst: s(bill.reverse_charge_gst),
     roundOff: n(bill.round_off),
     amountInWords: s(bill.amount_in_words),
     regenerateWords: false,
@@ -226,7 +226,7 @@ function toPatch(d: Draft, bankLabels: Record<string, string>): BillPatch {
     cgst_rate: parseNumberInput(d.cgstRate),
     sgst_rate: parseNumberInput(d.sgstRate),
     igst_rate: parseNumberInput(d.igstRate),
-    reverse_charge_gst: parseNumberInput(d.reverseChargeGst),
+    reverse_charge_gst: d.reverseChargeGst.trim() === "" ? null : d.reverseChargeGst.trim(),
     round_off: parseNumberInput(d.roundOff),
 
     // `null` asks the server to rebuild the words; a string keeps what is here.
@@ -804,12 +804,16 @@ export default function BillEditModal({
               <NumberInput value={draft.roundOff} onChange={(v) => set("roundOff", v)} align="right" disabled={saving} />
             </Field>
             <Field label="GST payable on reverse charge" hint="Left blank, the row still prints.">
-              <NumberInput
+              <select
                 value={draft.reverseChargeGst}
-                onChange={(v) => set("reverseChargeGst", v)}
-                align="right"
+                onChange={(e) => set("reverseChargeGst", e.target.value)}
                 disabled={saving}
-              />
+                className="w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Not specified</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
             </Field>
             <Field label="Total invoice amount in words">
               <div className="flex items-center gap-2">

@@ -112,7 +112,7 @@ export interface BillColumns {
   igst: number | null;
   total_gst: number | null;
   amount_after_tax: number | null;
-  reverse_charge_gst: number | null;
+  reverse_charge_gst: string | null;
   round_off: number | null;
   amount_in_words: string | null;
 
@@ -244,7 +244,7 @@ export interface BillPatch {
   cgst_rate?: number | null;
   sgst_rate?: number | null;
   igst_rate?: number | null;
-  reverse_charge_gst?: number | null;
+  reverse_charge_gst?: string | null;
   round_off?: number | null;
 
   bank_details?: BillBankDetails | null;
