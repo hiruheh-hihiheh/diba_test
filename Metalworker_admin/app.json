@@ -39,6 +39,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3e96df5c-841e-4810-bec7-b72cb966761c"
+      }
+    },
+    "owner": "dibeshmadys-team"
   }
 }
