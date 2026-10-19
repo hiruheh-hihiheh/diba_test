@@ -41,8 +41,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow MetalWorker to open your photos so you can attach an existing scrap photo to a dispatch.",
-          "cameraPermission": "Allow MetalWorker to use the camera to photograph the scrap load you are dispatching.",
+          "photosPermission": "Allow MetalWorker to open your photos so you can attach an existing photo to a dispatch.",
+          "cameraPermission": "Allow MetalWorker to use the camera to photograph the load you are dispatching.",
           "microphonePermission": false
         }
       ],

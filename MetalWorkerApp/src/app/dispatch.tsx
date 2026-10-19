@@ -11,6 +11,7 @@ import { Button } from "../components/ui/Button";
 import { Card, Section } from "../components/ui/Card";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Input } from "../components/ui/Input";
+import { LanguageSwitch } from "../components/ui/LanguageSwitch";
 import { NetworkBanner } from "../components/ui/NetworkBanner";
 import { Screen } from "../components/ui/Screen";
 import { useToast } from "../components/ui/Toast";
@@ -38,6 +39,14 @@ import { readableError } from "../utils/readableError";
 import { theme } from "../constants/theme";
 
 type Phase = "form" | "submitting" | "success";
+
+/** Store the key, not the sentence, so a visible error follows a language change. */
+type SubmitErrorKey =
+  | "offline_cannot_submit"
+  | "offline_cannot_upload"
+  | "no_connection"
+  | "photo_upload_failed"
+  | "dispatch_save_failed";
 type LocationState =
   | { kind: "getting" }
   | { kind: "captured"; latitude: number; longitude: number; name: string | null }
@@ -67,7 +76,7 @@ function DispatchForm() {
 
   const [phase, setPhase] = useState<Phase>("form");
   const [showErrors, setShowErrors] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<SubmitErrorKey | null>(null);
   const [submitted, setSubmitted] = useState<CreateDispatchInput | null>(null);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
 
@@ -253,7 +262,7 @@ function DispatchForm() {
     }
 
     if (isOffline) {
-      setSubmitError(t.offline_cannot_submit);
+      setSubmitError("offline_cannot_submit");
       return;
     }
 
@@ -279,7 +288,9 @@ function DispatchForm() {
         } catch (err) {
           setPhase("form");
           setSubmitError(
-            readableError(err).kind === "offline" ? t.offline_cannot_upload : t.photo_upload_failed,
+            readableError(err).kind === "offline"
+              ? "offline_cannot_upload"
+              : "photo_upload_failed",
           );
           return;
         }
@@ -305,7 +316,7 @@ function DispatchForm() {
         // The upload stays cached, so retrying does not re-send the image.
         setPhase("form");
         setSubmitError(
-          readableError(saved.error).kind === "offline" ? t.no_connection : t.dispatch_save_failed,
+          readableError(saved.error).kind === "offline" ? "no_connection" : "dispatch_save_failed",
         );
         return;
       }
@@ -315,7 +326,7 @@ function DispatchForm() {
       setPhase("success");
     } catch {
       setPhase("form");
-      setSubmitError(t.dispatch_save_failed);
+      setSubmitError("dispatch_save_failed");
     } finally {
       submitInFlight.current = false;
     }
@@ -367,6 +378,12 @@ function DispatchForm() {
           </View>
         }
       >
+        {/* The form's header is gone in this phase, so keep the language
+            control reachable without making the worker go back first. */}
+        <View style={styles.successTop}>
+          <LanguageSwitch />
+        </View>
+
         <View style={styles.successBlock}>
           <View style={styles.successIcon}>
             <Text style={styles.successIconText}>✓</Text>
@@ -426,7 +443,7 @@ function DispatchForm() {
               accessibilityRole="alert"
               accessibilityLiveRegion="assertive"
             >
-              <Text style={styles.alertBody}>{submitError}</Text>
+              <Text style={styles.alertBody}>{t[submitError]}</Text>
             </View>
           ) : null}
 
@@ -827,6 +844,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
 
+  successTop: { alignSelf: "flex-end", marginBottom: theme.spacing.md },
   successBlock: { alignItems: "center", width: "100%" },
   successIcon: {
     width: 76,

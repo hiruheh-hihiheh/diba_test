@@ -1,6 +1,7 @@
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { theme } from "../../constants/theme";
+import { useLanguage } from "../../contexts/LanguageContext";
 import { Button } from "./Button";
 
 /** Full-area spinner with a label, for a whole screen that has nothing yet. */
@@ -54,6 +55,8 @@ export function ErrorState({
   secondaryLabel,
   onSecondary,
 }: ErrorStateProps) {
+  const { t } = useLanguage();
+
   return (
     <View style={styles.error} accessibilityRole="alert">
       <Text style={styles.errorIcon}>⚠️</Text>
@@ -63,7 +66,7 @@ export function ErrorState({
         <View style={styles.errorActions}>
           {onRetry ? (
             <Button
-              title={retryLabel ?? "Try again"}
+              title={retryLabel ?? t.retry}
               onPress={onRetry}
               loading={retrying}
               disabled={retrying}

@@ -14,10 +14,12 @@ import { DispatchRow } from "../dispatch/DispatchRow";
 import { AppHeader } from "../ui/AppHeader";
 import { Card } from "../ui/Card";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
+import { LanguageSwitch } from "../ui/LanguageSwitch";
 import { NetworkBanner } from "../ui/NetworkBanner";
 import { Screen } from "../ui/Screen";
 import { EmptyState, ErrorState, LoadingState } from "../ui/States";
 import { useToast } from "../ui/Toast";
+import { translateReadableError } from "../../utils/readableError";
 
 const RECENT_COUNT = 5;
 
@@ -84,19 +86,25 @@ export function DashboardScreen({ expectRole }: DashboardScreenProps = {}) {
         name={displayName}
         subtitle={isProcessor ? t.role_processor : t.role_worker}
         right={
-          <Pressable
-            onPress={() => setConfirmLogout(true)}
-            disabled={loggingOut}
-            accessibilityRole="button"
-            accessibilityLabel={t.logout}
-            accessibilityState={{ disabled: loggingOut }}
-            hitSlop={10}
-            style={({ pressed }) => [styles.logout, pressed && styles.pressed]}
-          >
-            <Text style={styles.logoutText} numberOfLines={1}>
-              {loggingOut ? t.logging_out : t.logout}
-            </Text>
-          </Pressable>
+          // The dashboard used to pass ONLY the logout button here, which
+          // replaced AppHeader's default language switch. Stacking both keeps
+          // them available without squeezing the greeting on a small phone.
+          <View style={styles.headerActions}>
+            <LanguageSwitch />
+            <Pressable
+              onPress={() => setConfirmLogout(true)}
+              disabled={loggingOut}
+              accessibilityRole="button"
+              accessibilityLabel={t.logout}
+              accessibilityState={{ disabled: loggingOut }}
+              hitSlop={10}
+              style={({ pressed }) => [styles.logout, pressed && styles.pressed]}
+            >
+              <Text style={styles.logoutText} numberOfLines={1}>
+                {loggingOut ? t.logging_out : t.logout}
+              </Text>
+            </Pressable>
+          </View>
         }
       />
 
@@ -230,7 +238,7 @@ export function DashboardScreen({ expectRole }: DashboardScreenProps = {}) {
             error ? (
               // A dead connection must never be presented as "no records".
               <ErrorState
-                body={error.message}
+                body={translateReadableError(error, t)}
                 onRetry={error.retryable ? refresh : undefined}
                 retryLabel={t.retry}
                 retrying={refreshing}
@@ -314,6 +322,11 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   gap: { height: theme.spacing.sm },
   pressed: { opacity: 0.6 },
+  headerActions: {
+    alignItems: "flex-end",
+    gap: theme.spacing.xs,
+    flexShrink: 0,
+  },
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.xxl,

@@ -71,6 +71,15 @@ export interface TranslationDictionary {
   today: string;
   yesterday: string;
 
+  // ---- DATES ----
+  weekday_sun: string;
+  weekday_mon: string;
+  weekday_tue: string;
+  weekday_wed: string;
+  weekday_thu: string;
+  weekday_fri: string;
+  weekday_sat: string;
+
   // ---- SUMMARY STRIP ----
   total_dispatches: string;
   awaiting_review: string;
@@ -191,6 +200,13 @@ export interface TranslationDictionary {
   // ---- NETWORK ----
   offline_banner: string;
 
+  // ---- ERRORS ----
+  error_timeout: string;
+  error_server: string;
+  error_auth: string;
+  error_permission: string;
+  error_not_found: string;
+
   // ---- LANGUAGE ----
   language_english: string;
   language_hindi: string;
@@ -268,6 +284,15 @@ export const translations: Record<Language, TranslationDictionary> = {
     today: "Today",
     yesterday: "Yesterday",
 
+    // ---- DATES ----
+    weekday_sun: "Sun",
+    weekday_mon: "Mon",
+    weekday_tue: "Tue",
+    weekday_wed: "Wed",
+    weekday_thu: "Thu",
+    weekday_fri: "Fri",
+    weekday_sat: "Sat",
+
     // ---- SUMMARY STRIP ----
     total_dispatches: "Total",
     awaiting_review: "In review",
@@ -325,7 +350,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     fields_missing: "Check the highlighted fields ({count})",
     field_photo: "Photo",
     field_vehicle: "Vehicle number",
-    field_material: "Material type",
+    field_material: "Material category",
     fix_fields_hint: "The highlighted fields need your attention.",
     photo_upload_failed: "The photo did not upload. Your details are still here — try again.",
     dispatch_save_failed: "Could not save this dispatch. Your details are still here — try again.",
@@ -387,6 +412,13 @@ export const translations: Record<Language, TranslationDictionary> = {
 
     // ---- NETWORK ----
     offline_banner: "No connection. You can keep typing, but you will not be able to submit.",
+
+    // ---- ERRORS ----
+    error_timeout: "The connection is too slow. Try again in a moment.",
+    error_server: "The server had a problem. Please try again shortly.",
+    error_auth: "Your session has expired. Please log in again.",
+    error_permission: "You do not have permission to do that.",
+    error_not_found: "We could not find that record.",
 
     // ---- LANGUAGE ----
     language_english: "English",
@@ -464,6 +496,15 @@ export const translations: Record<Language, TranslationDictionary> = {
     today: "आज",
     yesterday: "कल",
 
+    // ---- DATES ----
+    weekday_sun: "रवि",
+    weekday_mon: "सोम",
+    weekday_tue: "मंगल",
+    weekday_wed: "बुध",
+    weekday_thu: "गुरु",
+    weekday_fri: "शुक्र",
+    weekday_sat: "शनि",
+
     // ---- SUMMARY STRIP ----
     total_dispatches: "कुल",
     awaiting_review: "समीक्षा में",
@@ -521,7 +562,7 @@ export const translations: Record<Language, TranslationDictionary> = {
     fields_missing: "नीचे चिह्नित जानकारी भरें ({count})",
     field_photo: "फोटो",
     field_vehicle: "वाहन नंबर",
-    field_material: "सामग्री का प्रकार",
+    field_material: "सामग्री श्रेणी",
     fix_fields_hint: "चिन्हित जानकारी भरना ज़रूरी है।",
     photo_upload_failed: "फोटो अपलोड नहीं हुई। आपकी जानकारी यहीं है — फिर कोशिश करें।",
     dispatch_save_failed: "डिस्पैच सेव नहीं हो सका। आपकी जानकारी यहीं है — फिर कोशिश करें।",
@@ -583,6 +624,13 @@ export const translations: Record<Language, TranslationDictionary> = {
 
     // ---- NETWORK ----
     offline_banner: "कनेक्शन नहीं है। आप लिखते रह सकते हैं, पर जमा नहीं कर पाएँगे।",
+
+    // ---- ERRORS ----
+    error_timeout: "कनेक्शन बहुत धीमा है। थोड़ी देर में फिर कोशिश करें।",
+    error_server: "सर्वर में समस्या आई। कृपया थोड़ी देर में फिर कोशिश करें।",
+    error_auth: "आपका सत्र समाप्त हो गया है। कृपया फिर से लॉगिन करें।",
+    error_permission: "आपको यह करने की अनुमति नहीं है।",
+    error_not_found: "हमें वह रिकॉर्ड नहीं मिला।",
 
     // ---- LANGUAGE ----
     language_english: "English",

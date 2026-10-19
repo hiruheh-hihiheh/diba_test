@@ -4,11 +4,7 @@ import { Image } from "expo-image";
 
 import { theme } from "../../constants/theme";
 import type { TranslationDictionary } from "../../constants/translations";
-import {
-  getMaterialDisplayLabel,
-  getStatusLabelKey,
-  type Dispatch,
-} from "../../services/dispatch";
+import { getMaterialDisplayLabel, type Dispatch } from "../../services/dispatch";
 import { stampLabel } from "../../utils/dateFormat";
 import { StatusPill } from "../ui/StatusPill";
 
@@ -47,7 +43,19 @@ export const DispatchRow = memo(function DispatchRow({
     t,
   );
   const vehicle = dispatch.vehicle_number;
-  const stamp = stampLabel(dispatch.submitted_at, now, { today: t.today, yesterday: t.yesterday });
+  const stamp = stampLabel(dispatch.submitted_at, now, {
+    today: t.today,
+    yesterday: t.yesterday,
+    weekdays: [
+      t.weekday_sun,
+      t.weekday_mon,
+      t.weekday_tue,
+      t.weekday_wed,
+      t.weekday_thu,
+      t.weekday_fri,
+      t.weekday_sat,
+    ],
+  });
 
   const body = (
     <>

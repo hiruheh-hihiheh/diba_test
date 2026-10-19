@@ -44,7 +44,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:material": "node --test scripts/test-material-selection.mjs"
+    "test": "node --test scripts/test-material-selection.mjs scripts/test-language.mjs",
+    "test:material": "node --test scripts/test-material-selection.mjs",
+    "test:language": "node --test scripts/test-language.mjs"
   },
   "private": true
 }

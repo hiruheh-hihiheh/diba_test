@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { theme } from "../../constants/theme";
+import { useLanguage } from "../../contexts/LanguageContext";
 
 interface InputProps extends Omit<TextInputProps, "style"> {
   label?: string;
@@ -34,6 +35,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
   { label, error, hint, required = false, accessory, containerStyle, style, ...rest },
   ref,
 ) {
+  const { t } = useLanguage();
   const hasError = Boolean(error);
 
   return (
@@ -42,7 +44,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
         <View style={styles.labelRow}>
           <Text style={styles.label}>{label}</Text>
           {required ? (
-            <Text style={styles.required} accessibilityLabel="required">
+            <Text style={styles.required} accessibilityLabel={t.required_label}>
               *
             </Text>
           ) : null}

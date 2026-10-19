@@ -20,7 +20,11 @@ import {
   type Dispatch,
 } from "../../services/dispatch";
 import { fullStamp } from "../../utils/dateFormat";
-import { readableError } from "../../utils/readableError";
+import {
+  readableError,
+  translateReadableError,
+  type ReadableError,
+} from "../../utils/readableError";
 
 /**
  * Review a single dispatch.
@@ -48,7 +52,7 @@ function DispatchDetail() {
   const [row, setRow] = useState<Dispatch | null>(null);
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReadableError | null>(null);
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -76,7 +80,9 @@ function DispatchDetail() {
 
     setLoading(false);
     if (!result.ok) {
-      setError(readableError(result.error).message);
+      // Keep the classified error, not a fixed string: the sentence is chosen
+      // at render time so switching language also translates this screen.
+      setError(readableError(result.error));
       return;
     }
     if (!result.data) {
@@ -128,7 +134,7 @@ function DispatchDetail() {
       <Screen scroll>
         <AppHeader title={t.dispatch_details} onBack={() => router.back()} />
         <ErrorState
-          body={error ?? t.something_went_wrong}
+          body={error ? translateReadableError(error, t) : t.something_went_wrong}
           onRetry={load}
           retryLabel={t.retry}
           secondaryLabel={t.back}

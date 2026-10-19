@@ -1,3 +1,5 @@
+import type { TranslationDictionary } from "../constants/translations";
+
 /**
  * Turns whatever the network / Supabase / Cloudinary hands us into a sentence
  * a labour worker can act on, and tells the UI whether offering "Retry" is any
@@ -141,4 +143,30 @@ export function readableError(input: unknown, overrides?: Partial<ReadableErrorM
 /** Convenience: just the sentence. */
 export function readableErrorMessage(input: unknown, overrides?: Partial<ReadableErrorMessages>): string {
   return readableError(input, overrides).message;
+}
+
+/**
+ * Translation keys for each error class. The classifier itself stays language
+ * agnostic; turning its result into copy happens at render time so a language
+ * switch updates an error that is already on screen.
+ */
+const ERROR_COPY_KEYS: Record<ErrorKind, keyof TranslationDictionary> = {
+  offline: "no_connection",
+  timeout: "error_timeout",
+  server: "error_server",
+  auth: "error_auth",
+  permission: "error_permission",
+  notFound: "error_not_found",
+  unknown: "something_went_wrong",
+};
+
+/** Localised sentence for an error the service layer already classified. */
+export function translateReadableError(
+  error: ReadableError,
+  t: TranslationDictionary,
+): string {
+  // Internal sentinel from SessionContext; its screen branch normally handles
+  // it first, but returning real copy here keeps every caller safe.
+  if (error.message === "no_profile") return t.account_not_set_up;
+  return t[ERROR_COPY_KEYS[error.kind]];
 }

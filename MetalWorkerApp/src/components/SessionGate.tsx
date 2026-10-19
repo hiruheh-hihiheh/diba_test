@@ -7,7 +7,9 @@ import { useLanguage } from "../contexts/LanguageContext";
 import { useSession } from "../contexts/SessionContext";
 import { ErrorState, LoadingState } from "./ui/States";
 import { Button } from "./ui/Button";
+import { LanguageSwitch } from "./ui/LanguageSwitch";
 import { Screen } from "./ui/Screen";
+import { translateReadableError } from "../utils/readableError";
 import type { UserRole } from "../types/profile";
 
 /**
@@ -36,6 +38,9 @@ export function SessionGate({
     return (
       <Screen scroll={false} center>
         <View style={styles.gate}>
+          <View style={styles.gateSwitch}>
+            <LanguageSwitch />
+          </View>
           <ErrorState
             title={t.role_not_allowed_title}
             body={t.role_not_allowed_body}
@@ -85,14 +90,19 @@ export function SessionGate({
   const missingProfile = error?.message === "no_profile";
 
   if (error && !missingProfile) {
-    const isConnection = error.kind === "offline" || error.kind === "timeout" || error.kind === "server";
+    // Only a genuine offline state gets the "no connection" headline; the
+    // translated body below states the specific timeout/server/auth problem.
+    const title = error.kind === "offline" ? t.no_connection : t.something_went_wrong;
 
     return (
       <Screen scroll={false} center>
         <View style={styles.gate}>
+          <View style={styles.gateSwitch}>
+            <LanguageSwitch />
+          </View>
           <ErrorState
-            title={isConnection ? t.no_connection : t.something_went_wrong}
-            body={isConnection ? t.login_failed : error.message}
+            title={title}
+            body={translateReadableError(error, t)}
             onRetry={error.retryable ? refresh : undefined}
             retryLabel={t.retry}
             retrying={retrying}
@@ -113,6 +123,9 @@ export function SessionGate({
   return (
     <Screen scroll={false} center>
       <View style={styles.gate}>
+        <View style={styles.gateSwitch}>
+          <LanguageSwitch />
+        </View>
         <ErrorState
           title={message}
           body={message}
@@ -130,4 +143,5 @@ export function SessionGate({
 
 const styles = StyleSheet.create({
   gate: { width: "100%", maxWidth: 420, backgroundColor: theme.colors.background },
+  gateSwitch: { alignSelf: "flex-end", marginBottom: theme.spacing.md },
 });

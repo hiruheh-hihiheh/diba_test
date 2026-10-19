@@ -15,6 +15,7 @@ import { useLanguage } from "../contexts/LanguageContext";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { useDispatchList } from "../hooks/useDispatchList";
 import { ALL_STATUSES, type Dispatch, type DispatchStatus } from "../services/dispatch";
+import { translateReadableError } from "../utils/readableError";
 
 const PAGE_SIZE = 20;
 
@@ -125,7 +126,7 @@ function History() {
           ListEmptyComponent={
             error ? (
               <ErrorState
-                body={error.message}
+                body={translateReadableError(error, t)}
                 onRetry={error.retryable ? refresh : undefined}
                 retryLabel={t.retry}
                 retrying={refreshing}

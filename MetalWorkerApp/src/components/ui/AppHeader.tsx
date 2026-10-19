@@ -12,8 +12,13 @@ interface AppHeaderProps {
   /** Renders a 48dp back control on the left. */
   onBack?: () => void;
   backLabel?: string;
-  /** Rendered on the right, usually the language switch. */
+  /** Rendered on the right, replacing the default language switch. */
   right?: ReactNode;
+  /**
+   * Set false on screens that already show a language control (Profile), so
+   * the user does not see two switches for the same setting.
+   */
+  showLanguageSwitch?: boolean;
   /** Large greeting block used on the two dashboards. */
   greeting?: string;
   name?: string;
@@ -25,6 +30,7 @@ export function AppHeader({
   onBack,
   backLabel,
   right,
+  showLanguageSwitch = true,
   greeting,
   name,
 }: AppHeaderProps) {
@@ -49,7 +55,14 @@ export function AppHeader({
 
       <View style={styles.main}>
         {greeting ? <Text style={styles.greeting}>{greeting},</Text> : null}
-        <Text style={styles.title} numberOfLines={1} accessibilityRole="header">
+        {/* Dashboards can show a long username; two lines keeps it readable
+            beside the stacked language/logout controls on small phones. */}
+        <Text
+          style={styles.title}
+          numberOfLines={greeting ? 2 : 1}
+          ellipsizeMode="tail"
+          accessibilityRole="header"
+        >
           {name ?? title}
         </Text>
         {subtitle ? (
@@ -59,7 +72,7 @@ export function AppHeader({
         ) : null}
       </View>
 
-      {right === undefined ? <LanguageSwitch /> : right}
+      {right !== undefined ? right : showLanguageSwitch ? <LanguageSwitch /> : null}
     </View>
   );
 }

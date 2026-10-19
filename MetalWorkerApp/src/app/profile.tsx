@@ -53,7 +53,13 @@ function Profile() {
 
   return (
     <Screen scroll>
-      <AppHeader title={t.profile_title} onBack={() => router.back()} />
+      {/* The language control lives in its own section below; hiding the
+          header's default avoids two identical switches on one screen. */}
+      <AppHeader
+        title={t.profile_title}
+        onBack={() => router.back()}
+        showLanguageSwitch={false}
+      />
 
       {isOffline ? <NetworkBanner t={t} /> : null}
 
@@ -73,7 +79,7 @@ function Profile() {
 
       <Section title={t.language_label}>
         <Card>
-          <LanguageSwitch />
+          <LanguageSwitch layout="list" />
         </Card>
       </Section>
 

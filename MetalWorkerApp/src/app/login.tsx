@@ -12,6 +12,16 @@ import { useLanguage } from "../contexts/LanguageContext";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { readableError } from "../utils/readableError";
 
+/** Store the key, not the sentence, so a visible error follows a language change. */
+type LoginErrorKey =
+  | "enter_username_password"
+  | "no_connection"
+  | "wrong_credentials"
+  | "could_not_sign_in"
+  | "login_failed"
+  | "account_inactive"
+  | "admin_login_unsupported";
+
 export default function LoginScreen() {
   const { t } = useLanguage();
   const { isOffline } = useNetworkStatus();
@@ -20,7 +30,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginErrorKey | null>(null);
   // A second tap while the first request is in flight used to fire a second
   // sign-in; this keeps the button honest as well as disabled.
   const inFlight = useRef(false);
@@ -31,12 +41,12 @@ export default function LoginScreen() {
     const cleanUsername = username.trim().toLowerCase();
 
     if (!cleanUsername || !password) {
-      setError(t.enter_username_password);
+      setError("enter_username_password");
       return;
     }
 
     if (isOffline) {
-      setError(t.no_connection);
+      setError("no_connection");
       return;
     }
 
@@ -55,10 +65,10 @@ export default function LoginScreen() {
         const isBadCreds = /invalid login credentials/i.test(raw);
 
         if (isBadCreds) {
-          setError(t.wrong_credentials);
+          setError("wrong_credentials");
         } else {
           const readable = readableError(signInError);
-          setError(readable.kind === "offline" ? t.no_connection : t.could_not_sign_in);
+          setError(readable.kind === "offline" ? "no_connection" : "could_not_sign_in");
         }
         return;
       }
@@ -74,32 +84,34 @@ export default function LoginScreen() {
       if (profileError) {
         // Do not sign out: the sign-in worked and a dead connection is not a
         // reason to throw the session away.
-        setError(readableError(profileError).kind === "offline" ? t.no_connection : t.could_not_sign_in);
+        setError(
+          readableError(profileError).kind === "offline" ? "no_connection" : "could_not_sign_in",
+        );
         return;
       }
 
       if (!profile) {
         await supabase.auth.signOut();
-        setError(t.login_failed);
+        setError("login_failed");
         return;
       }
 
       if (!profile.is_active) {
         await supabase.auth.signOut();
-        setError(t.account_inactive);
+        setError("account_inactive");
         return;
       }
 
       if (profile.role === "admin") {
         await supabase.auth.signOut();
-        setError(t.admin_login_unsupported);
+        setError("admin_login_unsupported");
         return;
       }
 
       // Best-effort: a missing RLS policy here must not block the sign-in.
       void updateLastLogin();
     } catch {
-      setError(t.could_not_sign_in);
+      setError("could_not_sign_in");
     } finally {
       inFlight.current = false;
       setLoading(false);
@@ -173,7 +185,7 @@ export default function LoginScreen() {
 
         {error ? (
           <View style={styles.errorBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{t[error]}</Text>
           </View>
         ) : null}
 
