@@ -14,7 +14,7 @@ import { router, useFocusEffect } from "expo-router";
 import { AppTheme } from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
 import { useAdminGate } from "../hooks/useAdminGate";
-import { fetchAdminDispatches } from "../services/dispatch";
+import { fetchAdminDispatches, getMaterialLabel } from "../services/dispatch";
 import type { Dispatch, DispatchStatus } from "../types/dispatch";
 
 import { Badge } from "../components/ui/Badge";
@@ -312,7 +312,7 @@ export default function DispatchScreen() {
                           {dispatch.worker_username}
                         </Text>
                         <Text style={styles.rowMeta} numberOfLines={1}>
-                          {dispatch.vehicle_number}
+                          {dispatch.vehicle_number} · {getMaterialLabel(dispatch.material_type, dispatch.custom_material)}
                         </Text>
                         <Text style={styles.rowDate}>{formatDate(dispatch.submitted_at)}</Text>
                       </View>
@@ -390,6 +390,9 @@ export default function DispatchScreen() {
                             <View style={styles.groupRowInfo}>
                               <Text style={styles.groupRowTitle} numberOfLines={1}>
                                 {dispatch.vehicle_number}
+                              </Text>
+                              <Text style={styles.rowMeta} numberOfLines={1}>
+                                {getMaterialLabel(dispatch.material_type, dispatch.custom_material)}
                               </Text>
                               <Text style={styles.rowDate}>
                                 {formatDate(dispatch.submitted_at)}
