@@ -171,7 +171,7 @@ export default function DispatchesPage() {
         (d) =>
           d.worker_username.toLowerCase().includes(q) ||
           d.vehicle_number.toLowerCase().includes(q) ||
-          getMaterialLabel(d.material_type).toLowerCase().includes(q)
+          getMaterialLabel(d.material_type, d.custom_material).toLowerCase().includes(q)
       );
     }
     return result;
@@ -447,7 +447,7 @@ export default function DispatchesPage() {
                               <StatusPill status={d.status} />
                             </div>
                             <p className="text-[13px] text-text-muted mt-1 truncate">
-                              {d.vehicle_number} · {getMaterialLabel(d.material_type)} · 1 dispatch
+                              {d.vehicle_number} · {getMaterialLabel(d.material_type, d.custom_material)} · 1 dispatch
                             </p>
                           </div>
                           <p className="text-[13px] text-text-muted shrink-0 font-medium hidden sm:block">
@@ -521,7 +521,7 @@ export default function DispatchesPage() {
                                     <StatusPill status={d.status} />
                                   </div>
                                   <p className="text-[13px] text-text-muted mt-1 truncate">
-                                    {getMaterialLabel(d.material_type)} ·{" "}
+                                    {getMaterialLabel(d.material_type, d.custom_material)} ·{" "}
                                     {formatDate(d.submitted_at)}
                                     {d.location_name ? ` · ${d.location_name}` : ""}
                                   </p>

@@ -24,6 +24,7 @@ import {
   deleteDispatch,
   getMaterialLabel,
   getStatusColor,
+  isLegacyMaterialType,
 } from "../services/dispatch";
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
 import { notify } from "../utils/notify";
@@ -50,7 +51,8 @@ export default function DispatchDetailsScreen() {
 
   // Edit form state
   const [editVehicleNumber, setEditVehicleNumber] = useState("");
-  const [editMaterialType, setEditMaterialType] = useState<MaterialType>("scrap");
+  const [editMaterialType, setEditMaterialType] = useState<MaterialType>("metal");
+  const [editCustomMaterial, setEditCustomMaterial] = useState("");
   const [editLocationName, setEditLocationName] = useState("");
 
   const [editStatus, setEditStatus] = useState<DispatchStatus>("submitted");
@@ -66,6 +68,7 @@ export default function DispatchDetailsScreen() {
         setDispatch(res.data);
         setEditVehicleNumber(res.data.vehicle_number);
         setEditMaterialType(res.data.material_type);
+        setEditCustomMaterial(res.data.custom_material ?? "");
         setEditLocationName(res.data.location_name || "");
 
         setEditStatus(res.data.status);
@@ -95,6 +98,7 @@ export default function DispatchDetailsScreen() {
     if (dispatch) {
       setEditVehicleNumber(dispatch.vehicle_number);
       setEditMaterialType(dispatch.material_type);
+      setEditCustomMaterial(dispatch.custom_material ?? "");
       setEditLocationName(dispatch.location_name || "");
 
       setEditStatus(dispatch.status);
@@ -111,11 +115,24 @@ export default function DispatchDetailsScreen() {
       return;
     }
 
+    const trimmedCustomMaterial = editCustomMaterial.trim();
+    // Historical Other records were saved before a description existed. They
+    // must stay editable (e.g. to change status) without forcing a rewrite;
+    // choosing Other for a record that was not already Other still requires it.
+    const isLegacyOtherWithoutDetail =
+      dispatch.material_type === "other" && !(dispatch.custom_material ?? "").trim();
+    if (editMaterialType === "other" && !trimmedCustomMaterial && !isLegacyOtherWithoutDetail) {
+      notify("Validation Error", "Enter the material name because Other is selected");
+      return;
+    }
+
     try {
       setSaving(true);
       const updateData: UpdateDispatchInput = {
         vehicle_number: trimmedVehicle,
         material_type: editMaterialType,
+        custom_material:
+          editMaterialType === "other" ? trimmedCustomMaterial || null : null,
         location_name: editLocationName.trim() || null,
         status: editStatus,
       };
@@ -199,11 +216,19 @@ export default function DispatchDetailsScreen() {
   }
 
   const materialOptions: { key: MaterialType; label: string }[] = [
-    { key: "scrap", label: "Scrap" },
-    { key: "ferrous", label: "Ferrous Metal" },
-    { key: "non_ferrous", label: "Non-Ferrous Metal" },
+    { key: "metal", label: "Metal" },
+    { key: "non_metal", label: "Non-metal" },
     { key: "other", label: "Other" },
   ];
+
+  // A historical record keeps its old value selectable while it is open, so
+  // opening and saving an unrelated field cannot silently reclassify it.
+  if (isLegacyMaterialType(dispatch.material_type)) {
+    materialOptions.push({
+      key: dispatch.material_type,
+      label: getMaterialLabel(dispatch.material_type),
+    });
+  }
 
   const statusOptions: { key: DispatchStatus; label: string }[] = [
     { key: "submitted", label: "Submitted" },
@@ -270,7 +295,7 @@ export default function DispatchDetailsScreen() {
                       <Text style={styles.detailLabel}>Material</Text>
                     </View>
                     <Text style={styles.detailValue}>
-                      {getMaterialLabel(dispatch.material_type)}
+                      {getMaterialLabel(dispatch.material_type, dispatch.custom_material)}
                     </Text>
                   </View>
 
@@ -363,7 +388,7 @@ export default function DispatchDetailsScreen() {
                 </View>
 
                 <View style={styles.formField}>
-                  <Text style={styles.formLabel}>Material Type</Text>
+                  <Text style={styles.formLabel}>Material Category</Text>
                   <View style={styles.materialGrid}>
                     {materialOptions.map((opt) => (
                       <Pressable
@@ -372,7 +397,11 @@ export default function DispatchDetailsScreen() {
                           styles.materialOption,
                           editMaterialType === opt.key && styles.materialOptionActive,
                         ]}
-                        onPress={() => setEditMaterialType(opt.key)}
+                        onPress={() => {
+                          setEditMaterialType(opt.key);
+                          // Leave no stale custom text on a non-Other category.
+                          if (opt.key !== "other") setEditCustomMaterial("");
+                        }}
                       >
                         <Text
                           style={[
@@ -386,6 +415,23 @@ export default function DispatchDetailsScreen() {
                       </Pressable>
                     ))}
                   </View>
+
+                  {editMaterialType === "other" ? (
+                    <View style={styles.otherMaterialField}>
+                      <Text style={styles.formLabel}>Specify Other Material *</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        value={editCustomMaterial}
+                        onChangeText={setEditCustomMaterial}
+                        placeholder="e.g. brass fittings, plastic"
+                        placeholderTextColor={theme.colors.textMuted}
+                        maxLength={80}
+                      />
+                      <Text style={styles.formHint}>
+                        Required when the category is Other.
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 <View style={styles.formField}>
@@ -683,6 +729,14 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     padding: 12,
     fontSize: theme.textSizes.md,
     color: theme.colors.text,
+  },
+  otherMaterialField: {
+    marginTop: theme.spacing.sm,
+  },
+  formHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.textSizes.xs,
+    marginTop: 6,
   },
   materialGrid: {
     flexDirection: "row",

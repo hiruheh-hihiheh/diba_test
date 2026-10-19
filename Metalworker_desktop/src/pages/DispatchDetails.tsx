@@ -54,6 +54,7 @@ import {
   deleteDispatch,
   getMaterialLabel,
   getStatusColor,
+  isLegacyMaterialType,
 } from "../services/dispatch";
 import type { Dispatch, DispatchStatus, MaterialType, UpdateDispatchInput } from "../types/dispatch";
 import ImageLightbox from "../components/ui/ImageLightbox";
@@ -67,9 +68,8 @@ const inputCls =
   "field h-11 py-0 text-[14px]";
 
 const MATERIAL_OPTIONS: { key: MaterialType; label: string }[] = [
-  { key: "scrap", label: "Scrap" },
-  { key: "ferrous", label: "Ferrous Metal" },
-  { key: "non_ferrous", label: "Non-Ferrous" },
+  { key: "metal", label: "Metal" },
+  { key: "non_metal", label: "Non-metal" },
   { key: "other", label: "Other" },
 ];
 
@@ -83,6 +83,7 @@ const STATUS_OPTIONS: { key: DispatchStatus; label: string; hint: string }[] = [
 interface EditForm {
   vehicle_number: string;
   material_type: MaterialType;
+  custom_material: string;
   location_name: string;
   status: DispatchStatus;
 }
@@ -91,6 +92,7 @@ function formFrom(dispatch: Dispatch): EditForm {
   return {
     vehicle_number: dispatch.vehicle_number,
     material_type: dispatch.material_type,
+    custom_material: dispatch.custom_material ?? "",
     location_name: dispatch.location_name || "",
     status: dispatch.status,
   };
@@ -111,7 +113,8 @@ export default function DispatchDetailsPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState<EditForm>({
     vehicle_number: "",
-    material_type: "scrap",
+    material_type: "metal",
+    custom_material: "",
     location_name: "",
     status: "submitted",
   });
@@ -169,17 +172,31 @@ export default function DispatchDetailsPage() {
     return (
       form.vehicle_number.trim() !== original.vehicle_number ||
       form.material_type !== original.material_type ||
+      form.custom_material.trim() !== original.custom_material.trim() ||
       form.location_name.trim() !== original.location_name ||
       form.status !== original.status
     );
   }, [dispatch, form]);
+
+  // A historical record keeps its old value selectable while it is open, so
+  // saving an unrelated edit cannot silently reclassify it.
+  const materialOptions = useMemo(() => {
+    const options = [...MATERIAL_OPTIONS];
+    if (dispatch && isLegacyMaterialType(dispatch.material_type)) {
+      options.push({
+        key: dispatch.material_type,
+        label: getMaterialLabel(dispatch.material_type),
+      });
+    }
+    return options;
+  }, [dispatch]);
 
   usePageMeta(
     {
       title: dispatch ? `Dispatch — ${dispatch.vehicle_number}` : "Dispatch Details",
       crumbs: [{ label: "Dispatches" }, { label: dispatch ? dispatch.vehicle_number : "Details" }],
       subtitle: dispatch
-        ? `${dispatch.worker_username} · ${getMaterialLabel(dispatch.material_type)}`
+        ? `${dispatch.worker_username} · ${getMaterialLabel(dispatch.material_type, dispatch.custom_material)}`
         : "Loading dispatch…",
     },
     [dispatch]
@@ -221,12 +238,28 @@ export default function DispatchDetailsPage() {
       document.getElementById("dispatch-vehicle")?.focus();
       return;
     }
+
+    const trimmedCustomMaterial = form.custom_material.trim();
+    // Historical Other records predate the description field. Saving another
+    // field on one must remain possible; choosing Other from another category
+    // still requires a description.
+    const isLegacyOtherWithoutDetail =
+      dispatch?.material_type === "other" && !(dispatch.custom_material ?? "").trim();
+    if (form.material_type === "other" && !trimmedCustomMaterial && !isLegacyOtherWithoutDetail) {
+      setFormError(
+        "Enter the material name because Other is selected — it is what identifies this load."
+      );
+      document.getElementById("dispatch-custom-material")?.focus();
+      return;
+    }
+
     setFormError(null);
     setSaving(true);
 
     const updateData: UpdateDispatchInput = {
       vehicle_number: trimmedVehicle,
       material_type: form.material_type,
+      custom_material: form.material_type === "other" ? trimmedCustomMaterial || null : null,
       location_name: form.location_name.trim() || null,
       status: form.status,
     };
@@ -406,7 +439,7 @@ export default function DispatchDetailsPage() {
                   <DetailRow
                     icon={<Package size={16} />}
                     label="Material"
-                    value={getMaterialLabel(dispatch.material_type)}
+                    value={getMaterialLabel(dispatch.material_type, dispatch.custom_material)}
                   />
                   <DetailRow
                     icon={<MapPin size={16} />}
@@ -501,16 +534,50 @@ export default function DispatchDetailsPage() {
                   <legend className="block text-[12px] font-bold text-text-muted mb-2">
                     Material Type
                   </legend>
-                  <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="Material type">
-                    {MATERIAL_OPTIONS.map((opt) => (
+                  <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="Material category">
+                    {materialOptions.map((opt) => (
                       <ChoiceChip
                         key={opt.key}
                         selected={form.material_type === opt.key}
-                        onClick={() => setForm((p) => ({ ...p, material_type: opt.key }))}
+                        onClick={() =>
+                          setForm((p) => ({
+                            ...p,
+                            material_type: opt.key,
+                            // Leaving Other clears its text so it can never be
+                            // submitted alongside Metal / Non-metal.
+                            custom_material: opt.key === "other" ? p.custom_material : "",
+                          }))
+                        }
                         label={opt.label}
                       />
                     ))}
                   </div>
+
+                  {form.material_type === "other" && (
+                    <div className="mt-3">
+                      <label
+                        htmlFor="dispatch-custom-material"
+                        className="block text-[12px] font-bold text-text-muted mb-2"
+                      >
+                        Specify Other Material <span className="text-danger">*</span>
+                      </label>
+                      <input
+                        id="dispatch-custom-material"
+                        type="text"
+                        value={form.custom_material}
+                        onChange={(e) => {
+                          setForm((p) => ({ ...p, custom_material: e.target.value }));
+                          setFormError(null);
+                        }}
+                        placeholder="e.g. brass fittings, plastic"
+                        maxLength={80}
+                        className={inputCls}
+                      />
+                      <p className="text-xs text-text-muted mt-1.5">
+                        Required when the category is Other.
+                      </p>
+                    </div>
+                  )}
                 </fieldset>
 
                 <fieldset>

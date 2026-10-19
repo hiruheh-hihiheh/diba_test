@@ -14,7 +14,11 @@ import { SessionGate } from "../../components/SessionGate";
 import { theme } from "../../constants/theme";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useNetworkStatus } from "../../hooks/useNetworkStatus";
-import { fetchDispatchById, getMaterialLabelKey, type Dispatch } from "../../services/dispatch";
+import {
+  fetchDispatchById,
+  getMaterialDisplayLabel,
+  type Dispatch,
+} from "../../services/dispatch";
 import { fullStamp } from "../../utils/dateFormat";
 import { readableError } from "../../utils/readableError";
 
@@ -160,7 +164,10 @@ function DispatchDetail() {
       <Section title={t.vehicle_number}>
         <Card>
           <DetailRow label={t.vehicle_number} value={row.vehicle_number} />
-          <DetailRow label={t.material_type} value={t[getMaterialLabelKey(row.material_type)]} />
+          <DetailRow
+            label={t.material_type}
+            value={getMaterialDisplayLabel(row.material_type, row.custom_material, t)}
+          />
           <DetailRow label={t.submitted_at_label} value={fullStamp(row.submitted_at)} />
         </Card>
       </Section>

@@ -5,7 +5,7 @@ import { Image } from "expo-image";
 import { theme } from "../../constants/theme";
 import type { TranslationDictionary } from "../../constants/translations";
 import {
-  getMaterialLabelKey,
+  getMaterialDisplayLabel,
   getStatusLabelKey,
   type Dispatch,
 } from "../../services/dispatch";
@@ -41,7 +41,11 @@ export const DispatchRow = memo(function DispatchRow({
     rejected: t.status_rejected,
   } as const;
 
-  const material = t[getMaterialLabelKey(dispatch.material_type)];
+  const material = getMaterialDisplayLabel(
+    dispatch.material_type,
+    dispatch.custom_material,
+    t,
+  );
   const vehicle = dispatch.vehicle_number;
   const stamp = stampLabel(dispatch.submitted_at, now, { today: t.today, yesterday: t.yesterday });
 

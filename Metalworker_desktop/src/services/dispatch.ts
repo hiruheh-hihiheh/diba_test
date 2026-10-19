@@ -3,6 +3,7 @@
 import { supabase } from "../lib/supabase";
 import type {
   Dispatch,
+  LegacyMaterialType,
   MaterialType,
   UpdateDispatchInput,
 } from "../types/dispatch";
@@ -84,16 +85,31 @@ export async function deleteDispatch(
   return { ok: true };
 }
 
-export function getMaterialLabel(type: MaterialType): string {
+export function isLegacyMaterialType(type: MaterialType): type is LegacyMaterialType {
+  return type === "scrap" || type === "ferrous" || type === "non_ferrous";
+}
+
+/**
+ * Display label for a material value. `custom` is the free-text Other
+ * description, so an Other record reads "Other: brass fittings" instead of a
+ * bare, uninformative "Other". Historical values keep their original labels.
+ */
+export function getMaterialLabel(type: MaterialType, custom?: string | null): string {
   switch (type) {
+    case "metal":
+      return "Metal";
+    case "non_metal":
+      return "Non-metal";
+    case "other": {
+      const detail = custom?.trim();
+      return detail ? `Other: ${detail}` : "Other";
+    }
     case "scrap":
       return "Scrap";
     case "ferrous":
       return "Ferrous Metal";
     case "non_ferrous":
       return "Non-Ferrous Metal";
-    case "other":
-      return "Other";
     default:
       return type;
   }

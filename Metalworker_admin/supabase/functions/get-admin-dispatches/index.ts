@@ -21,7 +21,17 @@ const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ALLOWED_STATUSES = new Set(["submitted", "reviewed", "approved", "rejected"]);
-const ALLOWED_MATERIAL_TYPES = new Set(["scrap", "ferrous", "non_ferrous", "other"]);
+// metal / non_metal / other are the current categories; scrap / ferrous /
+// non_ferrous stay accepted so historical records can still be edited safely.
+const ALLOWED_MATERIAL_TYPES = new Set([
+  "metal",
+  "non_metal",
+  "other",
+  "scrap",
+  "ferrous",
+  "non_ferrous",
+]);
+const MAX_CUSTOM_MATERIAL_LENGTH = 120;
 const MAX_LIST_LIMIT = 5000;
 
 /** True when `v` is a plain object (not null, not an array). */
@@ -48,11 +58,36 @@ function validateUpdateInput(input: unknown): { ok: true; value: Record<string, 
     value.vehicle_number = input.vehicle_number;
   }
 
+  if ("custom_material" in input) {
+    const raw = input.custom_material;
+    if (raw !== null && typeof raw !== "string") {
+      return { ok: false, error: "custom_material must be a string or null." };
+    }
+    const trimmed = typeof raw === "string" ? raw.trim() : null;
+    if (trimmed !== null && (trimmed.length === 0 || trimmed.length > MAX_CUSTOM_MATERIAL_LENGTH)) {
+      return {
+        ok: false,
+        error: `custom_material must be 1-${MAX_CUSTOM_MATERIAL_LENGTH} characters when provided.`,
+      };
+    }
+    value.custom_material = trimmed;
+  }
+
   if ("material_type" in input) {
     if (typeof input.material_type !== "string" || !ALLOWED_MATERIAL_TYPES.has(input.material_type)) {
-      return { ok: false, error: "material_type must be one of scrap, ferrous, non_ferrous, other." };
+      return {
+        ok: false,
+        error:
+          "material_type must be one of metal, non_metal, other, scrap, ferrous, or non_ferrous.",
+      };
     }
     value.material_type = input.material_type;
+
+    if (input.material_type !== "other" && !("custom_material" in input)) {
+      // Switching away from Other clears the old description instead of leaving
+      // a stale value attached to Metal / Non-metal.
+      value.custom_material = null;
+    }
   }
 
   if ("status" in input) {
@@ -282,6 +317,42 @@ Deno.serve(async (req) => {
       const validated = validateUpdateInput(body?.input);
       if (!validated.ok) {
         return json({ ok: false, error: validated.error }, 400);
+      }
+
+      // Choosing Other requires a description. Historical Other rows predate
+      // that field, so an existing unexplained Other may still be saved (for
+      // example to change its status) without rewriting its material data.
+      if (validated.value.material_type === "other") {
+        const { data: existing, error: existingError } = await adminClient
+          .from("dispatches")
+          .select("material_type, custom_material")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (existingError) {
+          console.error("Dispatch read error:", existingError);
+          return json({ ok: false, error: "Failed to load dispatch." }, 500);
+        }
+        if (!existing) {
+          return json({ ok: false, error: "Dispatch not found." }, 404);
+        }
+
+        const nextCustomMaterial =
+          "custom_material" in validated.value
+            ? validated.value.custom_material
+            : existing.custom_material;
+        const isLegacyOtherWithoutDetail =
+          existing.material_type === "other" && !existing.custom_material;
+
+        if (!nextCustomMaterial && !isLegacyOtherWithoutDetail) {
+          return json(
+            {
+              ok: false,
+              error: "custom_material is required when changing the category to Other.",
+            },
+            400
+          );
+        }
       }
 
       const { data, error } = await adminClient

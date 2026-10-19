@@ -74,7 +74,7 @@ function DispatchRow({
           {dispatch.worker_username}
         </Text>
         <Text style={styles.rowMeta} numberOfLines={1}>
-          {dispatch.vehicle_number} · {getMaterialLabel(dispatch.material_type)}
+          {dispatch.vehicle_number} · {getMaterialLabel(dispatch.material_type, dispatch.custom_material)}
         </Text>
         <Text style={styles.rowDate}>{formatDispatchDate(dispatch.submitted_at)}</Text>
       </View>

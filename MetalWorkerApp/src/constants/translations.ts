@@ -87,6 +87,11 @@ export interface TranslationDictionary {
   enter_vehicle_number: string;
   material_type: string;
   select_material: string;
+  metal_material: string;
+  non_metal_material: string;
+  specify_other_material: string;
+  other_material_placeholder: string;
+  other_material_hint: string;
   scrap_metal: string;
   ferrous_metal: string;
   non_ferrous_metal: string;
@@ -104,6 +109,7 @@ export interface TranslationDictionary {
   photo_required: string;
   vehicle_required: string;
   material_required: string;
+  other_material_required: string;
   camera_error: string;
   location_error: string;
   uploading_photo: string;
@@ -276,8 +282,13 @@ export const translations: Record<Language, TranslationDictionary> = {
     choose_photo: "Choose photo",
     vehicle_number: "Vehicle number",
     enter_vehicle_number: "e.g. DL 1L AB 1234",
-    material_type: "Material type",
-    select_material: "Tap the material you are loading",
+    material_type: "Material category",
+    select_material: "Choose the category for this load",
+    metal_material: "Metal",
+    non_metal_material: "Non-metal",
+    specify_other_material: "Specify Other Material",
+    other_material_placeholder: "e.g. brass fittings, plastic",
+    other_material_hint: "Type the material or item you are loading.",
     scrap_metal: "Scrap",
     ferrous_metal: "Ferrous",
     non_ferrous_metal: "Non-ferrous",
@@ -294,7 +305,8 @@ export const translations: Record<Language, TranslationDictionary> = {
     complete_required_fields: "Complete all required fields",
     photo_required: "Add a photo of the load",
     vehicle_required: "Enter the vehicle number",
-    material_required: "Choose the material type",
+    material_required: "Choose a material category",
+    other_material_required: "Enter the material name because you selected Other",
     camera_error: "Could not open the camera",
     location_error: "Could not get your location",
     uploading_photo: "Uploading photo…",
@@ -466,8 +478,13 @@ export const translations: Record<Language, TranslationDictionary> = {
     choose_photo: "फोटो चुनें",
     vehicle_number: "वाहन नंबर",
     enter_vehicle_number: "जैसे DL 1L AB 1234",
-    material_type: "सामग्री का प्रकार",
-    select_material: "जो सामग्री लोड कर रहे हैं उसे चुनें",
+    material_type: "सामग्री श्रेणी",
+    select_material: "इस लोड की श्रेणी चुनें",
+    metal_material: "धातु",
+    non_metal_material: "गैर-धातु",
+    specify_other_material: "अन्य सामग्री लिखें",
+    other_material_placeholder: "जैसे पीतल के फिटिंग, प्लास्टिक",
+    other_material_hint: "जो सामग्री या वस्तु लोड कर रहे हैं उसे लिखें।",
     scrap_metal: "स्क्रेप",
     ferrous_metal: "लोहे की धातु",
     non_ferrous_metal: "गैर-लोहे की धातु",
@@ -484,7 +501,8 @@ export const translations: Record<Language, TranslationDictionary> = {
     complete_required_fields: "सभी ज़रूरी जानकारी भरें",
     photo_required: "लोड की फोटो लें",
     vehicle_required: "वाहन नंबर लिखें",
-    material_required: "सामग्री का प्रकार चुनें",
+    material_required: "सामग्री की श्रेणी चुनें",
+    other_material_required: "अन्य चुना है, इसलिए सामग्री का नाम लिखें",
     camera_error: "कैमरा नहीं खुल सका",
     location_error: "स्थान नहीं मिल सका",
     uploading_photo: "फोटो अपलोड हो रही है…",

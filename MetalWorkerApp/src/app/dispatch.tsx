@@ -22,12 +22,18 @@ import { format } from "../constants/translations";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import {
   createDispatch,
-  getMaterialLabelKey,
+  getMaterialDisplayLabel,
   type CreateDispatchInput,
-  type MaterialType,
+  type MaterialCategory,
 } from "../services/dispatch";
 import { uploadDispatchPhoto, type CloudinaryUploadResult } from "../services/cloudinary";
 import { clockLabel, timeLabel } from "../utils/dateFormat";
+import {
+  customMaterialForCategory,
+  missingMaterialField,
+  normaliseCustomMaterial,
+  resolveCustomMaterial,
+} from "../utils/materialSelection";
 import { readableError } from "../utils/readableError";
 import { theme } from "../constants/theme";
 
@@ -37,7 +43,7 @@ type LocationState =
   | { kind: "captured"; latitude: number; longitude: number; name: string | null }
   | { kind: "unavailable"; canAskAgain: boolean };
 
-type FieldKey = "photo" | "vehicle" | "material";
+type FieldKey = "photo" | "vehicle" | "material" | "customMaterial";
 
 export default function DispatchScreen() {
   return (
@@ -55,7 +61,8 @@ function DispatchForm() {
   const [asset, setAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState("");
-  const [materialType, setMaterialType] = useState<MaterialType | null>(null);
+  const [materialType, setMaterialType] = useState<MaterialCategory | null>(null);
+  const [customMaterial, setCustomMaterial] = useState("");
   const [location, setLocation] = useState<LocationState>({ kind: "getting" });
 
   const [phase, setPhase] = useState<Phase>("form");
@@ -68,6 +75,7 @@ function DispatchForm() {
   const [locationPrompt, setLocationPrompt] = useState(false);
 
   const vehicleRef = useRef<TextInput>(null);
+  const customMaterialRef = useRef<TextInput>(null);
   const scrollerRef = useRef<ScrollView>(null);
   const submitInFlight = useRef(false);
 
@@ -145,11 +153,18 @@ function DispatchForm() {
     const list: FieldKey[] = [];
     if (!photoUri) list.push("photo");
     if (!vehicleNumber.trim()) list.push("vehicle");
-    if (!materialType) list.push("material");
+    // Selecting Other does not excuse the material field: it becomes a required
+    // free-text description instead of a category tile.
+    const materialIssue = missingMaterialField(materialType, customMaterial);
+    if (materialIssue) list.push(materialIssue);
     return list;
-  }, [photoUri, vehicleNumber, materialType]);
+  }, [photoUri, vehicleNumber, materialType, customMaterial]);
 
-  const isDirty = Boolean(photoUri) || vehicleNumber.trim().length > 0 || materialType !== null;
+  const isDirty =
+    Boolean(photoUri) ||
+    vehicleNumber.trim().length > 0 ||
+    materialType !== null ||
+    customMaterial.trim().length > 0;
   const busy = phase === "submitting";
 
   const fieldError = (key: FieldKey): string | null => {
@@ -161,18 +176,26 @@ function DispatchForm() {
         return t.vehicle_required;
       case "material":
         return t.material_required;
+      case "customMaterial":
+        return t.other_material_required;
     }
   };
 
   const scrollToField = useCallback((key: FieldKey, focus = false) => {
-    const y = fieldOffsets.current[key];
+    // The Other input lives inside the material section, so its own layout
+    // offset is relative to that section. Scroll to the section itself and let
+    // the focus call below bring the keyboard up on the right field.
+    const y = fieldOffsets.current[key === "customMaterial" ? "material" : key];
     if (typeof y === "number") {
       scrollerRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
     }
-    if (focus && key === "vehicle") {
+    if (focus && (key === "vehicle" || key === "customMaterial")) {
       // Let the scroll settle before raising the keyboard, otherwise the two
       // fight and the field ends up half-hidden behind it.
-      setTimeout(() => vehicleRef.current?.focus(), 220);
+      setTimeout(() => {
+        if (key === "vehicle") vehicleRef.current?.focus();
+        else customMaterialRef.current?.focus();
+      }, 220);
     }
   }, []);
 
@@ -266,6 +289,9 @@ function DispatchForm() {
       const payload: CreateDispatchInput = {
         vehicleNumber: vehicleNumber.trim(),
         materialType: materialType!,
+        // Re-normalised at submit time so leading/trailing spaces can never be
+        // saved, and Metal / Non-metal always persist null here.
+        customMaterial: resolveCustomMaterial(materialType, customMaterial),
         photoUrl: result.secureUrl,
         photoPublicId: result.publicId,
         latitude: location.kind === "captured" ? location.latitude : null,
@@ -304,6 +330,7 @@ function DispatchForm() {
     setPhotoUri(null);
     setVehicleNumber("");
     setMaterialType(null);
+    setCustomMaterial("");
     setShowErrors(false);
     setSubmitError(null);
     setSubmitted(null);
@@ -351,7 +378,14 @@ function DispatchForm() {
 
           <Card>
             <SummaryRow label={t.vehicle_number} value={submitted.vehicleNumber} />
-            <SummaryRow label={t.material_type} value={t[getMaterialLabelKey(submitted.materialType)]} />
+            <SummaryRow
+              label={t.material_type}
+              value={getMaterialDisplayLabel(
+                submitted.materialType,
+                submitted.customMaterial,
+                t,
+              )}
+            />
             {submitted.locationName ? (
               <SummaryRow label={t.current_location} value={submitted.locationName} />
             ) : null}
@@ -473,12 +507,15 @@ function DispatchForm() {
           <Section
             title={t.material_type}
             badge={{ label: t.required_label, tone: "required" }}
-            hint={t.select_material}
+            hint={materialType === "other" ? t.other_material_hint : t.select_material}
           >
             <MaterialTypePicker
               value={materialType}
               onChange={(next) => {
                 setMaterialType(next);
+                // Leaving Other clears its text, so a previous custom value can
+                // never be submitted as if it belonged to Metal or Non-metal.
+                setCustomMaterial((previous) => customMaterialForCategory(next, previous));
                 if (showErrors) setShowErrors(false);
                 clearSubmitError();
               }}
@@ -486,6 +523,30 @@ function DispatchForm() {
               disabled={busy}
               invalid={Boolean(fieldError("material"))}
             />
+
+            {materialType === "other" ? (
+              <View style={styles.otherField}>
+                <Input
+                  ref={customMaterialRef}
+                  label={t.specify_other_material}
+                  required
+                  value={customMaterial}
+                  onChangeText={(next) => {
+                    setCustomMaterial(next);
+                    if (showErrors && normaliseCustomMaterial(next)) setShowErrors(false);
+                    clearSubmitError();
+                  }}
+                  placeholder={t.other_material_placeholder}
+                  maxLength={80}
+                  autoCapitalize="sentences"
+                  autoCorrect
+                  editable={!busy}
+                  returnKeyType="done"
+                  error={fieldError("customMaterial")}
+                  containerStyle={styles.flush}
+                />
+              </View>
+            ) : null}
           </Section>
         </View>
 
@@ -551,10 +612,22 @@ function DispatchForm() {
             />
             <ReviewRow
               label={t.material_type}
-              value={materialType ? t[getMaterialLabelKey(materialType)] : undefined}
-              ok={Boolean(materialType)}
+              value={
+                materialType
+                  ? getMaterialDisplayLabel(materialType, customMaterial, t)
+                  : undefined
+              }
+              // Other counts as complete only once its description is filled in.
+              ok={!missingMaterialField(materialType, customMaterial)}
               required
-              onPress={() => scrollToField("material")}
+              onPress={() =>
+                scrollToField(
+                  materialType === "other" && !normaliseCustomMaterial(customMaterial)
+                    ? "customMaterial"
+                    : "material",
+                  materialType === "other",
+                )
+              }
             />
             <ReviewRow
               label={t.current_location}
@@ -672,6 +745,7 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.xxl,
   },
   flush: { marginBottom: 0 },
+  otherField: { marginTop: theme.spacing.sm },
   pressed: { opacity: 0.7 },
   footerStack: { gap: theme.spacing.sm },
 

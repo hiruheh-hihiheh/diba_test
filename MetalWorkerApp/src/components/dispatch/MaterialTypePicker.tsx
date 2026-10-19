@@ -2,13 +2,14 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { theme } from "../../constants/theme";
 import type { TranslationDictionary } from "../../constants/translations";
-import { getMaterialLabelKey, type MaterialType } from "../../services/dispatch";
+import { getMaterialLabelKey, type MaterialCategory } from "../../services/dispatch";
+import { ACTIVE_MATERIAL_CATEGORIES } from "../../utils/materialSelection";
 
-const OPTIONS: MaterialType[] = ["scrap", "ferrous", "non_ferrous", "other"];
+const OPTIONS = ACTIVE_MATERIAL_CATEGORIES;
 
 interface MaterialTypePickerProps {
-  value: MaterialType | null;
-  onChange: (type: MaterialType) => void;
+  value: MaterialCategory | null;
+  onChange: (type: MaterialCategory) => void;
   t: TranslationDictionary;
   disabled?: boolean;
   invalid?: boolean;

@@ -650,7 +650,7 @@ function DispatchPanel({
                     <StatusBadge status={d.status} />
                   </div>
                   <p className="text-[11.5px] text-text-muted mt-0.5 truncate">
-                    {d.vehicle_number} · {getMaterialLabel(d.material_type)}
+                    {d.vehicle_number} · {getMaterialLabel(d.material_type, d.custom_material)}
                   </p>
                 </div>
                 <span className="text-[11.5px] text-text-muted shrink-0 hidden sm:block tabular-nums">

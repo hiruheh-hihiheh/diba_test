@@ -18,7 +18,8 @@ CREATE TABLE public.dispatches (
   worker_id uuid,
   worker_username text NOT NULL,
   vehicle_number text NOT NULL,
-  material_type text NOT NULL CHECK (material_type = ANY (ARRAY['scrap'::text, 'ferrous'::text, 'non_ferrous'::text, 'other'::text])),
+  material_type text NOT NULL CHECK (material_type = ANY (ARRAY['metal'::text, 'non_metal'::text, 'other'::text, 'scrap'::text, 'ferrous'::text, 'non_ferrous'::text])), -- scrap/ferrous/non_ferrous are historical values only
+  custom_material text CHECK (custom_material IS NULL OR char_length(btrim(custom_material)) BETWEEN 1 AND 120), -- worker text for material_type = 'other'
   photo_url text NOT NULL,
   photo_public_id text,
   latitude double precision,

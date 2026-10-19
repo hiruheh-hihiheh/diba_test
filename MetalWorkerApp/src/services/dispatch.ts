@@ -1,34 +1,24 @@
 import { supabase } from "./supabase";
 import type { TranslationDictionary } from "../constants/translations";
+import type {
+  CreateDispatchInput,
+  Dispatch,
+  DispatchStatus,
+  LegacyMaterialType,
+  MaterialCategory,
+  MaterialType,
+} from "../types/dispatch";
 
-export type MaterialType = "scrap" | "ferrous" | "non_ferrous" | "other";
-export type DispatchStatus = "submitted" | "reviewed" | "approved" | "rejected";
+export type {
+  CreateDispatchInput,
+  Dispatch,
+  DispatchStatus,
+  LegacyMaterialType,
+  MaterialCategory,
+  MaterialType,
+} from "../types/dispatch";
 
-export interface Dispatch {
-  id: string;
-  worker_id: string | null;
-  worker_username: string;
-  vehicle_number: string;
-  material_type: MaterialType;
-  photo_url: string;
-  photo_public_id: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  location_name: string | null;
-  submitted_at: string;
-  status: DispatchStatus;
-  created_at: string;
-}
-
-export interface CreateDispatchInput {
-  vehicleNumber: string;
-  materialType: MaterialType;
-  photoUrl: string;
-  photoPublicId: string;
-  latitude: number | null;
-  longitude: number | null;
-  locationName: string | null;
-}
+export { getMaterialDisplayLabel, getMaterialLabelKey } from "../utils/materialLabels";
 
 /** Every data call returns the raw failure so the UI can classify it. */
 export type ServiceResult<T> = { ok: true; data: T } | { ok: false; error: unknown };
@@ -73,6 +63,9 @@ export async function createDispatch(input: CreateDispatchInput): Promise<Servic
     worker_username: profile.username,
     vehicle_number: input.vehicleNumber,
     material_type: input.materialType,
+    // Null for Metal / Non-metal, so switching away from Other can never leave
+    // a stale custom value attached to the record.
+    custom_material: input.customMaterial,
     photo_url: input.photoUrl,
     photo_public_id: input.photoPublicId,
     latitude: input.latitude,
@@ -99,7 +92,7 @@ export interface FetchDispatchesResult {
 }
 
 const DISPATCH_COLUMNS =
-  "id, worker_id, worker_username, vehicle_number, material_type, photo_url, photo_public_id, latitude, longitude, location_name, submitted_at, status, created_at";
+  "id, worker_id, worker_username, vehicle_number, material_type, custom_material, photo_url, photo_public_id, latitude, longitude, location_name, submitted_at, status, created_at";
 
 /**
  * One paged, searchable, filterable query used by the dashboard, the history
@@ -158,16 +151,6 @@ export async function fetchDispatchById(id: string): Promise<ServiceResult<Dispa
 
   if (error) return { ok: false, error };
   return { ok: true, data: (data as Dispatch | null) ?? null };
-}
-
-export function getMaterialLabelKey(type: MaterialType): keyof TranslationDictionary {
-  switch (type) {
-    case "scrap": return "scrap_metal";
-    case "ferrous": return "ferrous_metal";
-    case "non_ferrous": return "non_ferrous_metal";
-    case "other": return "other";
-    default: return "other";
-  }
 }
 
 export function getStatusLabelKey(status: DispatchStatus): keyof TranslationDictionary {
