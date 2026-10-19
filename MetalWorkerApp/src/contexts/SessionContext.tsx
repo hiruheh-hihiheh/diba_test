@@ -86,7 +86,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
    * request per real session, and a genuinely new token still re-reads.
    */
   const loadedForToken = useRef<string | null>(null);
-  const loadingProfile = useRef(false);
+  /**
+   * Dedupe key of the profile read in flight, not just a boolean.
+   *
+   * A boolean guard dropped a read for a *different* sign-in that started while
+   * the previous one was still landing (sign out, sign in again quickly), which
+   * left the app showing the login screen with a perfectly valid session.
+   */
+  const loadingProfile = useRef<string | null>(null);
   // Mirrors `status` for use inside a stable callback: reading it through a ref
   // keeps `applySession`'s identity constant, so the restore effect and the auth
   // subscription are not torn down and rebuilt on every state change.
@@ -103,17 +110,35 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadProfile = useCallback(async (uid: string, sessionUser: Parameters<typeof displayNameFrom>[0], token?: string) => {
-    if (loadingProfile.current) return;
-    loadingProfile.current = true;
+    const requestKey = `${uid}:${token ?? ""}`;
+    if (loadingProfile.current === requestKey) return;
+    loadingProfile.current = requestKey;
     const epoch = ++authEpoch.current;
 
-    const { data, error: queryError } = await supabase
-      .from("profiles")
-      .select("username, full_name, role, is_active")
-      .eq("id", uid)
-      .maybeSingle();
+    let data: {
+      username: string | null;
+      full_name: string | null;
+      role: string | null;
+      is_active: boolean | null;
+    } | null = null;
+    let queryError: unknown = null;
 
-    loadingProfile.current = false;
+    try {
+      const res = await supabase
+        .from("profiles")
+        .select("username, full_name, role, is_active")
+        .eq("id", uid)
+        .maybeSingle();
+      data = res.data;
+      queryError = res.error;
+    } catch (error) {
+      // A thrown request (rare, but possible mid-launch) must still release the
+      // in-flight flag, otherwise the very next restore attempt is ignored and
+      // the app sits on its splash forever.
+      queryError = error;
+    } finally {
+      if (loadingProfile.current === requestKey) loadingProfile.current = null;
+    }
 
     if (epoch !== authEpoch.current) return;
 
