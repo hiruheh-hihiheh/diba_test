@@ -207,6 +207,92 @@ export async function downloadDrawingUploadBytes(path: string): Promise<Uint8Arr
   return new Uint8Array(buf);
 }
 
+export async function fetchDrawingUploadDocumentIds(): Promise<string[]> {
+  const ids: string[] = [];
+  const pageSize = 500;
+  let page = 0;
+  while (true) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase.from(DOCS).select("id").range(from, to);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as { id: string }[];
+    for (const r of rows) ids.push(r.id);
+    if (rows.length < pageSize) break;
+    page++;
+  }
+  return ids;
+}
+
+export async function fetchDrawingUploadDocumentsByIds(ids: string[]): Promise<DrawingUploadDocument[]> {
+  if (ids.length === 0) return [];
+  const out: DrawingUploadDocument[] = [];
+  const chunkSize = 100;
+  for (let c = 0; c < ids.length; c += chunkSize) {
+    const chunk = ids.slice(c, c + chunkSize);
+    const { data, error } = await supabase.from(DOCS).select("*").in("id", chunk);
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as DrawingUploadDocument[]));
+  }
+  return out;
+}
+
+export interface BulkDeleteResult {
+  total: number;
+  deleted: number;
+  failed: { id: string; error: string }[];
+  storageWarnings: string[];
+}
+
+export async function deleteDrawingUploadDocuments(
+  ids: string[],
+  onProgress?: (done: number, total: number) => void
+): Promise<BulkDeleteResult> {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  const result: BulkDeleteResult = { total: uniqueIds.length, deleted: 0, failed: [], storageWarnings: [] };
+  if (uniqueIds.length === 0) return result;
+
+  const docs = await fetchDrawingUploadDocumentsByIds(uniqueIds);
+  const docMap = new Map(docs.map((d) => [d.id, d]));
+
+  const concurrency = 5;
+  const queue = [...uniqueIds];
+  let done = 0;
+  onProgress?.(0, uniqueIds.length);
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const id = queue.shift();
+      if (!id) continue;
+      const doc = docMap.get(id);
+      try {
+        const { error: dbError } = await supabase.from(DOCS).delete().eq("id", id);
+        if (dbError) {
+          result.failed.push({ id, error: dbError.message });
+        } else {
+          result.deleted += 1;
+          if (doc?.storage_path) {
+            try {
+              const { error: removeError } = await supabase.storage.from(BUCKET).remove([doc.storage_path]);
+              if (removeError) result.storageWarnings.push(`${doc.original_filename}: ${removeError.message}`);
+            } catch (e) {
+              result.storageWarnings.push(`${doc.original_filename}: ${e instanceof Error ? e.message : "Storage cleanup failed."}`);
+            }
+          }
+        }
+      } catch (e) {
+        result.failed.push({ id, error: e instanceof Error ? e.message : "Deletion failed." });
+      }
+      done += 1;
+      onProgress?.(done, uniqueIds.length);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, uniqueIds.length) }, () => worker()));
+  void logAudit({ action: "drawing_upload_documents.bulk_deleted", targetType: "drawing_upload_document", detail: { total: uniqueIds.length, deleted: result.deleted, failed: result.failed.length } });
+  return result;
+}
+
 export async function downloadDrawingUploadsZip(docs: DrawingUploadDocument[]): Promise<{ ok: boolean; error?: string }> {
   if (docs.length === 0) return { ok: false, error: "No documents selected." };
   try {

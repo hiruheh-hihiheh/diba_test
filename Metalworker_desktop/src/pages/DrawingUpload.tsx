@@ -25,6 +25,9 @@ import {
   updateDrawingUploadDocument,
   moveDrawingUploadDocument,
   deleteDrawingUploadDocument,
+  deleteDrawingUploadDocuments,
+  fetchDrawingUploadDocumentIds,
+  fetchDrawingUploadDocumentsByIds,
   replaceDrawingUploadFile,
   uploadDrawingUploadsBatch,
   getDrawingUploadSignedUrl,
@@ -71,6 +74,8 @@ export default function CompanyBillsPage() {
   const [page, setPage] = useState(1);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Modals
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -302,6 +307,58 @@ export default function CompanyBillsPage() {
     await loadDocs();
   }
 
+  async function handleDeleteSelected() {
+    const selectedIds = [...selection.selected];
+    if (selectedIds.length === 0 || bulkDeleting) return;
+    const ok = await confirm({ title: "Delete selected documents", message: `Permanently delete ${selectedIds.length} selected document(s)? This cannot be undone.`, confirmLabel: "Delete selected", tone: "danger" });
+    if (!ok) return;
+    setBulkDeleting(true);
+    setDeleteProgress({ done: 0, total: selectedIds.length });
+    try {
+      const res = await deleteDrawingUploadDocuments(selectedIds, (done, total) => setDeleteProgress({ done, total }));
+      if (res.failed.length > 0) {
+        toast.error({ title: `${res.failed.length} failed`, description: `${res.deleted} deleted, ${res.failed.length} failed. ${res.failed.slice(0, 3).map((f) => f.error).join("; ")}` });
+      } else {
+        toast.success({ title: "Documents deleted", description: `${res.deleted} document(s) permanently deleted.` });
+      }
+      if (res.storageWarnings.length > 0) toast.warning({ title: "Storage cleanup warnings", description: res.storageWarnings.slice(0, 3).join("; ") });
+      selection.clear();
+      await loadFolders();
+      await loadDocs();
+    } finally {
+      setBulkDeleting(false);
+      setDeleteProgress(null);
+    }
+  }
+
+  async function handleDeleteAll() {
+    if (bulkDeleting) return;
+    // Get total count.
+    const res0 = await fetchDrawingUploadDocuments({ page: 1, pageSize: 1 });
+    const total = res0.total;
+    if (total === 0) { toast.info({ title: "No documents to delete" }); return; }
+    const ok = await confirm({ title: "Delete all documents", message: `Permanently delete all ${total} drawing document(s) across all folders and Unfiled? Folders will remain intact. This cannot be undone.`, confirmLabel: "Delete all", tone: "danger" });
+    if (!ok) return;
+    setBulkDeleting(true);
+    setDeleteProgress({ done: 0, total });
+    try {
+      const ids = await fetchDrawingUploadDocumentIds();
+      const res = await deleteDrawingUploadDocuments(ids, (done, t) => setDeleteProgress({ done, total: t }));
+      if (res.failed.length > 0) {
+        toast.error({ title: `${res.failed.length} failed`, description: `${res.deleted} deleted, ${res.failed.length} failed.` });
+      } else {
+        toast.success({ title: "All documents deleted", description: `${res.deleted} document(s) permanently deleted.` });
+      }
+      if (res.storageWarnings.length > 0) toast.warning({ title: "Storage cleanup warnings", description: res.storageWarnings.slice(0, 3).join("; ") });
+      selection.clear();
+      await loadFolders();
+      await loadDocs();
+    } finally {
+      setBulkDeleting(false);
+      setDeleteProgress(null);
+    }
+  }
+
   async function handleRemoveFromFolder(doc: DrawingUploadDocument) {
     const res = await moveDrawingUploadDocument(doc.id, null);
     if (!res.ok) { toast.error({ title: "Failed", description: res.error }); return; }
@@ -354,8 +411,8 @@ export default function CompanyBillsPage() {
 
   async function handleZipSelected() {
     const selectedIds = [...selection.selected];
-    const selectedDocs = docs.filter((d) => selectedIds.includes(d.id));
-    // Also include across pages? For simplicity use loaded docs only.
+    if (selectedIds.length === 0) { toast.info({ title: "No documents selected" }); return; }
+    const selectedDocs = await fetchDrawingUploadDocumentsByIds(selectedIds);
     if (selectedDocs.length === 0) { toast.info({ title: "No documents selected" }); return; }
     const res = await downloadDrawingUploadsZip(selectedDocs);
     if (!res.ok) toast.error({ title: "ZIP failed", description: res.error });
@@ -390,7 +447,10 @@ export default function CompanyBillsPage() {
             <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
-          <button onClick={() => { setUploadFolderId(selectedFolderId); setUploadOpen(true); }} className="btn btn-primary">
+          <button onClick={handleDeleteAll} disabled={bulkDeleting} className="btn btn-secondary text-danger">
+            <Trash2 size={15} /> {bulkDeleting && deleteProgress ? `Deleting ${deleteProgress.done}/${deleteProgress.total}` : "Delete all"}
+          </button>
+          <button onClick={() => { setUploadFolderId(selectedFolderId); setUploadOpen(true); }} className="btn btn-primary" disabled={bulkDeleting}>
             <UploadCloud size={16} /> Upload documents
           </button>
         </div>
@@ -480,11 +540,14 @@ export default function CompanyBillsPage() {
             </select>
             {selection.count > 0 && (
               <div className="flex items-center gap-2">
-                <button onClick={handleZipSelected} className="btn btn-secondary">
+                <button onClick={handleZipSelected} disabled={bulkDeleting} className="btn btn-secondary">
                   <FileArchive size={15} /> ZIP ({selection.count})
                 </button>
-                <button onClick={() => { setMoveDocIds([...selection.selected]); setMoveTargetFolderId(null); }} className="btn btn-primary">
+                <button onClick={() => { setMoveDocIds([...selection.selected]); setMoveTargetFolderId(null); }} disabled={bulkDeleting} className="btn btn-primary">
                   Move ({selection.count})
+                </button>
+                <button onClick={handleDeleteSelected} disabled={bulkDeleting} className="btn btn-secondary text-danger">
+                  <Trash2 size={15} /> Delete selected ({selection.count})
                 </button>
               </div>
             )}
