@@ -106,6 +106,7 @@ const navSections: NavSection[] = [
       { label: "Invoice Profile", icon: <Building2 size={18} />, path: "/bills/profile" },
       { label: "Group Bills", icon: <FileText size={18} />, path: "/group-bills" },
       { label: "Group Drawings", icon: <PenTool size={18} />, path: "/group-drawings" },
+      { label: "Drawing Upload", icon: <FileText size={18} />, path: "/drawing-upload" },
     ],
   },
   {

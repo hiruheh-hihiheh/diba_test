@@ -69,6 +69,10 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
     title: "Group Drawings",
     crumbs: [{ label: "Documents" }, { label: "Group Drawings" }],
   },
+  "/drawing-upload": {
+    title: "Drawing Upload",
+    crumbs: [{ label: "Documents" }, { label: "Drawing Upload" }],
+  },
   "/folders": { title: "Folders", crumbs: [{ label: "Organize" }, { label: "Folders" }] },
   "/settings": { title: "Settings", crumbs: [{ label: "Settings" }] },
 };

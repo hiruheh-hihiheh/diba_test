@@ -16,6 +16,7 @@ import OwnerStockPage from "./pages/OwnerStock";
 import CompanyStockPage from "./pages/CompanyStock";
 import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
+import DrawingUploadPage from "./pages/DrawingUpload";
 import BillsPage from "./pages/Bills";
 import CompanyBillsPage from "./pages/CompanyBills";
 import CreateBillPage from "./pages/CreateBill";
@@ -77,6 +78,7 @@ export default function App() {
                   <Route path="/bills/profile" element={<InvoiceSettingsPage />} />
                   <Route path="/group-bills" element={<GroupBillsPage />} />
                   <Route path="/group-drawings" element={<GroupDrawingsPage />} />
+                  <Route path="/drawing-upload" element={<DrawingUploadPage />} />
 
                   {/* Phase 5 — Organization */}
                   <Route path="/folders" element={<FoldersPage />} />
