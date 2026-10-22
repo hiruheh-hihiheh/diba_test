@@ -69,6 +69,9 @@ export default function CompanyBillsPage() {
   const [page, setPage] = useState(1);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
+  const [gstDrafts, setGstDrafts] = useState<Record<string, string>>({});
+  const [savingField, setSavingField] = useState<{ id: string; field: "amount" | "gst" | "paid" } | null>(null);
 
   // Modals
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -97,6 +100,20 @@ export default function CompanyBillsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedFolder = useMemo(() => folders.find((f) => f.id === selectedFolderId) ?? null, [folders, selectedFolderId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const a: Record<string, string> = {};
+      const g: Record<string, string> = {};
+      for (const d of docs) {
+        a[d.id] = d.amount == null ? "" : String(d.amount);
+        g[d.id] = d.gst_amount == null ? "" : String(d.gst_amount);
+      }
+      setAmountDrafts(a);
+      setGstDrafts(g);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [docs]);
 
   usePageMeta(
     { title: "Company Bills", crumbs: [{ label: "Company Bills" }], subtitle: `${folders.length} folders · ${docsTotal || docs.length} documents`, selfTitles: true },
@@ -342,6 +359,8 @@ export default function CompanyBillsPage() {
       bill_number: editForm.bill_number ?? null,
       bill_date: editForm.bill_date ?? null,
       amount: editForm.amount ?? null,
+      gst_amount: editForm.gst_amount ?? null,
+      is_paid: editForm.is_paid ?? false,
       notes: editForm.notes ?? null,
       folder_id: editForm.folder_id ?? editDoc.folder_id,
     };
@@ -351,6 +370,60 @@ export default function CompanyBillsPage() {
     setEditDoc(null);
     await loadFolders();
     await loadDocs();
+  }
+
+  async function saveAmount(doc: CompanyBillDocument, raw: string) {
+    const trimmed = raw.trim();
+    const current = doc.amount == null ? "" : String(doc.amount);
+    if (trimmed === current) return;
+    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0)) {
+      toast.error({ title: "Invalid amount", description: "Enter a non-negative number." });
+      setAmountDrafts((p) => ({ ...p, [doc.id]: current }));
+      return;
+    }
+    const value = trimmed === "" ? null : Number(trimmed);
+    setSavingField({ id: doc.id, field: "amount" });
+    const res = await updateCompanyBillDocument(doc.id, { amount: value });
+    setSavingField(null);
+    if (!res.ok) {
+      toast.error({ title: "Save failed", description: res.error });
+      setAmountDrafts((p) => ({ ...p, [doc.id]: current }));
+    } else {
+      await loadDocs();
+    }
+  }
+
+  async function saveGst(doc: CompanyBillDocument, raw: string) {
+    const trimmed = raw.trim();
+    const current = doc.gst_amount == null ? "" : String(doc.gst_amount);
+    if (trimmed === current) return;
+    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0)) {
+      toast.error({ title: "Invalid GST", description: "Enter a non-negative number." });
+      setGstDrafts((p) => ({ ...p, [doc.id]: current }));
+      return;
+    }
+    const value = trimmed === "" ? null : Number(trimmed);
+    setSavingField({ id: doc.id, field: "gst" });
+    const res = await updateCompanyBillDocument(doc.id, { gst_amount: value });
+    setSavingField(null);
+    if (!res.ok) {
+      toast.error({ title: "Save failed", description: res.error });
+      setGstDrafts((p) => ({ ...p, [doc.id]: current }));
+    } else {
+      await loadDocs();
+    }
+  }
+
+  async function savePaid(doc: CompanyBillDocument, value: boolean) {
+    if (value === doc.is_paid) return;
+    setSavingField({ id: doc.id, field: "paid" });
+    const res = await updateCompanyBillDocument(doc.id, { is_paid: value });
+    setSavingField(null);
+    if (!res.ok) {
+      toast.error({ title: "Save failed", description: res.error });
+    } else {
+      await loadDocs();
+    }
   }
 
   async function handleZipSelected() {
@@ -512,6 +585,9 @@ export default function CompanyBillsPage() {
                         <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Document</th>
                         <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Supplier / Bill #</th>
                         <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Bill date</th>
+                        <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Amount</th>
+                        <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">GST</th>
+                        <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Paid / Not Paid</th>
                         <th className="text-left text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Size</th>
                         <th className="text-right text-[12px] font-bold text-text-muted uppercase tracking-[0.1em] px-4 py-3">Actions</th>
                       </tr>
@@ -545,6 +621,43 @@ export default function CompanyBillsPage() {
                               <p className="text-[11px] text-text-muted truncate">{doc.bill_number || ""}</p>
                             </td>
                             <td className="px-4 py-3 text-sm text-text-muted">{doc.bill_date || "—"}</td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={amountDrafts[doc.id] ?? ""}
+                                onChange={(e) => setAmountDrafts((p) => ({ ...p, [doc.id]: e.target.value }))}
+                                onBlur={(e) => saveAmount(doc, e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setAmountDrafts((p) => ({ ...p, [doc.id]: doc.amount == null ? "" : String(doc.amount) })); (e.target as HTMLInputElement).blur(); } }}
+                                disabled={savingField?.id === doc.id && savingField.field === "amount"}
+                                className="w-24 px-2 py-1 rounded-lg bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={gstDrafts[doc.id] ?? ""}
+                                onChange={(e) => setGstDrafts((p) => ({ ...p, [doc.id]: e.target.value }))}
+                                onBlur={(e) => saveGst(doc, e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setGstDrafts((p) => ({ ...p, [doc.id]: doc.gst_amount == null ? "" : String(doc.gst_amount) })); (e.target as HTMLInputElement).blur(); } }}
+                                disabled={savingField?.id === doc.id && savingField.field === "gst"}
+                                className="w-24 px-2 py-1 rounded-lg bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <select
+                                value={doc.is_paid ? "paid" : "notpaid"}
+                                onChange={(e) => savePaid(doc, e.target.value === "paid")}
+                                disabled={savingField?.id === doc.id && savingField.field === "paid"}
+                                className={`px-2 py-1 rounded-lg border text-xs font-bold cursor-pointer ${doc.is_paid ? "bg-success/15 text-success border-success/30" : "bg-warning/15 text-warning border-warning/30"}`}
+                              >
+                                <option value="notpaid">Not Paid</option>
+                                <option value="paid">Paid</option>
+                              </select>
+                            </td>
                             <td className="px-4 py-3 text-sm text-text-muted">{formatBytes(doc.byte_size)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1.5">
@@ -674,6 +787,21 @@ export default function CompanyBillsPage() {
             <div>
               <label className="block text-xs font-semibold text-text-secondary mb-1.5">Amount</label>
               <input type="number" value={editForm.amount ?? ""} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value ? Number(e.target.value) : null })} className="w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text-secondary mb-1.5">Amount</label>
+              <input type="number" step="0.01" min="0" value={editForm.amount ?? ""} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value ? Number(e.target.value) : null })} className="w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text-secondary mb-1.5">GST amount</label>
+              <input type="number" step="0.01" min="0" value={editForm.gst_amount ?? ""} onChange={(e) => setEditForm({ ...editForm, gst_amount: e.target.value ? Number(e.target.value) : null })} className="w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text-secondary mb-1.5">Payment status</label>
+              <select value={editForm.is_paid ? "paid" : "notpaid"} onChange={(e) => setEditForm({ ...editForm, is_paid: e.target.value === "paid" })} className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary">
+                <option value="notpaid">Not Paid</option>
+                <option value="paid">Paid</option>
+              </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-text-secondary mb-1.5">Notes</label>

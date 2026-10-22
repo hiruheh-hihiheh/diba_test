@@ -20,6 +20,8 @@ export interface CompanyBillDocument {
   bill_number: string | null;
   bill_date: string | null;
   amount: number | null;
+  gst_amount: number | null;
+  is_paid: boolean;
   notes: string | null;
   uploaded_by: string | null;
   created_at: string;
