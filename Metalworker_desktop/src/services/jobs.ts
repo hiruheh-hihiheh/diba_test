@@ -37,16 +37,24 @@ export async function fetchJobsByFolder(folderId: string, type: JobType): Promis
   if (!items || items.length === 0) return [];
   
   const jobIds = items.map(i => i.item_id);
-  
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select("*")
-    .in("id", jobIds)
-    .eq("job_type", type)
-    .order("created_at", { ascending: false });
-    
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Job[];
+  if (jobIds.length === 0) return [];
+
+  // Chunk the `.in(...)` to avoid PostgREST URL-length limits on folders that
+  // hold many imported jobs.
+  const out: Job[] = [];
+  const CHUNK = 100;
+  for (let c = 0; c < jobIds.length; c += CHUNK) {
+    const chunk = jobIds.slice(c, c + CHUNK);
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("*")
+      .in("id", chunk)
+      .eq("job_type", type)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as Job[]));
+  }
+  return out;
 }
 
 export async function removeJobFromFolder(folderId: string, jobId: string): Promise<{ ok: boolean; error?: string }> {

@@ -7,6 +7,7 @@ import type { AdminFolder, FolderItem, FolderItemDisplay, FolderItemType } from 
 
 const TABLE = "admin_folders";
 const ITEMS_TABLE = "folder_items";
+const CHUNK_SIZE = 100;
 
 export async function fetchFolders(): Promise<AdminFolder[]> {
   const { data, error } = await supabase
@@ -107,6 +108,28 @@ export async function fetchFolderItems(folderId: string): Promise<FolderItem[]> 
 export async function addFolderItem(
   folderId: string, itemType: FolderItemType, itemId: string
 ): Promise<{ ok: boolean; data?: FolderItem; error?: string }> {
+  // Compatibility + duplicate checks for job items, mirroring the job-folder
+  // flow in jobs.ts so typed folders cannot receive the wrong job type.
+  if (itemType === "job") {
+    const { data: folderData } = await supabase.from(TABLE).select("folder_type").eq("id", folderId).single();
+    const { data: jobData } = await supabase.from("jobs").select("job_type").eq("id", itemId).single();
+    if (folderData && jobData && folderData.folder_type && folderData.folder_type !== "general") {
+      if (jobData.job_type !== folderData.folder_type) {
+        return { ok: false, error: `Cannot add ${jobData.job_type} job to a ${folderData.folder_type} folder.` };
+      }
+    }
+
+    const { data: existingLink } = await supabase
+      .from(ITEMS_TABLE)
+      .select("id")
+      .match({ folder_id: folderId, item_id: itemId, item_type: "job" })
+      .limit(1);
+    if (existingLink && existingLink.length > 0) {
+      // Already linked: treat as success, no duplicate row.
+      return { ok: true };
+    }
+  }
+
   const { data: existing } = await supabase
     .from(ITEMS_TABLE).select("position").eq("folder_id", folderId)
     .order("position", { ascending: false }).limit(1);
@@ -129,6 +152,19 @@ export async function addMultipleItemsToFolder(
   items: { type: FolderItemType; id: string }[]
 ): Promise<{ ok: boolean; error?: string }> {
   if (items.length === 0) return { ok: true };
+
+  // Compatibility check for job items against a typed folder.
+  const jobItems = items.filter((i) => i.type === "job");
+  if (jobItems.length > 0) {
+    const { data: folderData } = await supabase.from(TABLE).select("folder_type").eq("id", folderId).single();
+    if (folderData?.folder_type && folderData.folder_type !== "general") {
+      const { data: jobsData } = await supabase.from("jobs").select("id, job_type").in("id", jobItems.map((i) => i.id));
+      const invalid = (jobsData ?? []).find((j: { job_type: string }) => j.job_type !== folderData.folder_type);
+      if (invalid) {
+        return { ok: false, error: `Cannot add ${invalid.job_type} job to a ${folderData.folder_type} folder.` };
+      }
+    }
+  }
 
   const { data: existing } = await supabase
     .from(ITEMS_TABLE)
@@ -304,52 +340,106 @@ export async function resolveFolderItemLabels(items: FolderItem[]): Promise<Fold
   /** Optional second lines (currently only a bill's job classification). */
   const subtitleMap = new Map<string, string>();
 
+  // Chunked lookups: PostgREST URLs have a practical length limit, and an
+  // imported folder can link hundreds of jobs at once. Sending them all in
+  // one `.in(...)` produces an HTTP 400 "Bad Request", so walk them in
+  // fixed-size chunks instead (mirroring the import pipeline's CHUNK_SIZE).
   const fetches: PromiseLike<void>[] = [];
+
+  const chunkedIn = async <T>(
+    table: string,
+    select: string,
+    ids: string[],
+    onRows: (rows: T[]) => void
+  ) => {
+    for (let c = 0; c < ids.length; c += CHUNK_SIZE) {
+      const chunk = ids.slice(c, c + CHUNK_SIZE);
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase.from(table).select(select).in("id", chunk);
+      if (error) throw new Error(error.message);
+      onRows((data ?? []) as T[]);
+    }
+  };
 
   if (groups.has("owner_stock")) {
     fetches.push(
-      supabase.from("owner_stock").select("id, source_of_metal, folder_no").in("id", groups.get("owner_stock")!)
-        .then(({ data }) => { data?.forEach((r: { id: string; source_of_metal: string | null; folder_no: string | null }) => labelMap.set(r.id, r.source_of_metal || r.folder_no || "Owner Stock")); })
+      (async () => {
+        await chunkedIn<{ id: string; source_of_metal: string | null; folder_no: string | null }>(
+          "owner_stock",
+          "id, source_of_metal, folder_no",
+          groups.get("owner_stock")!,
+          (rows) => rows.forEach((r) => labelMap.set(r.id, r.source_of_metal || r.folder_no || "Owner Stock"))
+        );
+      })()
     );
   }
   if (groups.has("company_stock")) {
     fetches.push(
-      supabase.from("company_stock").select("id, company_name, product_name").in("id", groups.get("company_stock")!)
-        .then(({ data }) => { data?.forEach((r: { id: string; company_name: string | null; product_name: string | null }) => labelMap.set(r.id, r.company_name || r.product_name || "Company Stock")); })
+      (async () => {
+        await chunkedIn<{ id: string; company_name: string | null; product_name: string | null }>(
+          "company_stock",
+          "id, company_name, product_name",
+          groups.get("company_stock")!,
+          (rows) => rows.forEach((r) => labelMap.set(r.id, r.company_name || r.product_name || "Company Stock"))
+        );
+      })()
     );
   }
   if (groups.has("bill_group")) {
     fetches.push(
-      supabase.from("bill_groups").select("id, name").in("id", groups.get("bill_group")!)
-        .then(({ data }) => { data?.forEach((r: { id: string; name: string }) => labelMap.set(r.id, r.name)); })
+      (async () => {
+        await chunkedIn<{ id: string; name: string }>(
+          "bill_groups",
+          "id, name",
+          groups.get("bill_group")!,
+          (rows) => rows.forEach((r) => labelMap.set(r.id, r.name))
+        );
+      })()
     );
   }
   if (groups.has("drawing_group")) {
     fetches.push(
-      supabase.from("drawing_groups").select("id, name").in("id", groups.get("drawing_group")!)
-        .then(({ data }) => { data?.forEach((r: { id: string; name: string }) => labelMap.set(r.id, r.name)); })
+      (async () => {
+        await chunkedIn<{ id: string; name: string }>(
+          "drawing_groups",
+          "id, name",
+          groups.get("drawing_group")!,
+          (rows) => rows.forEach((r) => labelMap.set(r.id, r.name))
+        );
+      })()
     );
   }
   if (groups.has("job")) {
     fetches.push(
-      supabase.from("jobs").select("id, job_no").in("id", groups.get("job")!)
-        .then(({ data }) => { data?.forEach((r: { id: string; job_no: string | null }) => labelMap.set(r.id, r.job_no ? `Job ${r.job_no}` : "Job")); })
+      (async () => {
+        await chunkedIn<{ id: string; job_no: string | null }>(
+          "jobs",
+          "id, job_no",
+          groups.get("job")!,
+          (rows) => rows.forEach((r) => labelMap.set(r.id, r.job_no ? `Job ${r.job_no}` : "Job"))
+        );
+      })()
     );
   }
   if (groups.has("bill")) {
     fetches.push(
-      supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax, job_kind").in("id", groups.get("bill")!)
-        .then(({ data }) => {
-          data?.forEach((r: { id: string; invoice_no: string | null; sheet_name: string | null; amount_after_tax: number | null; job_kind: string | null }) => {
-            labelMap.set(r.id, buildBillLabel(r, r.id));
-            /* Second line only. The label above is untouched so search, toasts and
-               the accessible names all stay exactly as they were; the
-               classification is displayed alongside, never merged into the name.
-               Normalized, so "WITHMETAL" never reaches a folder list. */
-            const kind = formatJobKind(r.job_kind);
-            if (kind) subtitleMap.set(r.id, kind);
-          });
-        })
+      (async () => {
+        await chunkedIn<{ id: string; invoice_no: string | null; sheet_name: string | null; amount_after_tax: number | null; job_kind: string | null }>(
+          "bills",
+          "id, invoice_no, sheet_name, amount_after_tax, job_kind",
+          groups.get("bill")!,
+          (rows) =>
+            rows.forEach((r) => {
+              labelMap.set(r.id, buildBillLabel(r, r.id));
+              /* Second line only. The label above is untouched so search, toasts and
+                 the accessible names all stay exactly as they were; the
+                 classification is displayed alongside, never merged into the name.
+                 Normalized, so "WITHMETAL" never reaches a folder list. */
+              const kind = formatJobKind(r.job_kind);
+              if (kind) subtitleMap.set(r.id, kind);
+            })
+        );
+      })()
     );
   }
 
@@ -391,12 +481,17 @@ export async function fetchAvailableItems(
 
   const existingIds = new Set((existing ?? []).map((e) => e.item_id));
 
+  // Folder type drives which jobs may be offered. A typed folder must not
+  // even list incompatible jobs as available.
+  const { data: folderData } = await supabase.from(TABLE).select("folder_type").eq("id", folderId).single();
+  const folderType = folderData?.folder_type ?? null;
+
   const [ownerRes, companyRes, billRes, drawingRes, jobRes, taxBillRes] = await Promise.all([
     supabase.from("owner_stock").select("id, folder_no, folio_number, source_of_metal").order("created_at", { ascending: false }),
     supabase.from("company_stock").select("id, folder_no, company_name, product_name").order("created_at", { ascending: false }),
     supabase.from("bill_groups").select("id, name").order("created_at", { ascending: false }),
     supabase.from("drawing_groups").select("id, name").order("created_at", { ascending: false }),
-    supabase.from("jobs").select("id, job_no").order("created_at", { ascending: false }),
+    supabase.from("jobs").select("id, job_no, job_type").order("created_at", { ascending: false }),
     supabase.from("bills").select("id, invoice_no, sheet_name, amount_after_tax, invoice_date").order("created_at", { ascending: false }),
   ]);
 
@@ -415,7 +510,9 @@ export async function fetchAvailableItems(
     if (!existingIds.has(g.id)) available.push({ type: "drawing_group", id: g.id, label: `Drawing Group - ${g.name}` });
   }
   for (const j of jobRes.data ?? []) {
-    if (!existingIds.has(j.id)) available.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
+    if (existingIds.has(j.id)) continue;
+    if (folderType && folderType !== "general" && j.job_type !== folderType) continue;
+    available.push({ type: "job", id: j.id, label: j.job_no ? `Job ${j.job_no}` : `Job (${j.id.slice(0, 8)})` });
   }
   // One row per real invoice. The three print copies are deliberately absent:
   // adding "Original", "Duplicate" and "Triplicate" separately would put three

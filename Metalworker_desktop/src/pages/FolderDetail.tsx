@@ -173,13 +173,20 @@ export default function FolderDetail() {
       if (!id) return;
       if (!silent) setLoading(true);
       try {
-        const [fData, fItemsData, aItemsData] = await Promise.all([
-          fetchFolder(id),
-          fetchFolderItems(id),
-          fetchAvailableItems(id),
-        ]);
+        const fData = await fetchFolder(id).catch((e) => {
+          throw new Error(`fetchFolder failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
+        const fItemsData = await fetchFolderItems(id).catch((e) => {
+          throw new Error(`fetchFolderItems failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
+        const aItemsData = await fetchAvailableItems(id).catch((e) => {
+          throw new Error(`fetchAvailableItems failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
         setFolder(fData);
-        setFolderItems(await resolveFolderItemLabels(fItemsData));
+        const resolved = await resolveFolderItemLabels(fItemsData).catch((e) => {
+          throw new Error(`resolveFolderItemLabels failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
+        setFolderItems(resolved);
         setAvailableItems(aItemsData);
         insideSelection.prune(fItemsData.map((i) => i.id));
         availableSelection.prune(aItemsData.map((i) => i.id));
@@ -491,9 +498,17 @@ export default function FolderDetail() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-32">
-        <Loader2 size={32} className="animate-spin text-primary" />
-        <span className="sr-only">Loading folder</span>
+      <div className="space-y-5">
+        <Link
+          to="/folders"
+          className="inline-flex items-center gap-2.5 text-sm font-bold text-text-muted hover:text-text transition-colors mb-5"
+        >
+          <ArrowLeft size={18} /> Back to Folders
+        </Link>
+        <div className="flex justify-center py-32">
+          <Loader2 size={32} className="animate-spin text-primary" />
+          <span className="sr-only">Loading folder</span>
+        </div>
       </div>
     );
   }

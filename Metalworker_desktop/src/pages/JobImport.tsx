@@ -755,11 +755,13 @@ export default function JobImportPage() {
             <section
               aria-label="Import result"
               className={`rounded-2xl border p-5 ${
-                importResult?.status === "failed"
+                importResult?.error
                   ? "bg-danger-muted/30 border-danger/30"
-                  : outcome.failed.length > 0
-                    ? "bg-warning-muted/20 border-warning/30"
-                    : "bg-success-muted/20 border-success/30"
+                  : importResult?.status === "failed"
+                    ? "bg-danger-muted/30 border-danger/30"
+                    : outcome.failed.length > 0
+                      ? "bg-warning-muted/20 border-warning/30"
+                      : "bg-success-muted/20 border-success/30"
               }`}
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -815,6 +817,11 @@ export default function JobImportPage() {
                         </>
                       )}
                     </p>
+                    {importResult?.error && (
+                      <p className="text-sm text-danger mt-2 font-semibold">
+                        {importResult.error}
+                      </p>
+                    )}
                   </div>
                 </div>
 
