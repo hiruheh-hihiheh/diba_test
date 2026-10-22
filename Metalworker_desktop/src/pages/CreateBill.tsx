@@ -127,9 +127,14 @@ type Mode = "empty" | "profile" | "copy";
  * `[x] Use current Invoice Business Profile` box, and a link that could express it is a
  * link somebody will paste into chat.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function readMode(params: URLSearchParams): { mode: Mode | null; sourceBillId: string | null } {
   const copy = (params.get("copy") ?? "").trim();
-  if (copy !== "") return { mode: "copy", sourceBillId: copy };
+  // `copy=pick` is the picker sentinel, not a bill id.
+  if (copy !== "" && copy !== "pick" && UUID_RE.test(copy)) {
+    return { mode: "copy", sourceBillId: copy };
+  }
   const raw = (params.get("mode") ?? "").trim();
   if (raw === "") return { mode: null, sourceBillId: null };
   return { mode: raw === "profile" ? "profile" : "empty", sourceBillId: null };
@@ -452,7 +457,12 @@ function CreatorForm({
     (async () => {
       try {
         if (mode === "copy" && sourceBillId) {
-          /* The SOURCE is read as data — its columns and its line items. Its PDF is
+          if (!UUID_RE.test(sourceBillId)) {
+            setLoadError("The selected bill reference is invalid. Return to the picker and choose a bill again.");
+            setLoading(false);
+            return;
+          }
+          /* The SOURCE is read as data - its columns and its line items. Its PDF is
              never opened, downloaded or parsed: re-deriving a bill from a printed
              document would produce a second parser whose disagreements are invisible. */
           const [bill, items, profile] = await Promise.all([
