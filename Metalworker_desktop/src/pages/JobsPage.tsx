@@ -53,7 +53,7 @@ import {
   Link2,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
-import { Link } from "react-router-dom";
+
 import {
   fetchJobsByType,
   fetchJobsByFolder,
@@ -130,10 +130,6 @@ export default function JobsPage({
   const toast = useToast();
   const confirm = useConfirm();
 
-  /* This page's own route — used for the "back to all …" link and for the
-     parent breadcrumb, so neither can point at the Labour page when the user is
-     on the With Material page. */
-  const listRoute = jobType === "labour" ? "/jobs/labour" : "/jobs/with-material";
 
   const [folders, setFolders] = useState<AdminFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<AdminFolder | null>(null);
@@ -462,7 +458,10 @@ export default function JobsPage({
       title: selectedFolder && inFolderView ? selectedFolder.name : pageLabel,
       crumbs: [
         { label: "Jobs" },
-        { label: pageLabel, to: selectedFolder && inFolderView ? listRoute : undefined },
+        /* The folder selection lives in local state, not the URL, so this crumb
+           must not pretend to be a back link to the same route. The in-page
+           "All {pageLabel}" button performs the real state transition. */
+        { label: pageLabel },
         ...(selectedFolder && inFolderView ? [{ label: selectedFolder.name }] : []),
       ],
       subtitle: showingFolders
@@ -943,14 +942,23 @@ export default function JobsPage({
           </div>
           <div className="min-w-0">
             {inFolderView ? (
-              /* A real link: this is navigation, and it should behave like it. */
-              <Link
-                to={listRoute}
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline underline-offset-2"
+              /* In-page state transition: folder selection lives in local state,
+                 so a route Link to the same URL cannot clear it. */
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedFolder(null);
+                  setViewMode("folders");
+                  setShowAddPanel(false);
+                  setJobSearch("");
+                  jobSelection.clear();
+                  availableSelection.clear();
+                }}
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline underline-offset-2 cursor-pointer"
               >
                 <ArrowLeft size={14} />
                 All {pageLabel}
-              </Link>
+              </button>
             ) : (
               <p className="text-sm font-semibold text-text">
                 {showingFolders ? "Folders" : `All ${typeLabel} jobs`}
