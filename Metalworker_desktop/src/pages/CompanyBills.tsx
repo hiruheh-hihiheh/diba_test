@@ -356,7 +356,7 @@ export default function CompanyBillsPage() {
   async function handleSaveEdit() {
     if (!editDoc) return;
     const validAmount = (v: unknown) =>
-      v == null || (typeof v === "number" && Number.isFinite(v) && v >= 0 && /^\\d+(\\.\\d{1,2})?$/.test(String(v)));
+      v == null || (typeof v === "number" && Number.isFinite(v) && v >= 0 && /^\d+(\.\d{1,2})?$/.test(String(v)));
     if (!validAmount(editForm.amount) || !validAmount(editForm.gst_amount)) {
       toast.error({ title: "Invalid amount", description: "Amount and GST must be non-negative numbers with at most two decimal places." });
       return;
@@ -384,8 +384,8 @@ export default function CompanyBillsPage() {
     const trimmed = raw.trim();
     const current = doc.amount == null ? "" : String(doc.amount);
     if (trimmed === current) return;
-    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0)) {
-      toast.error({ title: "Invalid amount", description: "Enter a non-negative number." });
+    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0 || !/^\d+(\.\d{1,2})?$/.test(trimmed))) {
+      toast.error({ title: "Invalid amount", description: "Enter a non-negative number with at most two decimal places." });
       setAmountDrafts((p) => ({ ...p, [doc.id]: current }));
       return;
     }
@@ -405,8 +405,8 @@ export default function CompanyBillsPage() {
     const trimmed = raw.trim();
     const current = doc.gst_amount == null ? "" : String(doc.gst_amount);
     if (trimmed === current) return;
-    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0)) {
-      toast.error({ title: "Invalid GST", description: "Enter a non-negative number." });
+    if (trimmed !== "" && (isNaN(Number(trimmed)) || Number(trimmed) < 0 || !/^\d+(\.\d{1,2})?$/.test(trimmed))) {
+      toast.error({ title: "Invalid GST", description: "Enter a non-negative number with at most two decimal places." });
       setGstDrafts((p) => ({ ...p, [doc.id]: current }));
       return;
     }
