@@ -158,8 +158,16 @@ export async function addMultipleItemsToFolder(
   if (jobItems.length > 0) {
     const { data: folderData } = await supabase.from(TABLE).select("folder_type").eq("id", folderId).single();
     if (folderData?.folder_type && folderData.folder_type !== "general") {
-      const { data: jobsData } = await supabase.from("jobs").select("id, job_type").in("id", jobItems.map((i) => i.id));
-      const invalid = (jobsData ?? []).find((j: { job_type: string }) => j.job_type !== folderData.folder_type);
+      const jobsData: { id: string; job_type: string }[] = [];
+      const ids = jobItems.map((i) => i.id);
+      for (let c = 0; c < ids.length; c += CHUNK_SIZE) {
+        const chunk = ids.slice(c, c + CHUNK_SIZE);
+        if (chunk.length === 0) continue;
+        const { data, error } = await supabase.from("jobs").select("id, job_type").in("id", chunk);
+        if (error) return { ok: false, error: error.message };
+        jobsData.push(...((data ?? []) as { id: string; job_type: string }[]));
+      }
+      const invalid = jobsData.find((j) => j.job_type !== folderData.folder_type);
       if (invalid) {
         return { ok: false, error: `Cannot add ${invalid.job_type} job to a ${folderData.folder_type} folder.` };
       }
@@ -168,14 +176,22 @@ export async function addMultipleItemsToFolder(
 
   const { data: existing } = await supabase
     .from(ITEMS_TABLE)
-    .select("position")
-    .eq("folder_id", folderId)
-    .order("position", { ascending: false })
-    .limit(1);
+    .select("position, item_type, item_id")
+    .eq("folder_id", folderId);
 
-  let nextPos = existing && existing.length > 0 ? existing[0].position + 1 : 0;
+  const existingPos = (existing ?? [])
+    .map((r) => r.position)
+    .reduce((max, p) => (typeof p === "number" && p > max ? p : max), -1);
+  let nextPos = existingPos >= 0 ? existingPos + 1 : 0;
 
-  const insertData = items.map((item) => {
+  // Remove already-linked items so we never create duplicate folder_items rows.
+  const linkedKeys = new Set((existing ?? []).map((r) => `${r.item_type}:${r.item_id}`));
+  const newItems = items.filter((item) => !linkedKeys.has(`${item.type}:${item.id}`));
+
+  // All supplied items are already linked: nothing to insert, still success.
+  if (newItems.length === 0) return { ok: true };
+
+  const insertData = newItems.map((item) => {
     const data = {
       folder_id: folderId,
       item_type: item.type,
