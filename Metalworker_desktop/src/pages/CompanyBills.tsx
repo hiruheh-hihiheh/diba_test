@@ -51,6 +51,8 @@ export default function CompanyBillsPage() {
   const confirm = useConfirm();
   const selection = useSelection();
 
+  const cancelInlineRef = useRef<Set<string>>(new Set());
+
   const [folders, setFolders] = useState<CompanyBillFolder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(true);
   const [foldersError, setFoldersError] = useState<string | null>(null);
@@ -353,6 +355,12 @@ export default function CompanyBillsPage() {
 
   async function handleSaveEdit() {
     if (!editDoc) return;
+    const validAmount = (v: unknown) =>
+      v == null || (typeof v === "number" && Number.isFinite(v) && v >= 0 && /^\\d+(\\.\\d{1,2})?$/.test(String(v)));
+    if (!validAmount(editForm.amount) || !validAmount(editForm.gst_amount)) {
+      toast.error({ title: "Invalid amount", description: "Amount and GST must be non-negative numbers with at most two decimal places." });
+      return;
+    }
     const patch: Partial<CompanyBillDocument> = {
       display_name: editForm.display_name ?? editDoc.display_name,
       supplier_name: editForm.supplier_name ?? null,
@@ -628,8 +636,16 @@ export default function CompanyBillsPage() {
                                 min="0"
                                 value={amountDrafts[doc.id] ?? ""}
                                 onChange={(e) => setAmountDrafts((p) => ({ ...p, [doc.id]: e.target.value }))}
-                                onBlur={(e) => saveAmount(doc, e.target.value)}
-                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setAmountDrafts((p) => ({ ...p, [doc.id]: doc.amount == null ? "" : String(doc.amount) })); (e.target as HTMLInputElement).blur(); } }}
+                                onBlur={(e) => {
+                                  const key = `${doc.id}:amount`;
+                                  if (cancelInlineRef.current.has(key)) {
+                                    cancelInlineRef.current.delete(key);
+                                    setAmountDrafts((p) => ({ ...p, [doc.id]: doc.amount == null ? "" : String(doc.amount) }));
+                                    return;
+                                  }
+                                  saveAmount(doc, e.target.value);
+                                }}
+                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { cancelInlineRef.current.add(`${doc.id}:amount`); setAmountDrafts((p) => ({ ...p, [doc.id]: doc.amount == null ? "" : String(doc.amount) })); (e.target as HTMLInputElement).blur(); } }}
                                 disabled={savingField?.id === doc.id && savingField.field === "amount"}
                                 className="w-24 px-2 py-1 rounded-lg bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                               />
@@ -641,8 +657,16 @@ export default function CompanyBillsPage() {
                                 min="0"
                                 value={gstDrafts[doc.id] ?? ""}
                                 onChange={(e) => setGstDrafts((p) => ({ ...p, [doc.id]: e.target.value }))}
-                                onBlur={(e) => saveGst(doc, e.target.value)}
-                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setGstDrafts((p) => ({ ...p, [doc.id]: doc.gst_amount == null ? "" : String(doc.gst_amount) })); (e.target as HTMLInputElement).blur(); } }}
+                                onBlur={(e) => {
+                                  const key = `${doc.id}:gst`;
+                                  if (cancelInlineRef.current.has(key)) {
+                                    cancelInlineRef.current.delete(key);
+                                    setGstDrafts((p) => ({ ...p, [doc.id]: doc.gst_amount == null ? "" : String(doc.gst_amount) }));
+                                    return;
+                                  }
+                                  saveGst(doc, e.target.value);
+                                }}
+                                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { cancelInlineRef.current.add(`${doc.id}:gst`); setGstDrafts((p) => ({ ...p, [doc.id]: doc.gst_amount == null ? "" : String(doc.gst_amount) })); (e.target as HTMLInputElement).blur(); } }}
                                 disabled={savingField?.id === doc.id && savingField.field === "gst"}
                                 className="w-24 px-2 py-1 rounded-lg bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                               />
@@ -783,10 +807,6 @@ export default function CompanyBillsPage() {
             <div>
               <label className="block text-xs font-semibold text-text-secondary mb-1.5">Bill date</label>
               <input type="date" value={editForm.bill_date ?? ""} onChange={(e) => setEditForm({ ...editForm, bill_date: e.target.value })} className="w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-text-secondary mb-1.5">Amount</label>
-              <input type="number" value={editForm.amount ?? ""} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value ? Number(e.target.value) : null })} className="w-full px-4 py-2.5 rounded-xl bg-bg border border-border text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-text-secondary mb-1.5">Amount</label>
