@@ -113,7 +113,10 @@ export async function deleteDrawingUploadDocument(id: string): Promise<{ ok: boo
   // cleanup storage
   let storageWarning: string | undefined;
   try {
-    await supabase.storage.from(BUCKET).remove([d.storage_path]);
+    const { error: removeError } = await supabase.storage.from(BUCKET).remove([d.storage_path]);
+    if (removeError) {
+      storageWarning = removeError.message || "Storage cleanup failed.";
+    }
   } catch (e) {
     storageWarning = e instanceof Error ? e.message : "Storage cleanup failed.";
   }

@@ -45,7 +45,7 @@ CREATE POLICY "drawing_upload_documents_admin_all" ON public.drawing_upload_docu
     WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('drawing-uploads', 'drawing-uploads', false, 52428800,
-    ARRAY['application/pdf','image/jpeg','image/jpg','image/png','image/webp','image/gif','image/bmp','image/tiff'])
+    ARRAY['image/jpeg','image/jpg','image/png','image/webp','image/gif','image/bmp','image/tiff','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/rtf','text/plain','application/vnd.oasis.opendocument.text','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/csv','application/vnd.oasis.opendocument.spreadsheet','application/vnd.ms-powerpoint','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/vnd.oasis.opendocument.presentation'])
 ON CONFLICT (id) DO UPDATE SET public = false, file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 DROP POLICY IF EXISTS "drawing_uploads_storage_read" ON storage.objects;
 DROP POLICY IF EXISTS "drawing_uploads_storage_write" ON storage.objects;
@@ -53,6 +53,10 @@ DROP POLICY IF EXISTS "drawing_uploads_storage_delete" ON storage.objects;
 CREATE POLICY "drawing_uploads_storage_read" ON storage.objects FOR SELECT TO authenticated
     USING (bucket_id = 'drawing-uploads' AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
 CREATE POLICY "drawing_uploads_storage_write" ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'drawing-uploads' AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
+DROP POLICY IF EXISTS "drawing_uploads_storage_update" ON storage.objects;
+CREATE POLICY "drawing_uploads_storage_update" ON storage.objects FOR UPDATE TO authenticated
+    USING (bucket_id = 'drawing-uploads' AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true))
     WITH CHECK (bucket_id = 'drawing-uploads' AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
 CREATE POLICY "drawing_uploads_storage_delete" ON storage.objects FOR DELETE TO authenticated
     USING (bucket_id = 'drawing-uploads' AND EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin' AND p.is_active = true));
