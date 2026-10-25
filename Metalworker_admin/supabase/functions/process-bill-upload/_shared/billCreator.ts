@@ -710,7 +710,10 @@ export function wordsAfterCopy(
   copiedTotal: number,
   sourceWords: string | null
 ): string | null | undefined {
-  if (sourceTotal === null || round2(sourceTotal) === round2(copiedTotal)) {
+  if (sourceTotal === null) {
+    return amountInWords(copiedTotal);
+  }
+  if (round2(sourceTotal) === round2(copiedTotal)) {
     return sourceWords === null ? undefined : sourceWords;
   }
   return amountInWords(copiedTotal);

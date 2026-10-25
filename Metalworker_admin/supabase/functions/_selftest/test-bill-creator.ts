@@ -446,7 +446,7 @@ section("D. Amount in words");
   check(moved !== words, "a copy whose money moved does not keep stale words");
   check(moved === amountInWords(1180), "and its words are regenerated from the new total", String(moved));
 
-  check(wordsAfterCopy(null, 1180, words) === words, "a source with no total keeps its words rather than guessing");
+  check(wordsAfterCopy(null, 1180, words) === amountInWords(1180), "a source with no total regenerates from the copied total instead of keeping stale words");
 
   /* The regenerated wording must agree with the figure the invoice actually shows. */
   check(
