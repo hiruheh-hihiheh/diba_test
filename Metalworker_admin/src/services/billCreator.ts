@@ -192,7 +192,7 @@ export interface CreatorRequest {
   useCurrentProfile?: boolean;
   values: CreatorFormValues;
   lines?: readonly CreatorLineDraft[];
-  amountInWords?: string;
+  amountInWords?: string | null;
   reverseChargeGst?: string | null;
   roundOff?: string | null;
   bank?: BankDetails | string[] | string | null;

@@ -1718,7 +1718,7 @@ section("Q. All reference bills copy cleanly");
 
 /* The amount in words is a three-case contract, and the form must not collapse it. */
 {
-  check(creatorFormAdmin.amountInWordsForPatch("SAYING", false) === undefined, "an untouched words field sends nothing");
+  check(creatorFormAdmin.amountInWordsForPatch("SAYING", false) === null, "an untouched words field asks for regeneration");
   check(creatorFormAdmin.amountInWordsForPatch("SAYING", true) === "SAYING", "an edited one sends exactly what was typed");
   check(creatorFormAdmin.amountInWordsForPatch("", true) === "", "and a cleared one asks for regeneration");
 

@@ -444,9 +444,10 @@ export default function BillEditModal({
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!draft || !bill || wordsManual) return;
+      if (draft.regenerateWords) return;
       if (totals?.amountAfterTax == null || bill.amount_after_tax == null) return;
       if (totals.amountAfterTax !== bill.amount_after_tax) {
-        setDraft((p) => (p ? { ...p, regenerateWords: true } : p));
+        setDraft((p) => (p && !p.regenerateWords ? { ...p, regenerateWords: true } : p));
       }
     }, 0);
     return () => clearTimeout(timer);
@@ -480,6 +481,7 @@ export default function BillEditModal({
       if (!wordsManual && result.amount_in_words) {
         setDraft((p) => (p ? { ...p, amountInWords: result.amount_in_words ?? p.amountInWords, regenerateWords: false } : p));
       }
+      setBill((prev) => (prev ? { ...prev, amount_after_tax: result.amount_after_tax ?? prev.amount_after_tax, amount_in_words: result.amount_in_words ?? prev.amount_in_words } : prev));
       onSaved(billId, result.pdf_version);
       onClose();
     } catch (err) {

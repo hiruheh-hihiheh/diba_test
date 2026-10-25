@@ -345,13 +345,14 @@ export function BillEditScreen({
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!draft || !bill || wordsManual) return;
+      if (draft.regenerateWords) return;
       if (totals?.amountAfterTax == null || bill.amount_after_tax == null) return;
       if (totals.amountAfterTax !== bill.amount_after_tax) {
-        setDraft((p) => (p ? { ...p, regenerateWords: true } : p));
+        setDraft((p) => (p && !p.regenerateWords ? { ...p, regenerateWords: true } : p));
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [totals?.amountAfterTax, bill?.amount_after_tax, wordsManual]);
+  }, [totals?.amountAfterTax, bill?.amount_after_tax, wordsManual, bill, draft]);
 
   const dirty = useMemo(
     () => !!draft && !!initial && JSON.stringify(draft) !== JSON.stringify(initial),
@@ -429,6 +430,10 @@ export function BillEditScreen({
       const result = await updateBill(billId, toPatch(draft), (next) =>
         setStage(next === "done" ? "generating" : next)
       );
+      if (!wordsManual && result.amount_in_words) {
+        setDraft((p) => (p ? { ...p, amountInWords: result.amount_in_words ?? p.amountInWords, regenerateWords: false } : p));
+      }
+      setBill((prev) => (prev ? { ...prev, amount_after_tax: result.amount_after_tax ?? prev.amount_after_tax, amount_in_words: result.amount_in_words ?? prev.amount_in_words } : prev));
       notify(
         "Bill saved",
         `${draft.invoiceNo || "This bill"} and its three PDFs were regenerated (version ${result.pdf_version}).`

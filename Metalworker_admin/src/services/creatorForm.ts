@@ -552,8 +552,8 @@ const RATE_FIELDS: readonly string[] = ["cgst_rate", "sgst_rate", "igst_rate"];
 export interface BuildPatchOptions {
   values: CreatorFormValues;
   lines?: readonly CreatorLineDraft[];
-  /** Omitted to leave the stored words alone; `""` to regenerate. */
-  amountInWords?: string;
+  /** Omitted to leave the stored words alone; `null` to regenerate; a string to keep. */
+  amountInWords?: string | null;
   /** Omitted to leave the stored rates alone. */
   reverseChargeGst?: string | null;
   roundOff?: string | null;
@@ -588,7 +588,11 @@ export function buildPatch(options: BuildPatchOptions): Record<string, unknown> 
   }
   if (options.amountInWords !== undefined) {
     patch.amount_in_words =
-      options.amountInWords.trim() === "" ? null : options.amountInWords.trim();
+      options.amountInWords === null
+        ? null
+        : options.amountInWords.trim() === ""
+          ? null
+          : options.amountInWords.trim();
   }
   if (options.lines !== undefined) {
     patch.line_items = linesToPatch(options.lines);
@@ -809,8 +813,8 @@ export interface CreatorSeed {
  * invoice a customer can reject would be introduced by the form that was meant to prevent
  * it.
  */
-export function amountInWordsForPatch(text: string, touched: boolean): string | undefined {
-  return touched ? text : undefined;
+export function amountInWordsForPatch(text: string, touched: boolean): string | null {
+  return touched ? text : null;
 }
 
 /**
