@@ -151,6 +151,7 @@ export function BillEditScreen({
   const [bill, setBill] = useState<Bill | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [stage, setStage] = useState<"idle" | "saving" | "generating">("idle");
+  const [wordsManual, setWordsManual] = useState(false);
   /** The draft as loaded, kept so "has anything changed" can be answered from state.
      * State rather than a ref because the comparison happens during render, and a ref
      * read during render is not something React can track. */
@@ -243,7 +244,7 @@ export function BillEditScreen({
     try {
       const loaded = await fetchDraft();
       setInitial(loaded);
-      setDraft(loaded);
+      setDraft(loaded); setWordsManual(false);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "This bill could not be opened.");
     } finally {
@@ -263,7 +264,7 @@ export function BillEditScreen({
         const loaded = await fetchDraft();
         if (cancelled) return;
         setInitial(loaded);
-        setDraft(loaded);
+        setDraft(loaded); setWordsManual(false);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : "This bill could not be opened.");
@@ -340,6 +341,17 @@ export function BillEditScreen({
       charged: { cgst: bill.cgst, sgst: bill.sgst, igst: bill.igst },
     });
   }, [draft, bill]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!draft || !bill || wordsManual) return;
+      if (totals?.amountAfterTax == null || bill.amount_after_tax == null) return;
+      if (totals.amountAfterTax !== bill.amount_after_tax) {
+        setDraft((p) => (p ? { ...p, regenerateWords: true } : p));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [totals?.amountAfterTax, bill?.amount_after_tax, wordsManual]);
 
   const dirty = useMemo(
     () => !!draft && !!initial && JSON.stringify(draft) !== JSON.stringify(initial),
@@ -669,14 +681,19 @@ export function BillEditScreen({
                 label="Total invoice amount in words"
                 styles={styles}
                 value={draft.regenerateWords ? "" : draft.amountInWords}
-                onChange={(v) => setDraft((p) => (p ? { ...p, amountInWords: v, regenerateWords: false } : p))}
+                onChange={(v) => { setWordsManual(true); setDraft((p) => (p ? { ...p, amountInWords: v, regenerateWords: false } : p)); }}
                 editable={!saving && !draft.regenerateWords}
                 placeholder={draft.regenerateWords ? "Rebuilt from the total on save" : undefined}
                 multiline
                 rows={2}
               />
               <Pressable
-                onPress={() => set("regenerateWords", !draft.regenerateWords)}
+                onPress={() => {
+                  const next = !draft.regenerateWords;
+                  if (next) setWordsManual(false);
+                  else setWordsManual(true);
+                  set("regenerateWords", next);
+                }}
                 disabled={saving}
                 accessibilityRole="switch"
                 accessibilityState={{ checked: draft.regenerateWords }}

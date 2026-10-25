@@ -554,8 +554,11 @@ function CreatorForm({
         amount_after_tax: result.amount_after_tax,
       }));
       setServerWords(result.amount_in_words);
+      if (!wordsTouched && result.amount_in_words) {
+        setAmountInWords(result.amount_in_words);
+      }
     },
-    []
+    [wordsTouched]
   );
 
   const save = useCallback(

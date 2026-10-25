@@ -307,6 +307,7 @@ export default function BillEditModal({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [bill, setBill] = useState<Bill | null>(null);
+  const [wordsManual, setWordsManual] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [stage, setStage] = useState<"idle" | "saving" | "generating" | "done">("idle");
   /** The draft as loaded, kept for the "has anything changed" comparison.
@@ -338,7 +339,7 @@ export default function BillEditModal({
     try {
       const loaded = await fetchDraft();
       setInitial(loaded);
-      setDraft(loaded);
+      setDraft(loaded); setWordsManual(false);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "This bill could not be opened.");
     } finally {
@@ -358,7 +359,7 @@ export default function BillEditModal({
         const loaded = await fetchDraft();
         if (cancelled) return;
         setInitial(loaded);
-        setDraft(loaded);
+        setDraft(loaded); setWordsManual(false);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : "This bill could not be opened.");
@@ -440,6 +441,17 @@ export default function BillEditModal({
     });
   }, [draft, bill]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!draft || !bill || wordsManual) return;
+      if (totals?.amountAfterTax == null || bill.amount_after_tax == null) return;
+      if (totals.amountAfterTax !== bill.amount_after_tax) {
+        setDraft((p) => (p ? { ...p, regenerateWords: true } : p));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [totals?.amountAfterTax, bill?.amount_after_tax, wordsManual, bill, draft]);
+
   /* Whether anything has actually changed.
      Compared against the draft as it was LOADED, rather than against a freshly
      rebuilt one, because a rebuild cannot reproduce the line items and would report
@@ -465,6 +477,9 @@ export default function BillEditModal({
           draft.invoiceNo || "this bill"
         } and its three PDFs were regenerated (version ${result.pdf_version}).`,
       });
+      if (!wordsManual && result.amount_in_words) {
+        setDraft((p) => (p ? { ...p, amountInWords: result.amount_in_words ?? p.amountInWords, regenerateWords: false } : p));
+      }
       onSaved(billId, result.pdf_version);
       onClose();
     } catch (err) {
@@ -817,19 +832,26 @@ export default function BillEditModal({
             </Field>
             <Field label="Total invoice amount in words">
               <div className="flex items-center gap-2">
-                <TextInput
+                <TextArea
                   value={draft.regenerateWords ? "" : draft.amountInWords}
                   onChange={(v) => {
+                    setWordsManual(true);
                     setDraft((p) => (p ? { ...p, amountInWords: v, regenerateWords: false } : p));
                   }}
                   disabled={saving || draft.regenerateWords}
                   placeholder={draft.regenerateWords ? "Rebuilt from the total on save" : undefined}
+                  rows={3}
                 />
                 <button
                   type="button"
                   title="Rebuild the words from the new total on save"
                   disabled={saving}
-                  onClick={() => set("regenerateWords", !draft.regenerateWords)}
+                  onClick={() => {
+                    const next = !draft.regenerateWords;
+                    if (next) setWordsManual(false);
+                    else setWordsManual(true);
+                    set("regenerateWords", next);
+                  }}
                   className={`inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0 ${
                     draft.regenerateWords
                       ? "border-primary bg-primary text-[var(--theme-primary-text)]"

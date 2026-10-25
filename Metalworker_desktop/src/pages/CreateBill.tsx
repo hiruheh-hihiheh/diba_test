@@ -653,7 +653,12 @@ function CreatorForm({
       amount_after_tax: result.amount_after_tax,
     });
     setServerWords(result.amount_in_words);
-  }, []);
+    // When the user has not manually overridden the wording, reflect the
+    // server-generated words in the controlled input.
+    if (!wordsTouched && result.amount_in_words) {
+      setAmountInWords(result.amount_in_words);
+    }
+  }, [wordsTouched]);
 
   const save = useCallback(
     async (options: { silent?: boolean } = {}) => {
