@@ -81,7 +81,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
-import { billFromRecord, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
+import { billFromRecord, amountInWords, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
 import {
   safeBillToken,
   COPY_LABEL,
@@ -346,10 +346,15 @@ Deno.serve(async (req) => {
     amount_after_tax: Number(values.amount_after_tax ?? 0),
   };
 
-  /* A copy's amount in words: keep the source's own wording when the money did not
-     move, and regenerate it when it did, so the words and the figures can never
-     disagree on the printed document. */
-  if (created && sourceBillId !== "") {
+  /* A copy's amount in words.
+
+     `null` in the request means "automatic": keep the source's own wording when the
+     money did not move, regenerate it when it did, and fall back to the canonical
+     generator when the source has no wording. An explicitly typed string is a manual
+     override and is left untouched. This runs on every save, not only the first, so
+     autosaves and later edits keep the words consistent with the total. */
+  const manualWords = typeof patch.amount_in_words === "string";
+  if (!manualWords && sourceBillId !== "") {
     const { data: source } = await admin
       .from(TABLE)
       .select("amount_after_tax, amount_in_words")
@@ -361,8 +366,17 @@ Deno.serve(async (req) => {
         Number(values.amount_after_tax ?? 0),
         (source as Record<string, unknown>).amount_in_words as string | null
       );
-      if (resolved !== undefined) values.amount_in_words = resolved;
+      if (resolved === undefined) {
+        values.amount_in_words = amountInWords(Number(values.amount_after_tax ?? 0));
+      } else {
+        values.amount_in_words = resolved;
+      }
+    } else {
+      values.amount_in_words = amountInWords(Number(values.amount_after_tax ?? 0));
     }
+  } else if (patch.amount_in_words === null && sourceBillId === "") {
+    /* New bill in automatic mode: generate from the final total. */
+    values.amount_in_words = amountInWords(Number(values.amount_after_tax ?? 0));
   }
 
   /* ---- the write ----------------------------------------------------------- */
