@@ -52,6 +52,7 @@ import {
   type BillJobGroup,
   formatQuantity,
 } from "../services/bills";
+import { regenerateAllBillPdfs } from "../services/regenerateBillPdfs";
 import {
   BULK_ZIP_LIMITS,
   buildBulkZip,
@@ -168,6 +169,8 @@ export default function BillsPage() {
   const [facets, setFacets] = useState<BillJobFacet[]>([]);
 
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenProgress, setRegenProgress] = useState<string>("");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLButtonElement>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -1000,6 +1003,15 @@ export default function BillsPage() {
             <UploadCloud size={17} />
             Upload workbook
           </button>
+
+          <button type="button" disabled={regenerating} title="Regenerate all stored invoice PDFs using the current PDF renderer. Existing invoice data will not be re-imported." onClick={async () => {
+            if (!window.confirm("Regenerate all stored invoice PDFs using the current renderer? Existing bill data will not change.")) return;
+            setRegenerating(true); setRegenProgress("Starting…");
+            try { const r = await regenerateAllBillPdfs((p) => setRegenProgress(`${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`)); setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`); await load(true); }
+            catch (e) { setRegenProgress(e instanceof Error ? e.message : "Failed"); }
+            finally { setRegenerating(false); }
+          }} className="btn btn-secondary">{regenerating ? "Regenerating…" : "Regenerate All PDFs"}</button>
+          {regenProgress ? <span className="text-sm text-slate-500">{regenProgress}</span> : null}
 
           {/* A bill does not have to come from a workbook. This sits NEXT TO the upload
               button rather than replacing it, because both are how a bill starts and

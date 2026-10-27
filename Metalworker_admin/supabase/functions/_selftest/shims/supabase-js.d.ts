@@ -23,6 +23,10 @@ declare module "npm:@supabase/supabase-js@2" {
     upsert(values: unknown): QueryBuilder;
     eq(column: string, value: unknown): QueryBuilder;
     neq(column: string, value: unknown): QueryBuilder;
+    gt(column: string, value: unknown): QueryBuilder;
+    gte(column: string, value: unknown): QueryBuilder;
+    lt(column: string, value: unknown): QueryBuilder;
+    lte(column: string, value: unknown): QueryBuilder;
     in(column: string, values: readonly unknown[]): QueryBuilder;
     is(column: string, value: unknown): QueryBuilder;
     order(column: string, opts?: { ascending?: boolean }): QueryBuilder;

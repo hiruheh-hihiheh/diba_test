@@ -56,6 +56,7 @@ import {
   describeBillLogo,
   fetchLogosByIds,
 } from "../services/invoiceLogos";
+import { regenerateAllBillPdfs } from "../services/regenerateBillPdfs";
 import { BillingFolderSheet } from "../components/bills/BillingFolderSheet";
 import { BulkOperationOverlay, type BulkOperation } from "../components/bills/BulkOperationOverlay";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -148,6 +149,8 @@ const [createOpen, setCreateOpen] = useState(false);
   const [allMatchingIds, setAllMatchingIds] = useState<string[] | null>(null);
   const [selectingAll, setSelectingAll] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenProgress, setRegenProgress] = useState("");
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
@@ -845,7 +848,32 @@ const [createOpen, setCreateOpen] = useState(false);
             onPress={() => setUploadOpen(true)}
             style={styles.actionBarBtn}
           />
+          <Button
+            title={regenerating ? "Regenerating…" : "Regenerate All PDFs"}
+            icon="refresh"
+            variant="secondary"
+            disabled={regenerating}
+            onPress={async () => {
+              setRegenerating(true);
+              setRegenProgress("Starting…");
+              try {
+                const r = await regenerateAllBillPdfs((p) => {
+                  setRegenProgress(
+                    `${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`
+                  );
+                });
+                setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`);
+                await load(true);
+              } catch (e) {
+                setRegenProgress(e instanceof Error ? e.message : "Failed");
+              } finally {
+                setRegenerating(false);
+              }
+            }}
+            style={styles.actionBarBtn}
+          />
         </View>
+        {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
 
         {/* Job-type grouping.
             One workbook legitimately contains both kinds, so this is a filter on
