@@ -132,13 +132,15 @@ Deno.serve(async (req) => {
       if (cursorRaw && !cursorRaw.startsWith("{")) q = q.gt("id", cursorRaw);
       const { data, error: billsErr } = await q;
       if (billsErr) {
-        await admin.from("bill_pdf_regeneration_jobs").update({ last_error: billsErr.message, updated_at: new Date().toISOString() }).eq("id", jobId);
+        const { error: _cpErr1 } = await admin.from("bill_pdf_regeneration_jobs").update({ last_error: billsErr.message, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr1) { console.warn("checkpoint failed", _cpErr1.message); return json({ ok: false, error: _cpErr1.message }, 500); }
         return json({ ok: false, error: billsErr.message }, 500);
       }
       const rows = (data ?? []) as Record<string, unknown>[];
       if (rows.length === 0) {
         // move to aggregates
-        await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+        const { error: _cpErr2 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr2) { console.warn("checkpoint failed", _cpErr2.message); return json({ ok: false, error: _cpErr2.message }, 500); }
         return json({ ok: true, job_id: jobId, phase: "bills", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: null, more: true, counters });
       }
       billRow = rows[0];
@@ -146,7 +148,8 @@ Deno.serve(async (req) => {
     }
 
     if (!billRow) {
-      await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+      const { error: _cpErr3 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr3) { console.warn("checkpoint failed", _cpErr3.message); return json({ ok: false, error: _cpErr3.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: null, more: true, counters });
     }
 
@@ -174,13 +177,14 @@ Deno.serve(async (req) => {
         const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
         const nextPhase = nextId ? "bills" : "aggregates";
         const nextCursor = nextId ? nextId : null;
-        await admin.from("bill_pdf_regeneration_jobs").update({
+        const { error: _cpErr4 } = await admin.from("bill_pdf_regeneration_jobs").update({
           phase: nextPhase,
           cursor: nextCursor,
           bills_processed: counters.bills_processed,
           bills_failed: counters.bills_failed,
           updated_at: new Date().toISOString(),
         }).eq("id", jobId);
+    if (_cpErr4) { console.warn("checkpoint failed", _cpErr4.message); return json({ ok: false, error: _cpErr4.message }, 500); }
         return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "logo_unreadable" }], next_cursor: nextCursor, more: true, counters });
       }
     }
@@ -197,7 +201,8 @@ Deno.serve(async (req) => {
       const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
-      await admin.from("bill_pdf_regeneration_jobs").update({ phase: nextPhase, cursor: nextCursor, bills_processed: counters.bills_processed, bills_failed: counters.bills_failed, updated_at: new Date().toISOString() }).eq("id", jobId);
+      const { error: _cpErr5 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: nextPhase, cursor: nextCursor, bills_processed: counters.bills_processed, bills_failed: counters.bills_failed, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr5) { console.warn("checkpoint failed", _cpErr5.message); return json({ ok: false, error: _cpErr5.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "line_items_unreadable" }], next_cursor: nextCursor, more: true, counters });
     }
     const items: BillLineItem[] = ((itemRows ?? []) as Record<string, unknown>[]).map((r) => ({
@@ -235,13 +240,14 @@ Deno.serve(async (req) => {
       const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
-      await admin.from("bill_pdf_regeneration_jobs").update({
+      const { error: _cpErr6 } = await admin.from("bill_pdf_regeneration_jobs").update({
         phase: nextPhase,
         cursor: nextCursor,
         bills_processed: counters.bills_processed,
         bills_failed: counters.bills_failed,
         updated_at: new Date().toISOString(),
       }).eq("id", jobId);
+    if (_cpErr6) { console.warn("checkpoint failed", _cpErr6.message); return json({ ok: false, error: _cpErr6.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "pdf_failed" }], next_cursor: nextCursor, more: true, counters });
     }
 
@@ -256,13 +262,14 @@ Deno.serve(async (req) => {
       const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
-      await admin.from("bill_pdf_regeneration_jobs").update({
+      const { error: _cpErr7 } = await admin.from("bill_pdf_regeneration_jobs").update({
         phase: nextPhase,
         cursor: nextCursor,
         bills_processed: counters.bills_processed,
         bills_failed: counters.bills_failed,
         updated_at: new Date().toISOString(),
       }).eq("id", jobId);
+    if (_cpErr7) { console.warn("checkpoint failed", _cpErr7.message); return json({ ok: false, error: _cpErr7.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "storage_failed" }], next_cursor: nextCursor, more: true, counters });
     }
 
@@ -289,13 +296,14 @@ Deno.serve(async (req) => {
         const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
         const nextCursor = nextId ? nextId : null;
         const nextPhase = nextId ? "bills" : "aggregates";
-        await admin.from("bill_pdf_regeneration_jobs").update({
+        const { error: _cpErr8 } = await admin.from("bill_pdf_regeneration_jobs").update({
           phase: nextPhase,
           cursor: nextCursor,
           bills_processed: counters.bills_processed,
           bills_failed: counters.bills_failed,
           updated_at: new Date().toISOString(),
         }).eq("id", jobId);
+    if (_cpErr8) { console.warn("checkpoint failed", _cpErr8.message); return json({ ok: false, error: _cpErr8.message }, 500); }
         return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "save_failed" }], next_cursor: nextCursor, more: true, counters });
       }
       // cleanup superseded
@@ -314,13 +322,14 @@ Deno.serve(async (req) => {
       const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
-      await admin.from("bill_pdf_regeneration_jobs").update({
+      const { error: _cpErr9 } = await admin.from("bill_pdf_regeneration_jobs").update({
         phase: nextPhase,
         cursor: nextCursor,
         bills_processed: counters.bills_processed,
         bills_succeeded: counters.bills_succeeded,
         updated_at: new Date().toISOString(),
       }).eq("id", jobId);
+    if (_cpErr9) { console.warn("checkpoint failed", _cpErr9.message); return json({ ok: false, error: _cpErr9.message }, 500); }
 
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 1, failed: 0, failures: [], next_cursor: nextCursor, more: true, counters });
     }
@@ -328,10 +337,11 @@ Deno.serve(async (req) => {
     // not all done: save state
     const nextCopy = copy === "original" ? "duplicate" : copy === "duplicate" ? "triplicate" : "triplicate";
     const stateJson = JSON.stringify({ bill_id: billId, copy: nextCopy, completed, profile: state?.profile ?? billProfile.profile, snapshot: state?.snapshot ?? billProfile.snapshot });
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr10 } = await admin.from("bill_pdf_regeneration_jobs").update({
       cursor: stateJson,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr10) { console.warn("checkpoint failed", _cpErr10.message); return json({ ok: false, error: _cpErr10.message }, 500); }
 
     return json({ ok: true, job_id: jobId, phase: "bills", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: stateJson, more: true, counters });
   }
@@ -358,7 +368,8 @@ Deno.serve(async (req) => {
     const { data } = await q;
     const rows = (data ?? []) as Record<string, unknown>[];
     if (rows.length === 0) {
-      await admin.from("bill_pdf_regeneration_jobs").update({ status: "completed", phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+      const { error: _cpErr11 } = await admin.from("bill_pdf_regeneration_jobs").update({ status: "completed", phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr11) { console.warn("checkpoint failed", _cpErr11.message); return json({ ok: false, error: _cpErr11.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: null, more: false, counters });
     }
     uploadRow = rows[0];
@@ -366,7 +377,8 @@ Deno.serve(async (req) => {
   }
 
   if (!uploadRow || !aggState) {
-    await admin.from("bill_pdf_regeneration_jobs").update({ status: "completed", phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const { error: _cpErr12 } = await admin.from("bill_pdf_regeneration_jobs").update({ status: "completed", phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr12) { console.warn("checkpoint failed", _cpErr12.message); return json({ ok: false, error: _cpErr12.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: null, more: false, counters });
   }
 
@@ -382,7 +394,8 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const { error: _cpErr13 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr13) { console.warn("checkpoint failed", _cpErr13.message); return json({ ok: false, error: _cpErr13.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "bills_unreadable" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
   const billRows = (bills ?? []) as Record<string, unknown>[];
@@ -396,7 +409,8 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const { error: _cpErr14 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr14) { console.warn("checkpoint failed", _cpErr14.message); return json({ ok: false, error: _cpErr14.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "aggregate_too_large_for_edge_function" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
   if (billRows.length === 0 || billRows.some((r) => r.sheet_order === null || r.sheet_order === undefined)) {
@@ -409,7 +423,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr15 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -417,6 +431,7 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr15) { console.warn("checkpoint failed", _cpErr15.message); return json({ ok: false, error: _cpErr15.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: billRows.length === 0 ? "no_finalized_bills" : "order_not_recoverable" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
@@ -438,7 +453,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr16 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -446,6 +461,7 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr16) { console.warn("checkpoint failed", _cpErr16.message); return json({ ok: false, error: _cpErr16.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
   } else {
     const uploaded = Object.values(completed);
@@ -456,7 +472,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr17 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -464,6 +480,7 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr17) { console.warn("checkpoint failed", _cpErr17.message); return json({ ok: false, error: _cpErr17.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
@@ -490,7 +507,8 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const { error: _cpErr18 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr18) { console.warn("checkpoint failed", _cpErr18.message); return json({ ok: false, error: _cpErr18.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "line_items_unreadable" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
   const itemsByBill = new Map<string, BillLineItem[]>();
@@ -534,7 +552,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr19 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -542,6 +560,7 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr19) { console.warn("checkpoint failed", _cpErr19.message); return json({ ok: false, error: _cpErr19.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "render_failed" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
@@ -556,7 +575,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr20 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -564,6 +583,7 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr20) { console.warn("checkpoint failed", _cpErr20.message); return json({ ok: false, error: _cpErr20.message }, 500); }
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "storage_failed" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
@@ -586,7 +606,7 @@ Deno.serve(async (req) => {
       const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextStatus = nextId ? "running" : "completed";
-      await admin.from("bill_pdf_regeneration_jobs").update({
+      const { error: _cpErr21 } = await admin.from("bill_pdf_regeneration_jobs").update({
         phase: "aggregates",
         cursor: nextCursor,
         aggregates_processed: counters.aggregates_processed,
@@ -594,6 +614,7 @@ Deno.serve(async (req) => {
         status: nextStatus,
         updated_at: new Date().toISOString(),
       }).eq("id", jobId);
+    if (_cpErr21) { console.warn("checkpoint failed", _cpErr21.message); return json({ ok: false, error: _cpErr21.message }, 500); }
       return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: upRowErr.message }], next_cursor: nextCursor, more: nextId !== null, counters });
     }
 
@@ -612,7 +633,7 @@ Deno.serve(async (req) => {
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
-    await admin.from("bill_pdf_regeneration_jobs").update({
+    const { error: _cpErr22 } = await admin.from("bill_pdf_regeneration_jobs").update({
       phase: "aggregates",
       cursor: nextCursor,
       aggregates_processed: counters.aggregates_processed,
@@ -620,16 +641,18 @@ Deno.serve(async (req) => {
       status: nextStatus,
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
+    if (_cpErr22) { console.warn("checkpoint failed", _cpErr22.message); return json({ ok: false, error: _cpErr22.message }, 500); }
 
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 1, failed: 0, failures: [], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
   const nextCopy = copy === "original" ? "duplicate" : copy === "duplicate" ? "triplicate" : "triplicate";
   const stateJson = JSON.stringify({ upload_id: uploadId, copy: nextCopy, completed, profile: aggState?.profile ?? aggBillProfile.profile, snapshot: aggState?.snapshot ?? aggBillProfile.snapshot });
-  await admin.from("bill_pdf_regeneration_jobs").update({
+  const { error: _cpErr23 } = await admin.from("bill_pdf_regeneration_jobs").update({
     cursor: stateJson,
     updated_at: new Date().toISOString(),
   }).eq("id", jobId);
+    if (_cpErr23) { console.warn("checkpoint failed", _cpErr23.message); return json({ ok: false, error: _cpErr23.message }, 500); }
 
   return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: stateJson, more: true, counters });
 });
