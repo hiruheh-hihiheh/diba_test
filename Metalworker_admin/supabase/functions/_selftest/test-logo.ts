@@ -371,9 +371,9 @@ console.log("\nno-logo renders carry nothing image-shaped");
    changes that necessarily move every no-logo invoice, so the digests below are
    the render as it stands after them. */
 const NO_LOGO_DIGESTS: Record<CopyKind, string> = {
-  original: "75d23e49ac438293838714084f1a30f1ab549baaa80244621df7d7c8f77a84b4",
-  duplicate: "1b0ba07281a76b191b2ee29f9432c82843a2626edb6ef4f4b3f822a8a6879dd7",
-  triplicate: "0de309533dddbf4f50d4dee1a616fef478f85043329d100b75a5f8d1fc1cb4bb",
+  original: "a1a81fd58147215fd313d9f7733a4c0252300769e363e5150700ef77e2b2b7ee",
+  duplicate: "247c45260734c12efa840e466a7e40c05f8c3b44b851b789e8e184a64b71f716",
+  triplicate: "d58ad4e25495ec1334222666a7371f486dd7464344a60301676aad43e95084db",
 };
 
 console.log("\nno-logo renders are byte-identical to the pinned documents");

@@ -932,13 +932,13 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   const rcptFoot = top + rcptH + extra;
 
   /* ---- right column: the document reference grid ------------------------- */
-  sheet.page.rect(PARTIES_GRID_X, top, PARTIES_GRID_W, gridH, { lineWidth: 1.5, stroke: true });
+  sheet.page.rect(PARTIES_GRID_X, top, PARTIES_GRID_W, gridH, { lineWidth: 0.6, stroke: true });
   for (let k = 1; k < slots; k++) {
     const y = top + k * PARTIES_ROW_H;
-    sheet.page.line(PARTIES_GRID_X, y, PARTIES_GRID_X + PARTIES_GRID_W, y, 0.75);
+    sheet.page.line(PARTIES_GRID_X, y, PARTIES_GRID_X + PARTIES_GRID_W, y, 0.4);
   }
-  sheet.page.line(PARTIES_DIV_LABEL, top, PARTIES_DIV_LABEL, top + gridH, 0.75);
-  sheet.page.line(PARTIES_DIV_DATE, top, PARTIES_DIV_DATE, top + gridH, 0.75);
+  sheet.page.line(PARTIES_DIV_LABEL, top, PARTIES_DIV_LABEL, top + gridH, 0.4);
+  sheet.page.line(PARTIES_DIV_DATE, top, PARTIES_DIV_DATE, top + gridH, 0.4);
 
   /* Every row shares ONE baseline (the label's), which is at most 1pt from the
      value's own bbox-derived baseline in the reference; text() ignores an empty
@@ -975,11 +975,11 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   /* ---- transport, directly under the grid -------------------------------- */
   if (bill.transporterMode !== null || bill.vehicleNumber !== null) {
     sheet.page.rect(PARTIES_GRID_X + 0.09, transportTop, PARTIES_GRID_W + 0.63, TRANSPORT_H, {
-      lineWidth: 1.5,
+      lineWidth: 0.5,
       stroke: true,
     });
-    sheet.page.line(TRANSPORT_DIV1, transportTop, TRANSPORT_DIV1, transportTop + TRANSPORT_H, 0.75);
-    sheet.page.line(TRANSPORT_DIV2, transportTop, TRANSPORT_DIV2, transportTop + TRANSPORT_H, 0.75);
+    sheet.page.line(TRANSPORT_DIV1, transportTop, TRANSPORT_DIV1, transportTop + TRANSPORT_H, 0.4);
+    sheet.page.line(TRANSPORT_DIV2, transportTop, TRANSPORT_DIV2, transportTop + TRANSPORT_H, 0.4);
     const base = transportTop + TRANSPORT_BASE;
     const modeLabel = "Mode of  Transport:";
     sheet.page.text(modeLabel, PARTIES_LABEL_X, base, { font: "bold", size: PARTIES_LABEL_SIZE });
