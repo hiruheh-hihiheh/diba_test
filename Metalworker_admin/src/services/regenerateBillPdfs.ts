@@ -20,7 +20,6 @@ export async function regenerateAllBillPdfs(
   let jobId: string | null = null;
   let more = true;
   while (more) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res: any = await supabase.functions.invoke("regenerate-bill-pdfs", {
       body: { job_id: jobId, limit: 25 },
     });
@@ -51,7 +50,6 @@ export async function regenerateAllBillPdfs(
   more = true;
   let aggSucceeded = 0;
   while (more) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res: any = await supabase.functions.invoke("regenerate-bill-pdfs", {
       body: { job_id: jobId, limit: 25 },
     });
