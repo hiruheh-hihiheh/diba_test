@@ -152,8 +152,6 @@ const [createOpen, setCreateOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [regenProgress, setRegenProgress] = useState("");
-  const [regenerating, setRegenerating] = useState(false);
-  const [regenProgress, setRegenProgress] = useState("");
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
