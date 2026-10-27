@@ -884,33 +884,7 @@ const [createOpen, setCreateOpen] = useState(false);
               )
             }
           />
-          <Button
-            title={regenerating ? "Regenerating…" : "Regenerate All PDFs"}
-            icon="refresh"
-            variant="secondary"
-            disabled={regenerating}
-            onPress={async () => {
-              setRegenerating(true);
-              setRegenProgress("Starting…");
-              try {
-                const r = await regenerateAllBillPdfs((p) => {
-                  setRegenProgress(
-                    `${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`
-                  );
-                });
-                setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`);
-                await load(true);
-              } catch (e) {
-                setRegenProgress(e instanceof Error ? e.message : "Failed");
-              } finally {
-                setRegenerating(false);
-              }
-            }}
-            style={styles.actionBarBtn}
-          />
         </View>
-        {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
-
         {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
 
         {/* Job-type grouping.

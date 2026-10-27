@@ -331,6 +331,7 @@ Deno.serve(async (req) => {
   let succeeded = 0;
   const failures: Failure[] = [];
   const cleanupWarnings: string[] = [];
+  const aggregateResults: { upload_id: string; profile_source: "snapshot" | "current_profile" }[] = [];
   for (const upload of uploadRows) {
     const uploadId = upload.id as string;
     const { data: bills, error: bErr } = await admin
@@ -460,6 +461,7 @@ Deno.serve(async (req) => {
     }
 
     // Update snapshot? Not stored on upload; skip.
+    aggregateResults.push({ upload_id: uploadId, profile_source: chosenSnapshot === null ? "current_profile" : "snapshot" });
     succeeded++;
   }
 
@@ -505,6 +507,7 @@ Deno.serve(async (req) => {
     failed: failures.length,
     failures,
     cleanup_warnings: cleanupWarnings,
+    aggregate_results: aggregateResults,
     next_cursor: newCursor,
     more,
     counters,
