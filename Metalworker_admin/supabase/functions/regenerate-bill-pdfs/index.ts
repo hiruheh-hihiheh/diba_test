@@ -5,7 +5,7 @@ import { billFromRecord, type BillRecord } from "../process-bill-upload/_shared/
 import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
 import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
-import { profileForBill, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
+import { profileForBill, profileFromRow, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
 
 const BUCKET = "bills";
 
@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
   };
 
   if (phase === "bills") {
-    let state: { bill_id: string; copy: string; completed: Record<string, string> } | null = null;
+    let state: { bill_id: string; copy: string; completed: Record<string, string>; profile?: BusinessProfile; snapshot?: unknown } | null = null;
     let billRow: Record<string, unknown> | null = null;
 
     if (cursorRaw && cursorRaw.startsWith("{")) {
@@ -130,7 +130,11 @@ Deno.serve(async (req) => {
       // find next finalized bill
       let q = admin.from("bills").select("*").eq("status", "finalized").order("id", { ascending: true }).limit(1);
       if (cursorRaw && !cursorRaw.startsWith("{")) q = q.gt("id", cursorRaw);
-      const { data } = await q;
+      const { data, error: billsErr } = await q;
+      if (billsErr) {
+        await admin.from("bill_pdf_regeneration_jobs").update({ last_error: billsErr.message, updated_at: new Date().toISOString() }).eq("id", jobId);
+        return json({ ok: false, error: billsErr.message }, 500);
+      }
       const rows = (data ?? []) as Record<string, unknown>[];
       if (rows.length === 0) {
         // move to aggregates
@@ -182,7 +186,20 @@ Deno.serve(async (req) => {
     }
 
     // load items
-    const { data: itemRows } = await admin.from("bill_line_items").select("sr_no, description, hsn_code, uom, quantity, rate, amount").eq("bill_id", billId).order("sr_no", { ascending: true });
+    const { data: itemRows, error: itemErr } = await admin.from("bill_line_items").select("sr_no, description, hsn_code, uom, quantity, rate, amount").eq("bill_id", billId).order("sr_no", { ascending: true });
+    if (itemErr) {
+      // fail bill
+      counters.bills_processed += 1;
+      counters.bills_failed += 1;
+      const uploaded = Object.values(completed);
+      if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
+      const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const nextCursor = nextId ? nextId : null;
+      const nextPhase = nextId ? "bills" : "aggregates";
+      await admin.from("bill_pdf_regeneration_jobs").update({ phase: nextPhase, cursor: nextCursor, bills_processed: counters.bills_processed, bills_failed: counters.bills_failed, updated_at: new Date().toISOString() }).eq("id", jobId);
+      return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "line_items_unreadable" }], next_cursor: nextCursor, more: true, counters });
+    }
     const items: BillLineItem[] = ((itemRows ?? []) as Record<string, unknown>[]).map((r) => ({
       srNo: r.sr_no === null ? null : Number(r.sr_no),
       description: (r.description as string | null) ?? "",
@@ -193,7 +210,16 @@ Deno.serve(async (req) => {
       amount: r.amount === null ? null : Number(r.amount),
     }));
 
-    const billProfile = profileForBill(currentProfile, billRow.business_profile_snapshot);
+    let billProfile: { profile: BusinessProfile; snapshot: unknown };
+    if (state && state.profile) {
+      billProfile = { profile: state.profile, snapshot: state.snapshot };
+    } else {
+      billProfile = profileForBill(currentProfile, billRow.business_profile_snapshot);
+      if (state) {
+        state.profile = billProfile.profile;
+        state.snapshot = billProfile.snapshot;
+      }
+    }
 
     let rendered: Uint8Array;
     try {
@@ -219,7 +245,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, job_id: jobId, phase: "bills", processed: 1, succeeded: 0, failed: 1, failures: [{ bill_id: billId, invoice_no: (billRow.invoice_no as string | null) ?? null, reason: "pdf_failed" }], next_cursor: nextCursor, more: true, counters });
     }
 
-    const { error: upErr } = await admin.storage.from(BUCKET).upload(path, rendered, { contentType: "application/pdf", upsert: false });
+    const { error: upErr } = await admin.storage.from(BUCKET).upload(path, rendered, { contentType: "application/pdf", upsert: true });
     if (upErr) {
       console.error("regenerate: upload failed", path, upErr.message);
       const uploaded = Object.values(completed);
@@ -301,7 +327,7 @@ Deno.serve(async (req) => {
 
     // not all done: save state
     const nextCopy = copy === "original" ? "duplicate" : copy === "duplicate" ? "triplicate" : "triplicate";
-    const stateJson = JSON.stringify({ bill_id: billId, copy: nextCopy, completed });
+    const stateJson = JSON.stringify({ bill_id: billId, copy: nextCopy, completed, profile: state?.profile ?? billProfile.profile, snapshot: state?.snapshot ?? billProfile.snapshot });
     await admin.from("bill_pdf_regeneration_jobs").update({
       cursor: stateJson,
       updated_at: new Date().toISOString(),
@@ -311,7 +337,7 @@ Deno.serve(async (req) => {
   }
 
   // aggregates phase
-  let aggState: { upload_id: string; copy: string; completed: Record<string, string> } | null = null;
+  let aggState: { upload_id: string; copy: string; completed: Record<string, string>; profile?: BusinessProfile; snapshot?: unknown } | null = null;
   let uploadRow: Record<string, unknown> | null = null;
 
   if (cursorRaw && cursorRaw.startsWith("{")) {
@@ -348,9 +374,31 @@ Deno.serve(async (req) => {
   const copy = aggState.copy as "original" | "duplicate" | "triplicate";
   const completed = aggState.completed || {};
 
-  const { data: bills } = await admin.from("bills").select("*").eq("bill_upload_id", uploadId).eq("status", "finalized").order("sheet_order", { ascending: true }).order("id", { ascending: true });
+  const { data: bills, error: billsErr } = await admin.from("bills").select("*").eq("bill_upload_id", uploadId).eq("status", "finalized").order("sheet_order", { ascending: true }).order("id", { ascending: true });
+  if (billsErr) {
+    counters.aggregates_processed += 1;
+    counters.aggregates_failed += 1;
+    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+    const nextCursor = nextId ? nextId : null;
+    const nextStatus = nextId ? "running" : "completed";
+    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "bills_unreadable" }], next_cursor: nextCursor, more: nextId !== null, counters });
+  }
   const billRows = (bills ?? []) as Record<string, unknown>[];
 
+  if (billRows.length > 10) {
+    const uploaded = Object.values(completed);
+    if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
+    counters.aggregates_processed += 1;
+    counters.aggregates_failed += 1;
+    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+    const nextCursor = nextId ? nextId : null;
+    const nextStatus = nextId ? "running" : "completed";
+    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "aggregate_too_large_for_edge_function" }], next_cursor: nextCursor, more: nextId !== null, counters });
+  }
   if (billRows.length === 0 || billRows.some((r) => r.sheet_order === null || r.sheet_order === undefined)) {
     // fail upload, advance
     const uploaded = Object.values(completed);
@@ -419,11 +467,32 @@ Deno.serve(async (req) => {
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
-  const billProfile = profileForBill(currentProfile, chosenSnapshot);
-  const effectiveProfile = billProfile.profile;
+  let aggBillProfile: { profile: BusinessProfile; snapshot: unknown };
+  if (aggState && aggState.profile) {
+    aggBillProfile = { profile: aggState.profile, snapshot: aggState.snapshot };
+  } else {
+    aggBillProfile = profileForBill(currentProfile, chosenSnapshot);
+    if (aggState) {
+      aggState.profile = aggBillProfile.profile;
+      aggState.snapshot = aggBillProfile.snapshot;
+    }
+  }
+  const effectiveProfile = aggBillProfile.profile;
 
   const ids = billRows.map((r) => r.id as string);
-  const { data: itemRows } = await admin.from("bill_line_items").select("bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount").in("bill_id", ids).order("sr_no", { ascending: true });
+  const { data: itemRows, error: itemErr } = await admin.from("bill_line_items").select("bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount").in("bill_id", ids).order("sr_no", { ascending: true });
+  if (itemErr) {
+    const uploaded = Object.values(completed);
+    if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
+    counters.aggregates_processed += 1;
+    counters.aggregates_failed += 1;
+    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+    const nextCursor = nextId ? nextId : null;
+    const nextStatus = nextId ? "running" : "completed";
+    await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "line_items_unreadable" }], next_cursor: nextCursor, more: nextId !== null, counters });
+  }
   const itemsByBill = new Map<string, BillLineItem[]>();
   for (const raw of (itemRows ?? []) as Record<string, unknown>[]) {
     const list = itemsByBill.get(raw.bill_id as string) ?? [];
@@ -476,7 +545,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "render_failed" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
 
-  const { error: upErr } = await admin.storage.from(BUCKET).upload(aggPaths[copy], bytes, { contentType: "application/pdf", upsert: false });
+  const { error: upErr } = await admin.storage.from(BUCKET).upload(aggPaths[copy], bytes, { contentType: "application/pdf", upsert: true });
   if (upErr) {
     console.error("regenerate aggregate upload failed", aggPaths[copy], upErr.message);
     const uploaded = Object.values(completed);
@@ -556,7 +625,7 @@ Deno.serve(async (req) => {
   }
 
   const nextCopy = copy === "original" ? "duplicate" : copy === "duplicate" ? "triplicate" : "triplicate";
-  const stateJson = JSON.stringify({ upload_id: uploadId, copy: nextCopy, completed });
+  const stateJson = JSON.stringify({ upload_id: uploadId, copy: nextCopy, completed, profile: aggState?.profile ?? aggBillProfile.profile, snapshot: aggState?.snapshot ?? aggBillProfile.snapshot });
   await admin.from("bill_pdf_regeneration_jobs").update({
     cursor: stateJson,
     updated_at: new Date().toISOString(),

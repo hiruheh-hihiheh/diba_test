@@ -47,10 +47,10 @@ export interface RegenerateProgress {
 export async function regenerateAllBillPdfs(
   onProgress?: (p: RegenerateProgress) => void
 ): Promise<{ bills: number; aggregates: number; failed: number; jobId?: string | null }> {
-  let totalProcessed = 0;
   let billSucceeded = 0;
   let aggSucceeded = 0;
   let totalFailed = 0;
+  let totalProcessed = 0;
   let jobId: string | null = null;
   let more = true;
   while (more) {
@@ -66,10 +66,15 @@ export async function regenerateAllBillPdfs(
     const p = data.processed ?? 0;
     const s = data.succeeded ?? 0;
     const f = data.failed ?? 0;
-    totalProcessed += p;
-    totalFailed += f;
-    if (phase === "bills") billSucceeded += s;
-    else aggSucceeded += s;
+    const c = data.counters ?? {};
+    const jobProcessed = (c.bills_processed ?? 0) + (c.aggregates_processed ?? 0);
+    const jobBillSucceeded = c.bills_succeeded ?? billSucceeded;
+    const jobAggSucceeded = c.aggregates_succeeded ?? aggSucceeded;
+    const jobFailed = (c.bills_failed ?? 0) + (c.aggregates_failed ?? 0);
+    if (phase === "bills") billSucceeded = jobBillSucceeded;
+    else aggSucceeded = jobAggSucceeded;
+    totalProcessed = jobProcessed;
+    totalFailed = jobFailed;
     onProgress?.({
       phase,
       processed: p,
