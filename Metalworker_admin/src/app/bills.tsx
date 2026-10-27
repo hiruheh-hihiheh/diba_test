@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   RefreshControl,
@@ -151,6 +152,8 @@ const [createOpen, setCreateOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [regenProgress, setRegenProgress] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenProgress, setRegenProgress] = useState("");
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
@@ -264,6 +267,24 @@ const [createOpen, setCreateOpen] = useState(false);
   const allVisibleSelected = bills.length > 0 && selectedBills.length === bills.length;
   /** True while any bulk operation owns the screen. See `bulk`. */
   const busy = bulk !== null;
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    setRegenProgress("Starting…");
+    try {
+      const r = await regenerateAllBillPdfs((p) => {
+        setRegenProgress(
+          `${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`
+        );
+      });
+      setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`);
+      await load(true);
+    } catch (e) {
+      setRegenProgress(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setRegenerating(false);
+    }
+  }
 
   /** True while the bulk assign/remove is running, so the bar can lock. */
   const [logoBusy, setLogoBusy] = useState(false);
@@ -853,6 +874,23 @@ const [createOpen, setCreateOpen] = useState(false);
             icon="refresh"
             variant="secondary"
             disabled={regenerating}
+            style={styles.actionBarBtn}
+            onPress={() =>
+              Alert.alert(
+                "Regenerate all PDFs",
+                "All finalized invoice PDFs and eligible workbook aggregates will be regenerated using the current renderer. Existing invoice data will not be re-imported. This may take time.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Regenerate", onPress: () => void handleRegenerate() },
+                ]
+              )
+            }
+          />
+          <Button
+            title={regenerating ? "Regenerating…" : "Regenerate All PDFs"}
+            icon="refresh"
+            variant="secondary"
+            disabled={regenerating}
             onPress={async () => {
               setRegenerating(true);
               setRegenProgress("Starting…");
@@ -873,6 +911,8 @@ const [createOpen, setCreateOpen] = useState(false);
             style={styles.actionBarBtn}
           />
         </View>
+        {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
+
         {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
 
         {/* Job-type grouping.

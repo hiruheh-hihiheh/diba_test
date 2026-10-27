@@ -337,9 +337,10 @@ Deno.serve(async (req) => {
     // baked in. The snapshot records that these defaults were in force, and is the
     // only place they are persisted.
     const snapshot = profileToSnapshot(profile);
-    const billRows = parsed.map((p) => ({
+    const billRows = parsed.map((p, i) => ({
       ...toBillRecord(p, uploadId as string),
-      business_profile_snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
+      sheet_order: i + 1,
+    business_profile_snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
     }));
     const { data: insertedBills, error: billsError } = await adminClient
       .from("bills")
