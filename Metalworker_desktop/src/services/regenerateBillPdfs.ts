@@ -71,8 +71,8 @@ export async function regenerateAllBillPdfs(
     const jobBillSucceeded = c.bills_succeeded ?? billSucceeded;
     const jobAggSucceeded = c.aggregates_succeeded ?? aggSucceeded;
     const jobFailed = (c.bills_failed ?? 0) + (c.aggregates_failed ?? 0);
-    if (phase === "bills") billSucceeded = jobBillSucceeded;
-    else aggSucceeded = jobAggSucceeded;
+    billSucceeded = jobBillSucceeded;
+    aggSucceeded = jobAggSucceeded;
     totalFailed = jobFailed;
     onProgress?.({
       phase,

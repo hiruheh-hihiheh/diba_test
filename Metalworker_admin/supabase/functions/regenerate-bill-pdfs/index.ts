@@ -76,13 +76,15 @@ Deno.serve(async (req) => {
   // Resume or create job.
   let job: Record<string, unknown> | null = null;
   if (body.job_id) {
-    const { data } = await admin.from("bill_pdf_regeneration_jobs").select("*").eq("id", body.job_id).maybeSingle();
+    const { data, error: jobErr } = await admin.from("bill_pdf_regeneration_jobs").select("*").eq("id", body.job_id).maybeSingle();
+    if (jobErr) return json({ ok: false, error: jobErr.message }, 500);
     job = (data as Record<string, unknown> | null) ?? null;
     if (!job || job.status !== "running") {
       return json({ ok: false, error: "That regeneration job is not active." }, 409);
     }
   } else {
-    const { data: running } = await admin.from("bill_pdf_regeneration_jobs").select("*").eq("status", "running").maybeSingle();
+    const { data: running, error: runningErr } = await admin.from("bill_pdf_regeneration_jobs").select("*").eq("status", "running").maybeSingle();
+    if (runningErr) return json({ ok: false, error: runningErr.message }, 500);
     if (running) {
       job = running as Record<string, unknown>;
     } else {
@@ -121,7 +123,8 @@ Deno.serve(async (req) => {
         state = null;
       }
       if (state) {
-        const { data } = await admin.from("bills").select("*").eq("id", state.bill_id).maybeSingle();
+        const { data, error: billErr } = await admin.from("bills").select("*").eq("id", state.bill_id).maybeSingle();
+        if (billErr) return json({ ok: false, error: billErr.message }, 500);
         billRow = (data as Record<string, unknown> | null) ?? null;
       }
     }
@@ -173,8 +176,9 @@ Deno.serve(async (req) => {
         const uploaded = Object.values(completed);
         if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
         // advance
-        const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-        const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+        const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+        if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
         const nextPhase = nextId ? "bills" : "aggregates";
         const nextCursor = nextId ? nextId : null;
         const { error: _cpErr4 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -197,8 +201,9 @@ Deno.serve(async (req) => {
       counters.bills_failed += 1;
       const uploaded = Object.values(completed);
       if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-      const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
       const { error: _cpErr5 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: nextPhase, cursor: nextCursor, bills_processed: counters.bills_processed, bills_failed: counters.bills_failed, updated_at: new Date().toISOString() }).eq("id", jobId);
@@ -236,8 +241,9 @@ Deno.serve(async (req) => {
       if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
       counters.bills_processed += 1;
       counters.bills_failed += 1;
-      const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
       const { error: _cpErr6 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -258,8 +264,9 @@ Deno.serve(async (req) => {
       if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
       counters.bills_processed += 1;
       counters.bills_failed += 1;
-      const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
       const { error: _cpErr7 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -292,8 +299,9 @@ Deno.serve(async (req) => {
         await admin.storage.from(BUCKET).remove(uploaded);
         counters.bills_processed += 1;
         counters.bills_failed += 1;
-        const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-        const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+        const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+        if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
         const nextCursor = nextId ? nextId : null;
         const nextPhase = nextId ? "bills" : "aggregates";
         const { error: _cpErr8 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -318,8 +326,9 @@ Deno.serve(async (req) => {
       counters.bills_processed += 1;
       counters.bills_succeeded += 1;
 
-      const { data: nextRows } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const { data: nextRows, error: nextErr } = await admin.from("bills").select("id").eq("status", "finalized").gt("id", billId).order("id", { ascending: true }).limit(1);
+      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextPhase = nextId ? "bills" : "aggregates";
       const { error: _cpErr9 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -357,7 +366,8 @@ Deno.serve(async (req) => {
       aggState = null;
     }
     if (aggState) {
-      const { data } = await admin.from("bill_uploads").select("*").eq("id", aggState.upload_id).maybeSingle();
+      const { data, error: uploadErr } = await admin.from("bill_uploads").select("*").eq("id", aggState.upload_id).maybeSingle();
+      if (uploadErr) return json({ ok: false, error: uploadErr.message }, 500);
       uploadRow = (data as Record<string, unknown> | null) ?? null;
     }
   }
@@ -390,7 +400,8 @@ Deno.serve(async (req) => {
   if (billsErr) {
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -400,26 +411,14 @@ Deno.serve(async (req) => {
   }
   const billRows = (bills ?? []) as Record<string, unknown>[];
 
-  if (billRows.length > 10) {
-    const uploaded = Object.values(completed);
-    if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-    counters.aggregates_processed += 1;
-    counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-    const nextCursor = nextId ? nextId : null;
-    const nextStatus = nextId ? "running" : "completed";
-    const { error: _cpErr14 } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
-    if (_cpErr14) { console.warn("checkpoint failed", _cpErr14.message); return json({ ok: false, error: _cpErr14.message }, 500); }
-    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "aggregate_too_large_for_edge_function" }], next_cursor: nextCursor, more: nextId !== null, counters });
-  }
   if (billRows.length === 0 || billRows.some((r) => r.sheet_order === null || r.sheet_order === undefined)) {
     // fail upload, advance
     const uploaded = Object.values(completed);
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -449,7 +448,8 @@ Deno.serve(async (req) => {
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -468,7 +468,8 @@ Deno.serve(async (req) => {
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -503,7 +504,8 @@ Deno.serve(async (req) => {
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -548,7 +550,8 @@ Deno.serve(async (req) => {
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -571,7 +574,8 @@ Deno.serve(async (req) => {
     if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
     counters.aggregates_processed += 1;
     counters.aggregates_failed += 1;
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
@@ -602,8 +606,9 @@ Deno.serve(async (req) => {
       await admin.storage.from(BUCKET).remove(uploaded);
       counters.aggregates_processed += 1;
       counters.aggregates_failed += 1;
-      const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+      const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
       const nextCursor = nextId ? nextId : null;
       const nextStatus = nextId ? "running" : "completed";
       const { error: _cpErr21 } = await admin.from("bill_pdf_regeneration_jobs").update({
@@ -629,7 +634,8 @@ Deno.serve(async (req) => {
     counters.aggregates_processed += 1;
     counters.aggregates_succeeded += 1;
 
-    const { data: nextRows } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
     const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
     const nextCursor = nextId ? nextId : null;
     const nextStatus = nextId ? "running" : "completed";
