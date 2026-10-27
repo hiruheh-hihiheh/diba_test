@@ -53,7 +53,8 @@ Deno.serve(async (req) => {
   const admin = createClient(supabaseUrl, supabaseServiceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data: profile } = await admin.from("profiles").select("role, is_active").eq("id", user.id).maybeSingle();
+  const { data: profile, error: profileErr } = await admin.from("profiles").select("role, is_active").eq("id", user.id).maybeSingle();
+  if (profileErr) return json({ ok: false, error: profileErr.message }, 500);
   if (!profile || profile.role !== "admin" || profile.is_active !== true) {
     return json({ ok: false, error: "Admin access only." }, 403);
   }
@@ -375,7 +376,12 @@ Deno.serve(async (req) => {
   if (!uploadRow) {
     let q = admin.from("bill_uploads").select("*").eq("creation_source", "workbook").order("id", { ascending: true }).limit(1);
     if (cursorRaw && !cursorRaw.startsWith("{")) q = q.gt("id", cursorRaw);
-    const { data } = await q;
+    const { data, error: discErr } = await q;
+    if (discErr) {
+      const { error: _cpErrX } = await admin.from("bill_pdf_regeneration_jobs").update({ last_error: discErr.message, updated_at: new Date().toISOString() }).eq("id", jobId);
+      if (_cpErrX) { console.warn("checkpoint failed", _cpErrX.message); }
+      return json({ ok: false, error: discErr.message }, 500);
+    }
     const rows = (data ?? []) as Record<string, unknown>[];
     if (rows.length === 0) {
       const { error: _cpErr11 } = await admin.from("bill_pdf_regeneration_jobs").update({ status: "completed", phase: "aggregates", cursor: null, updated_at: new Date().toISOString() }).eq("id", jobId);
