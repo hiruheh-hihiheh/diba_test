@@ -1,4 +1,37 @@
 import { supabase } from "./supabase";
+import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from "@supabase/supabase-js";
+
+async function readInvokeError(error: unknown): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    const status = error.context?.status;
+    try {
+      const body = await error.context.clone().json();
+      if (body && typeof body === "object" && "error" in body && body.error) {
+        return `${body.error} (HTTP ${status})`;
+      }
+      try {
+        const text = await error.context.clone().text();
+        if (text) return `HTTP ${status}: ${text}`;
+      } catch {
+        // ignore
+      }
+      return `HTTP ${status ?? "error"}`;
+    } catch {
+      try {
+        const text = await error.context.clone().text();
+        if (text) return `HTTP ${status}: ${text}`;
+      } catch {
+        // ignore
+      }
+      return `HTTP ${status ?? "error"}`;
+    }
+  }
+  if (error instanceof FunctionsRelayError || error instanceof FunctionsFetchError) {
+    return error.message;
+  }
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
 
 export interface RegenerateProgress {
   phase: "bills" | "aggregates";
@@ -26,7 +59,7 @@ export async function regenerateAllBillPdfs(
     });
     const data = res.data;
     const error = res.error;
-    if (error) throw new Error(error.message ?? "Regeneration failed.");
+    if (error) throw new Error(await readInvokeError(error));
     if (!data?.ok) throw new Error(data?.error ?? "Regeneration failed.");
     jobId = data.job_id ?? jobId;
     const phase = data.phase === "aggregates" ? "aggregates" : "bills";
