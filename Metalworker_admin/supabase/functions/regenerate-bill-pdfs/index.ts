@@ -340,7 +340,7 @@ Deno.serve(async (req) => {
 
   const uploadId = uploadRow.id as string;
 
-  // bounded count
+  if (aggState.stage !== "merge") {
   const { count: totalCount, error: countErr } = await admin.from("bills").select("id", { count: "exact", head: true }).eq("bill_upload_id", uploadId).eq("status", "finalized");
   if (countErr) {
     counters.aggregates_processed += 1;
@@ -433,7 +433,7 @@ Deno.serve(async (req) => {
   if (aggState.chosen_snapshot === undefined) {
     if (nonNull.length === 0) aggState.chosen_snapshot = null;
     else if (nonNull.length === billRows.length && nonNull.every((s) => JSON.stringify(s) === JSON.stringify(nonNull[0]))) aggState.chosen_snapshot = nonNull[0];
-    else if (nonNull.every((s) => JSON.stringify(s) === JSON.stringify(nonNull[0]))) aggState.chosen_snapshot = null;
+
     else {
       const uploaded = Object.values(aggState.chunk_paths || {}).flat();
       if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
@@ -551,7 +551,7 @@ Deno.serve(async (req) => {
       const stateJson = JSON.stringify({ upload_id: uploadId, stage: "render", chunk_index: aggState.chunk_index, total_bills: aggState.total_bills || totalBills, chunk_paths: aggState.chunk_paths || { original: [], duplicate: [], triplicate: [] }, chosen_snapshot: aggState.chosen_snapshot, profile: aggState.profile ?? effectiveProfile, snapshot: aggState.snapshot ?? billProfile.snapshot });
       const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ cursor: stateJson, updated_at: new Date().toISOString() }).eq("id", jobId);
       if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-      return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 0, failures: [{ upload_id: uploadId, reason: "chunk_render_failed" }], next_cursor: stateJson, more: false, counters });
+      return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "chunk_render_failed" }], next_cursor: stateJson, more: false, counters, error: "Aggregate chunk rendering failed" }, 500);
     }
 
     const nextIndex = aggState.chunk_index + 1;
@@ -562,7 +562,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 0, failures: [], next_cursor: stateJson, more: true, counters });
   }
 
-  // merge stage
+  }
   const mergeChunkPaths = aggState.chunk_paths || { original: [], duplicate: [], triplicate: [] };
   const stamp = Date.now();
   const baseName = (uploadRow as any).base_name ?? "workbook";
@@ -620,7 +620,7 @@ Deno.serve(async (req) => {
     const nextStatus = nextId ? "running" : "completed";
     const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
     if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "merge_failed" }], next_cursor: nextCursor, more: nextId !== null, counters });
+    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "merge_failed" }], next_cursor: nextCursor, more: nextId !== null, counters, error: "Aggregate merge failed" }, 500);
   }
 
   const { error: upRowErr } = await admin.from("bill_uploads").update({
