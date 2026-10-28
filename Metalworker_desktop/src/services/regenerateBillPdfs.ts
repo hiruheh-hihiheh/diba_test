@@ -53,12 +53,21 @@ export async function regenerateAllBillPdfs(
   let jobId: string | null = null;
   let more = true;
   while (more) {
+    let attempt = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: any = await supabase.functions.invoke("regenerate-bill-pdfs", {
-      body: { job_id: jobId, limit: 25 },
-    });
-    const data = res.data;
-    const error = res.error;
+    let data: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let error: any;
+    while (attempt < 3) {
+      const res = await supabase.functions.invoke("regenerate-bill-pdfs", {
+        body: { job_id: jobId, limit: 25 },
+      });
+      data = res.data;
+      error = res.error;
+      if (!error && data?.ok) break;
+      attempt++;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
     if (error) throw new Error(await readInvokeError(error));
     if (!data?.ok) throw new Error(data?.error ?? "Regeneration failed.");
     jobId = data.job_id ?? jobId;
