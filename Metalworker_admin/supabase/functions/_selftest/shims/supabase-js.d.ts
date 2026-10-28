@@ -29,6 +29,8 @@ declare module "npm:@supabase/supabase-js@2" {
     lte(column: string, value: unknown): QueryBuilder;
     in(column: string, values: readonly unknown[]): QueryBuilder;
     is(column: string, value: unknown): QueryBuilder;
+    // PostgREST logic tree, e.g. `a.is.null,b.lt."2026-01-01"`.
+    or(filters: string): QueryBuilder;
     order(column: string, opts?: { ascending?: boolean }): QueryBuilder;
     limit(n: number): QueryBuilder;
     range(from: number, to: number): QueryBuilder;

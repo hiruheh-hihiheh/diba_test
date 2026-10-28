@@ -31,7 +31,7 @@
 import type { BillCopy, BillLineItem, CopyKind } from "./parseBill.ts";
 import { COPY_LABEL } from "./parseBill.ts";
 import { formatJobKind } from "./formatJobKind.ts";
-import { PdfDocument, measurePdfText, type PdfPage, wrapText } from "./pdf.ts";
+import { PdfDocument, PdfPage, measurePdfText, wrapText } from "./pdf.ts";
 import { measureText } from "./fontMetrics.ts";
 import type { PdfImage } from "./pdfImage.ts";
 import { applyBusinessProfile, type BusinessProfile } from "./businessProfile.ts";
@@ -1521,6 +1521,116 @@ export function renderBillDocument(
   logo?: PdfImage | null,
   profile?: BusinessProfile | null
 ): Uint8Array {
+  const { sheet, pageOwner } = layoutBillDocument(bills, copyLabel, logo, profile);
+
+  // Stamped last, once the page count is final, so a long bill still reads
+  // "Page 2 of 3" instead of a placeholder.
+  const total = sheet.doc.pageCount;
+  sheet.doc.getPages().forEach((page, i) => {
+    // `page` here is the loop's own page, deliberately not `sheet.page`: this
+    // pass has to stamp EVERY page, not the one the last bill happened to end on.
+    stampBillFooter(page, copyLabel, pageOwner[i] ?? "", i, total);
+  });
+
+  return sheet.doc.build();
+}
+
+/**
+ * The document title `renderBillDocument` writes into the PDF's /Info.
+ *
+ * A function of its own because the chunked aggregate assembler has to write the
+ * same title for a workbook it never lays out in one piece: it knows the bill count
+ * and the first invoice number, which is all the title depends on.
+ */
+export function billDocumentTitle(copyLabel: string, billCount: number, firstInvoiceNo: string | null): string {
+  return billCount === 1 ? `${copyLabel} - ${firstInvoiceNo ?? "Bill"}` : `${copyLabel} - ${billCount} bills`;
+}
+
+/**
+ * The footer every page carries: "E & O.E" on the left, and the copy, the owning
+ * invoice and the page position on the right.
+ *
+ * Exported for the chunked aggregate: a chunk is laid out without footers because
+ * "Page 7 of 40" needs the workbook's total page count, which no chunk knows. The
+ * assembler appends exactly these operators to each page's content once the total
+ * is known, so the result is byte-identical to a single-pass render.
+ */
+export function stampBillFooter(page: PdfPage, copyLabel: string, owner: string, index: number, total: number): void {
+  page.text("E & O.E", MARGIN_X, FOOTER_BASELINE, { size: T.footer, color: [0.3, 0.3, 0.3] });
+  page.text(
+    `${copyLabel}   |   ${owner}   |   Page ${index + 1} of ${total}`,
+    MARGIN_X + CONTENT_W,
+    FOOTER_BASELINE,
+    { size: T.footer, align: "right", color: [0.3, 0.3, 0.3] }
+  );
+}
+
+/**
+ * The footer for one page, as the content-stream bytes `stampBillFooter` would have
+ * appended to it.
+ *
+ * `PdfPage.encode()` writes its operators joined by newlines with one trailing
+ * newline, so a page's body bytes followed by these bytes are exactly the bytes of
+ * the same page with the footer drawn onto it.
+ */
+export function billFooterContent(copyLabel: string, owner: string, index: number, total: number): Uint8Array {
+  const page = new PdfPage();
+  stampBillFooter(page, copyLabel, owner, index, total);
+  return page.encode();
+}
+
+/** One chunk of a workbook aggregate, laid out but not yet footered. */
+export interface BillPagesFragment {
+  /**
+   * A complete, valid PDF of the chunk's pages WITHOUT footers. It is a real PDF so
+   * it can be stored in the PDF-only `bills` bucket and checked with the same
+   * structural validator as any other document; the assembler reads its page
+   * contents back out of it.
+   */
+  pdf: Uint8Array;
+  /** The invoice number that owns each page, in page order. */
+  owners: string[];
+  /** The /Subject the whole document would carry if this chunk were its start. */
+  subject: string;
+  /** The first bill's invoice number, for the single-bill document title. */
+  firstInvoiceNo: string | null;
+}
+
+/**
+ * Lay out a run of bills for one copy, exactly as `renderBillDocument` would lay
+ * them out inside a larger document, but without the footer pass.
+ *
+ * Every bill starts on a fresh page and nothing a bill draws depends on the bill
+ * before it, so the pages of bills 6-10 are the same whether they are laid out on
+ * their own or as part of the whole workbook. Only the footer depends on the whole
+ * document, and that is applied at assembly.
+ */
+export function renderBillPagesFragment(
+  bills: BillCopy[],
+  copyLabel: string,
+  profile?: BusinessProfile | null
+): BillPagesFragment {
+  const { sheet, pageOwner, labelled } = layoutBillDocument(bills, copyLabel, null, profile);
+  const owners = sheet.doc.getPages().map((_, i) => pageOwner[i] ?? "");
+  return {
+    pdf: sheet.doc.build(),
+    owners,
+    subject: billDocumentSubject(labelled[0], copyLabel),
+    firstInvoiceNo: labelled[0].invoiceNo ?? null,
+  };
+}
+
+function billDocumentSubject(firstBill: BillCopy, copyLabel: string): string {
+  return `${firstBill.sellerName ?? "Tax Invoice"} - ${copyLabel}`;
+}
+
+/** The shared layout pass: every page drawn except the footers. */
+function layoutBillDocument(
+  bills: BillCopy[],
+  copyLabel: string,
+  logo?: PdfImage | null,
+  profile?: BusinessProfile | null
+): { sheet: Sheet; pageOwner: string[]; labelled: BillCopy[] } {
   if (bills.length === 0) throw new Error("A bill document needs at least one bill");
 
   /* `copyLabel` is the designation of the document being produced, so it is
@@ -1555,10 +1665,8 @@ export function renderBillDocument(
 
   const firstBill = labelled[0];
   const sheet = new Sheet(
-    labelled.length === 1
-      ? `${copyLabel} - ${firstBill.invoiceNo ?? "Bill"}`
-      : `${copyLabel} - ${labelled.length} bills`,
-    `${firstBill.sellerName ?? "Tax Invoice"} - ${copyLabel}`
+    billDocumentTitle(copyLabel, labelled.length, firstBill.invoiceNo ?? null),
+    billDocumentSubject(firstBill, copyLabel)
   );
 
   // Track which bill owns each page, because one bill may spill onto more than
@@ -1586,20 +1694,5 @@ export function renderBillDocument(
     }
   }
 
-  // Stamped last, once the page count is final, so a long bill still reads
-  // "Page 2 of 3" instead of a placeholder.
-  const total = sheet.doc.pageCount;
-  sheet.doc.getPages().forEach((page, i) => {
-    // `page` here is the loop's own page, deliberately not `sheet.page`: this
-    // pass has to stamp EVERY page, not the one the last bill happened to end on.
-    page.text("E & O.E", MARGIN_X, FOOTER_BASELINE, { size: T.footer, color: [0.3, 0.3, 0.3] });
-    page.text(
-      `${copyLabel}   |   ${pageOwner[i] ?? ""}   |   Page ${i + 1} of ${total}`,
-      MARGIN_X + CONTENT_W,
-      FOOTER_BASELINE,
-      { size: T.footer, align: "right", color: [0.3, 0.3, 0.3] }
-    );
-  });
-
-  return sheet.doc.build();
+  return { sheet, pageOwner, labelled };
 }

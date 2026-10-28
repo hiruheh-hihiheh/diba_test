@@ -52,7 +52,8 @@ import {
   type BillJobGroup,
   formatQuantity,
 } from "../services/bills";
-import { regenerateAllBillPdfs } from "../services/regenerateBillPdfs";
+import { useRegeneration } from "../hooks/useRegeneration";
+import RegenerationPanel from "../components/bills/RegenerationPanel";
 import {
   BULK_ZIP_LIMITS,
   buildBulkZip,
@@ -169,8 +170,6 @@ export default function BillsPage() {
   const [facets, setFacets] = useState<BillJobFacet[]>([]);
 
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
-  const [regenProgress, setRegenProgress] = useState<string>("");
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLButtonElement>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -279,6 +278,35 @@ export default function BillsPage() {
     },
     [search, uploadFilter, from, to, jobKindValuesForGroup, page, pageSize]
   );
+
+  /* Regeneration is driven by the server's job; the hook only mirrors it, so a
+     reload reconnects to a running job instead of starting another. The list is
+     refreshed when a job finishes because every PDF path it shows has changed. */
+  const reloadAfterRegeneration = useCallback(() => {
+    void load(true);
+  }, [load]);
+  const regeneration = useRegeneration(reloadAfterRegeneration);
+
+  async function confirmRegeneration() {
+    const ok = await confirm({
+      title: "Regenerate all PDFs?",
+      message: (
+        <>
+          Every finalized bill&apos;s Original, Duplicate and Triplicate PDF is rebuilt with the current
+          layout from the bill records already saved —{" "}
+          <strong className="text-text">no workbook needs to be uploaded again</strong> and no bill data
+          changes.
+          <span className="block mt-2">
+            Workbooks are processed one at a time, and each workbook&apos;s combined PDFs are only replaced
+            once all three new copies are verified. Anything that fails keeps its existing PDFs.
+          </span>
+        </>
+      ),
+      confirmLabel: "Regenerate",
+      tone: "primary",
+    });
+    if (ok) regeneration.start();
+  }
 
   useEffect(() => {
     // Debounced so typing in the search box does not fire a request per
@@ -1004,14 +1032,16 @@ export default function BillsPage() {
             Upload workbook
           </button>
 
-          <button type="button" disabled={regenerating} title="Regenerate all stored invoice PDFs using the current PDF renderer. Existing invoice data will not be re-imported." onClick={async () => {
-            if (!window.confirm("Regenerate all stored invoice PDFs using the current renderer? Existing bill data will not change.")) return;
-            setRegenerating(true); setRegenProgress("Starting…");
-            try { const r = await regenerateAllBillPdfs((p) => setRegenProgress(`${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`)); setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`); await load(true); }
-            catch (e) { setRegenProgress(e instanceof Error ? e.message : "Failed"); }
-            finally { setRegenerating(false); }
-          }} className="btn btn-secondary">{regenerating ? "Regenerating…" : "Regenerate All PDFs"}</button>
-          {regenProgress ? <span className="text-sm text-slate-500">{regenProgress}</span> : null}
+          <button
+            type="button"
+            disabled={regeneration.active}
+            title="Rebuild every stored invoice PDF with the current layout, from the saved bill records."
+            onClick={() => void confirmRegeneration()}
+            className="btn btn-secondary"
+          >
+            <RefreshCw size={15} className={regeneration.mode === "starting" || regeneration.mode === "running" ? "animate-spin" : ""} />
+            {regeneration.active ? "Regenerating…" : "Regenerate All PDFs"}
+          </button>
 
           {/* A bill does not have to come from a workbook. This sits NEXT TO the upload
               button rather than replacing it, because both are how a bill starts and
@@ -1061,6 +1091,8 @@ export default function BillsPage() {
           </div>
         </div>
       </div>
+
+      <RegenerationPanel controller={regeneration} />
 
       {/* Search + filters */}
       <div className="space-y-3">

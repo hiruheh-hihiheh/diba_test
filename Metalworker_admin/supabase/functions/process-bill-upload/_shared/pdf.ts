@@ -509,3 +509,260 @@ export function wrapText(text: string, maxWidth: number, font: FontName = "regul
   if (current !== "") lines.push(current);
   return lines;
 }
+
+/* ──────────────────────────────────────────────
+   Streaming assembly
+   ────────────────────────────────────────────── */
+
+/**
+ * Writes a text-only document page by page, producing exactly the bytes
+ * `PdfDocument.build()` would produce for the same pages.
+ *
+ * WHY THIS EXISTS
+ * A workbook aggregate is too large to lay out in one Edge Function invocation, so
+ * it is laid out in chunks and assembled afterwards. A general PDF library has to
+ * parse every chunk into an object graph and serialise the whole merged graph
+ * again, which is what exhausted the worker. This writer needs neither: the object
+ * numbering of a text-only document depends only on its page count, so once the
+ * total is known every page can be written straight out as its bytes arrive, and
+ * the only thing held is the output itself.
+ *
+ * Images are deliberately not supported: aggregates carry no logo, and a document
+ * that needs one is built with `PdfDocument`.
+ */
+export class PdfPageStreamWriter {
+  private readonly chunks: Uint8Array[] = [];
+  private length = 0;
+  private readonly offsets: number[] = [];
+  private written = 0;
+  private finished = false;
+  private readonly pageCount: number;
+  private readonly info: DocumentInfo;
+
+  constructor(info: DocumentInfo, pageCount: number) {
+    if (!Number.isInteger(pageCount) || pageCount < 1) throw new Error("A PDF must have at least one page");
+    this.info = info;
+    this.pageCount = pageCount;
+
+    this.pushBytes(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
+    const kids = Array.from({ length: pageCount }, (_, i) => `${3 + i * 2} 0 R`).join(" ");
+    this.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    this.object(2, `<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>`);
+  }
+
+  /** Bytes written so far. Lets a caller stop before an output grows past a cap. */
+  get byteLength(): number {
+    return this.length;
+  }
+
+  /**
+   * Append the next page. `content` is the page's content stream, given as parts
+   * so a body and its footer can be written without first being joined.
+   */
+  addPage(content: Uint8Array[], width = PAGE_WIDTH, height = PAGE_HEIGHT): void {
+    if (this.finished) throw new Error("The document is already finished");
+    if (this.written >= this.pageCount) throw new Error(`More than the declared ${this.pageCount} pages were written`);
+    const pageId = 3 + this.written * 2;
+    const contentId = pageId + 1;
+    const regularFontId = 3 + this.pageCount * 2;
+    this.object(
+      pageId,
+      `<< /Type /Page /Parent 2 0 R ` +
+        `/MediaBox [0 0 ${num(width)} ${num(height)}] ` +
+        `/Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${regularFontId + 1} 0 R >> >> ` +
+        `/Contents ${contentId} 0 R >>`
+    );
+    const streamLength = content.reduce((sum, part) => sum + part.length, 0);
+    this.offsets[contentId] = this.length;
+    this.push(`${contentId} 0 obj\n<< /Length ${streamLength} >>\nstream\n`);
+    for (const part of content) this.pushBytes(part);
+    this.push("\nendstream\nendobj\n");
+    this.written++;
+  }
+
+  /** Write the fonts, the info dictionary and the cross-reference table. */
+  finish(): Uint8Array {
+    if (this.finished) throw new Error("The document is already finished");
+    if (this.written !== this.pageCount) {
+      throw new Error(`Declared ${this.pageCount} pages but ${this.written} were written`);
+    }
+    this.finished = true;
+    const regularFontId = 3 + this.pageCount * 2;
+    const boldFontId = regularFontId + 1;
+    const infoId = boldFontId + 1;
+    for (const [id, base] of [
+      [regularFontId, "Helvetica"],
+      [boldFontId, "Helvetica-Bold"],
+    ] as const) {
+      this.object(id, `<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`);
+    }
+    const infoParts = [`/Title (${pdfString(this.info.title)})`, "/Producer (Metalworker Bills)"];
+    if (this.info.subject) infoParts.push(`/Subject (${pdfString(this.info.subject)})`);
+    this.object(infoId, `<< ${infoParts.join(" ")} >>`);
+
+    const xrefOffset = this.length;
+    let xref = `xref\n0 ${infoId + 1}\n0000000000 65535 f \n`;
+    for (let id = 1; id <= infoId; id++) {
+      const offset = this.offsets[id];
+      if (offset === undefined) throw new Error(`Object ${id} was never written`);
+      xref += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    }
+    this.push(xref);
+    this.push(`trailer\n<< /Size ${infoId + 1} /Root 1 0 R /Info ${infoId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+
+    const out = new Uint8Array(this.length);
+    let at = 0;
+    for (const chunk of this.chunks) {
+      out.set(chunk, at);
+      at += chunk.length;
+    }
+    this.chunks.length = 0;
+    return out;
+  }
+
+  private object(id: number, body: string): void {
+    this.offsets[id] = this.length;
+    this.push(`${id} 0 obj\n${body}\nendobj\n`);
+  }
+
+  private push(s: string): void {
+    this.pushBytes(latin1Bytes(s));
+  }
+
+  private pushBytes(bytes: Uint8Array): void {
+    this.chunks.push(bytes);
+    this.length += bytes.length;
+  }
+}
+
+/* ──────────────────────────────────────────────
+   Reading back and validating
+   ────────────────────────────────────────────── */
+
+/** A PDF that is not a complete, self-consistent document of the expected shape. */
+export class PdfStructureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PdfStructureError";
+  }
+}
+
+export interface PdfStructure {
+  pageCount: number;
+  /** Each page's content stream, as views into the input (not copies). */
+  contents: Uint8Array[];
+  /** True when any page references an image. */
+  hasImages: boolean;
+}
+
+/**
+ * Parse and verify a PDF written by this module.
+ *
+ * Every check here is structural and exact, because this is what stands between a
+ * truncated or corrupt file and a financial document being published:
+ * - the header, the trailer and `%%EOF` are present;
+ * - `startxref` points at the cross-reference table;
+ * - every in-use cross-reference entry points at the object it claims to be;
+ * - the page tree's /Count matches its /Kids, and every page's content stream is
+ *   exactly /Length bytes followed by `endstream`.
+ *
+ * It reads only this writer's own layout. A PDF from anywhere else is reported as
+ * a structure error rather than half-understood.
+ */
+export function readPdfStructure(bytes: Uint8Array): PdfStructure {
+  if (bytes.length < 64) throw new PdfStructureError("The file is too short to be a PDF");
+  // One character per byte, so string offsets are byte offsets. Only ASCII tokens
+  // are ever searched for, so how the high half decodes does not matter.
+  const text = new TextDecoder("latin1").decode(bytes);
+  if (!text.startsWith("%PDF-1.")) throw new PdfStructureError("The file does not start with a PDF header");
+  if (!text.endsWith("%%EOF\n")) throw new PdfStructureError("The file does not end with %%EOF (truncated?)");
+
+  const sx = text.lastIndexOf("startxref\n");
+  if (sx < 0) throw new PdfStructureError("No startxref");
+  const xrefOffset = Number(text.slice(sx + 10, text.indexOf("\n", sx + 10)));
+  if (!Number.isInteger(xrefOffset) || !text.startsWith("xref\n", xrefOffset)) {
+    throw new PdfStructureError("startxref does not point at the cross-reference table");
+  }
+
+  const header = /^xref\n0 (\d+)\n/.exec(text.slice(xrefOffset, xrefOffset + 32));
+  if (!header) throw new PdfStructureError("Malformed cross-reference header");
+  const size = Number(header[1]);
+  const entriesStart = xrefOffset + header[0].length;
+  const offsets: number[] = [];
+  for (let id = 0; id < size; id++) {
+    const entry = text.slice(entriesStart + id * 20, entriesStart + id * 20 + 20);
+    const m = /^(\d{10}) (\d{5}) ([nf]) \n$/.exec(entry);
+    if (!m) throw new PdfStructureError(`Malformed cross-reference entry ${id}`);
+    if (m[3] === "n") {
+      const offset = Number(m[1]);
+      if (!text.startsWith(`${id} 0 obj\n`, offset)) {
+        throw new PdfStructureError(`Cross-reference entry ${id} does not point at object ${id}`);
+      }
+      offsets[id] = offset;
+    }
+  }
+
+  const trailer = /^trailer\n<< \/Size (\d+) \/Root (\d+) 0 R/.exec(text.slice(entriesStart + size * 20, sx));
+  if (!trailer || Number(trailer[1]) !== size) throw new PdfStructureError("Trailer /Size does not match the table");
+
+  const objectBody = (id: number): string => {
+    const offset = offsets[id];
+    if (offset === undefined) throw new PdfStructureError(`Object ${id} is missing`);
+    const start = offset + `${id} 0 obj\n`.length;
+    const end = text.indexOf("\nendobj\n", start);
+    if (end < 0) throw new PdfStructureError(`Object ${id} is not terminated`);
+    return text.slice(start, end);
+  };
+
+  const catalog = objectBody(Number(trailer[2]));
+  const pagesRef = /\/Type \/Catalog \/Pages (\d+) 0 R/.exec(catalog);
+  if (!pagesRef) throw new PdfStructureError("The catalog has no page tree");
+  const pages = objectBody(Number(pagesRef[1]));
+  const tree = /\/Kids \[([\d R]*)\] \/Count (\d+)/.exec(pages);
+  if (!tree) throw new PdfStructureError("Malformed page tree");
+  const kids = (tree[1].match(/\d+ 0 R/g) ?? []).map((ref) => Number(ref.split(" ")[0]));
+  const pageCount = Number(tree[2]);
+  if (pageCount < 1 || kids.length !== pageCount) throw new PdfStructureError("Page tree /Count does not match its /Kids");
+
+  const contents: Uint8Array[] = [];
+  let hasImages = false;
+  for (const kid of kids) {
+    const page = objectBody(kid);
+    if (!page.startsWith("<< /Type /Page ")) throw new PdfStructureError(`Object ${kid} is not a page`);
+    if (page.includes("/XObject")) hasImages = true;
+    const contentRef = /\/Contents (\d+) 0 R/.exec(page);
+    if (!contentRef) throw new PdfStructureError(`Page ${kid} has no content stream`);
+    const contentId = Number(contentRef[1]);
+    const offset = offsets[contentId];
+    if (offset === undefined) throw new PdfStructureError(`Content stream ${contentId} is missing`);
+    const head = new RegExp(`^${contentId} 0 obj\\n<< /Length (\\d+) >>\\nstream\\n`).exec(text.slice(offset, offset + 64));
+    if (!head) throw new PdfStructureError(`Content stream ${contentId} has an unexpected header`);
+    const start = offset + head[0].length;
+    const end = start + Number(head[1]);
+    if (!text.startsWith("\nendstream\nendobj\n", end)) {
+      throw new PdfStructureError(`Content stream ${contentId} is not exactly /Length bytes`);
+    }
+    contents.push(bytes.subarray(start, end));
+  }
+
+  return { pageCount, contents, hasImages };
+}
+
+/** CRC-32 (IEEE), so a stored file can be checked against what was written. */
+export function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();

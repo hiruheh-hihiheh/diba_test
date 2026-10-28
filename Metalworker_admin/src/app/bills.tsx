@@ -12,7 +12,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   RefreshControl,
@@ -57,7 +56,8 @@ import {
   describeBillLogo,
   fetchLogosByIds,
 } from "../services/invoiceLogos";
-import { regenerateAllBillPdfs } from "../services/regenerateBillPdfs";
+import { useRegeneration } from "../hooks/useRegeneration";
+import { RegenerationPanel } from "../components/bills/RegenerationPanel";
 import { BillingFolderSheet } from "../components/bills/BillingFolderSheet";
 import { BulkOperationOverlay, type BulkOperation } from "../components/bills/BulkOperationOverlay";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -150,8 +150,7 @@ const [createOpen, setCreateOpen] = useState(false);
   const [allMatchingIds, setAllMatchingIds] = useState<string[] | null>(null);
   const [selectingAll, setSelectingAll] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
-  const [regenProgress, setRegenProgress] = useState("");
+  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
@@ -226,6 +225,14 @@ const [createOpen, setCreateOpen] = useState(false);
     [search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, page]
   );
 
+  /* Regeneration is driven by the server's job; the hook only mirrors it, so a
+     reload reconnects to a running job instead of starting another. The list is
+     refreshed when a job finishes because every PDF path it shows has changed. */
+  const reloadAfterRegeneration = useCallback(() => {
+    void load(true);
+  }, [load]);
+  const regeneration = useRegeneration(reloadAfterRegeneration);
+
   /* Debounced so typing does not fire a request per keystroke. */
   useEffect(() => {
     const timer = setTimeout(() => void load(), search ? 300 : 0);
@@ -266,23 +273,6 @@ const [createOpen, setCreateOpen] = useState(false);
   /** True while any bulk operation owns the screen. See `bulk`. */
   const busy = bulk !== null;
 
-  async function handleRegenerate() {
-    setRegenerating(true);
-    setRegenProgress("Starting…");
-    try {
-      const r = await regenerateAllBillPdfs((p) => {
-        setRegenProgress(
-          `${p.phase === "bills" ? "Bills" : "Aggregates"}: ${p.totalProcessed} processed, ${p.totalSucceeded} ok, ${p.totalFailed} failed`
-        );
-      });
-      setRegenProgress(`Done: ${r.bills} bills, ${r.aggregates} aggregates, ${r.failed} failed`);
-      await load(true);
-    } catch (e) {
-      setRegenProgress(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setRegenerating(false);
-    }
-  }
 
   /** True while the bulk assign/remove is running, so the bar can lock. */
   const [logoBusy, setLogoBusy] = useState(false);
@@ -868,24 +858,16 @@ const [createOpen, setCreateOpen] = useState(false);
             style={styles.actionBarBtn}
           />
           <Button
-            title={regenerating ? "Regenerating…" : "Regenerate All PDFs"}
+            title={regeneration.active ? "Regenerating…" : "Regenerate All PDFs"}
             icon="refresh"
             variant="secondary"
-            disabled={regenerating}
+            loading={regeneration.mode === "starting" || regeneration.mode === "running"}
+            disabled={regeneration.active}
             style={styles.actionBarBtn}
-            onPress={() =>
-              Alert.alert(
-                "Regenerate all PDFs",
-                "All finalized invoice PDFs and eligible workbook aggregates will be regenerated using the current renderer. Existing invoice data will not be re-imported. This may take time.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Regenerate", onPress: () => void handleRegenerate() },
-                ]
-              )
-            }
+            onPress={() => setRegenConfirmOpen(true)}
           />
         </View>
-        {regenProgress ? <Text style={{ color: theme.colors.textMuted, marginBottom: 8 }}>{regenProgress}</Text> : null}
+        <RegenerationPanel controller={regeneration} />
 
         {/* Job-type grouping.
             One workbook legitimately contains both kinds, so this is a filter on
@@ -1540,6 +1522,20 @@ const [createOpen, setCreateOpen] = useState(false);
       {/* Removing is the same operation as assigning and needs the same re-prints;
           the only difference is that the result cannot be previewed, because the
           result is the absence of something. So it asks. */}
+      <ConfirmDialog
+        visible={regenConfirmOpen}
+        title="Regenerate all PDFs?"
+        message="Every finalized bill's Original, Duplicate and Triplicate PDF is rebuilt with the current layout from the bill records already saved — no workbook needs to be uploaded again and no bill data changes. Workbooks are processed one at a time, and each workbook's combined PDFs are only replaced once all three new copies are verified. Existing PDFs stay in place for anything that fails."
+        confirmLabel="Regenerate"
+        destructive={false}
+        icon="refresh"
+        onCancel={() => setRegenConfirmOpen(false)}
+        onConfirm={() => {
+          setRegenConfirmOpen(false);
+          regeneration.start();
+        }}
+      />
+
       <ConfirmDialog
         visible={bulkLogoConfirm}
         title="Remove the logo from these bills?"
