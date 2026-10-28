@@ -443,7 +443,7 @@ Deno.serve(async (req) => {
     const nextStatus = nextId ? "running" : "completed";
     const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
     if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters, error: "Inconsistent business profile snapshots" }, 500);
+    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
   }
   aggState.chosen_snapshot = decision.chosen;
   const billProfile = profileForBill(currentProfile, aggState.chosen_snapshot === undefined ? null : aggState.chosen_snapshot);
