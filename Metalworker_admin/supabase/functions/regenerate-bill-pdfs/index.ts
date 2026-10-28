@@ -6,6 +6,7 @@ import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../pro
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
 import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
 import { profileForBill, profileFromRow, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
+import { decideWorkbookSnapshot } from "../process-bill-upload/_shared/snapshotConsistency.ts";
 
 const BUCKET = "bills";
 const CHUNK_SIZE = 5;
@@ -429,59 +430,22 @@ Deno.serve(async (req) => {
   }
 
   const snapshots = billRows.map((r) => r.business_profile_snapshot);
-  const nonNull = snapshots.filter((s) => s !== null && s !== undefined);
-  if (aggState.chosen_snapshot === undefined) {
-    if (nonNull.length === 0) aggState.chosen_snapshot = null;
-    else if (nonNull.length === billRows.length && nonNull.every((s) => JSON.stringify(s) === JSON.stringify(nonNull[0]))) aggState.chosen_snapshot = nonNull[0];
-
-    else {
-      const uploaded = Object.values(aggState.chunk_paths || {}).flat();
-      if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-      counters.aggregates_processed += 1;
-      counters.aggregates_failed += 1;
-      const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-      if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
-      const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-      const nextCursor = nextId ? nextId : null;
-      const nextStatus = nextId ? "running" : "completed";
-      const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
-      if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-      return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
-    }
-  } else {
-    if (aggState.chosen_snapshot === null) {
-      if (nonNull.length > 0) {
-        const uploaded = Object.values(aggState.chunk_paths || {}).flat();
-        if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-        counters.aggregates_processed += 1;
-        counters.aggregates_failed += 1;
-        const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-        if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
-        const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-        const nextCursor = nextId ? nextId : null;
-        const nextStatus = nextId ? "running" : "completed";
-        const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
-        if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-        return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
-      }
-    } else {
-      if (nonNull.length > 0 && !nonNull.every((s) => JSON.stringify(s) === JSON.stringify(aggState.chosen_snapshot))) {
-        const uploaded = Object.values(aggState.chunk_paths || {}).flat();
-        if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-        counters.aggregates_processed += 1;
-        counters.aggregates_failed += 1;
-        const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-        if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
-        const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-        const nextCursor = nextId ? nextId : null;
-        const nextStatus = nextId ? "running" : "completed";
-        const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
-        if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-        return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters });
-      }
-    }
+  const decision = decideWorkbookSnapshot(aggState.chosen_snapshot, snapshots);
+  if (!decision.ok) {
+    const uploaded = Object.values(aggState.chunk_paths || {}).flat();
+    if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
+    counters.aggregates_processed += 1;
+    counters.aggregates_failed += 1;
+    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
+    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
+    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
+    const nextCursor = nextId ? nextId : null;
+    const nextStatus = nextId ? "running" : "completed";
+    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
+    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "inconsistent_profile_snapshot" }], next_cursor: nextCursor, more: nextId !== null, counters, error: "Inconsistent business profile snapshots" }, 500);
   }
-
+  aggState.chosen_snapshot = decision.chosen;
   const billProfile = profileForBill(currentProfile, aggState.chosen_snapshot === undefined ? null : aggState.chosen_snapshot);
   const effectiveProfile = aggState.profile ? (aggState.profile as BusinessProfile) : billProfile.profile;
   if (!aggState.profile) {
