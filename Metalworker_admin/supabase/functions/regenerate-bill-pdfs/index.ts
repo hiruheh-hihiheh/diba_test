@@ -564,6 +564,27 @@ Deno.serve(async (req) => {
 
   }
   const mergeChunkPaths = aggState.chunk_paths || { original: [], duplicate: [], triplicate: [] };
+  const totalBills = aggState.total_bills || 0;
+  const expectedChunks = totalBills > 0 ? Math.ceil(totalBills / CHUNK_SIZE) : 0;
+  // Validate complete chunk set before merging.
+  for (const kind of COPY_ORDER) {
+    if (mergeChunkPaths[kind].length !== expectedChunks) {
+      counters.aggregates_processed += 0;
+      counters.aggregates_failed += 1;
+      const stateJson = JSON.stringify(aggState);
+      const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ cursor: stateJson, updated_at: new Date().toISOString() }).eq("id", jobId);
+      if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
+      return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "incomplete_chunks" }], next_cursor: stateJson, more: false, counters, error: "Incomplete aggregate chunks" }, 500);
+    }
+  }
+  // Honest runtime safeguard: pdf-lib still materializes the full final PDF in memory.
+  const MAX_MERGE_BILLS = 20;
+  if (totalBills > MAX_MERGE_BILLS) {
+    const stateJson = JSON.stringify(aggState);
+    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ cursor: stateJson, updated_at: new Date().toISOString() }).eq("id", jobId);
+    if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
+    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 0, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "aggregate_merge_requires_worker" }], next_cursor: stateJson, more: false, counters, error: "Aggregate merge exceeds safe Edge Function memory limit" }, 500);
+  }
   const stamp = Date.now();
   const baseName = (uploadRow as any).base_name ?? "workbook";
   const finalPaths = {
@@ -610,17 +631,16 @@ Deno.serve(async (req) => {
   }
 
   if (!ok) {
-    if (uploadedFinal.length > 0) await admin.storage.from(BUCKET).remove(uploadedFinal);
+    if (uploadedFinal.length > 0) {
+      const { error: rmErr } = await admin.storage.from(BUCKET).remove(uploadedFinal);
+      if (rmErr) console.warn("regenerate: partial final cleanup failed", rmErr.message);
+    }
     counters.aggregates_processed += 0;
     counters.aggregates_failed += 1;
-    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
-    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-    const nextCursor = nextId ? nextId : null;
-    const nextStatus = nextId ? "running" : "completed";
-    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const stateJson = JSON.stringify({ upload_id: uploadId, stage: "merge", chunk_index: aggState.chunk_index, total_bills: aggState.total_bills, chunk_paths: aggState.chunk_paths, chosen_snapshot: aggState.chosen_snapshot, profile: aggState.profile, snapshot: aggState.snapshot });
+    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: stateJson, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: "running", updated_at: new Date().toISOString() }).eq("id", jobId);
     if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "merge_failed" }], next_cursor: nextCursor, more: nextId !== null, counters, error: "Aggregate merge failed" }, 500);
+    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: "merge_failed" }], next_cursor: stateJson, more: false, counters, error: "Aggregate merge failed" }, 500);
   }
 
   const { error: upRowErr } = await admin.from("bill_uploads").update({
@@ -629,17 +649,14 @@ Deno.serve(async (req) => {
     triplicate_pdf_path: finalPaths.triplicate,
   }).eq("id", uploadId);
   if (upRowErr) {
-    await admin.storage.from(BUCKET).remove(Object.values(finalPaths));
+    const { error: rmErr } = await admin.storage.from(BUCKET).remove(Object.values(finalPaths));
+    if (rmErr) console.warn("regenerate: final cleanup failed", rmErr.message);
     counters.aggregates_processed += 0;
     counters.aggregates_failed += 1;
-    const { data: nextRows, error: nextErr } = await admin.from("bill_uploads").select("id").eq("creation_source", "workbook").gt("id", uploadId).order("id", { ascending: true }).limit(1);
-    if (nextErr) return json({ ok: false, error: nextErr.message }, 500);
-    const nextId = nextRows && nextRows.length > 0 ? (nextRows[0] as Record<string, unknown>).id as string : null;
-    const nextCursor = nextId ? nextId : null;
-    const nextStatus = nextId ? "running" : "completed";
-    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: nextCursor, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: nextStatus, updated_at: new Date().toISOString() }).eq("id", jobId);
+    const stateJson = JSON.stringify({ upload_id: uploadId, stage: "merge", chunk_index: aggState.chunk_index, total_bills: aggState.total_bills, chunk_paths: aggState.chunk_paths, chosen_snapshot: aggState.chosen_snapshot, profile: aggState.profile, snapshot: aggState.snapshot });
+    const { error: _cpErr } = await admin.from("bill_pdf_regeneration_jobs").update({ phase: "aggregates", cursor: stateJson, aggregates_processed: counters.aggregates_processed, aggregates_failed: counters.aggregates_failed, status: "running", updated_at: new Date().toISOString() }).eq("id", jobId);
     if (_cpErr) return json({ ok: false, error: _cpErr.message }, 500);
-    return json({ ok: true, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: (upRowErr as { message: string }).message }], next_cursor: nextCursor, more: nextId !== null, counters });
+    return json({ ok: false, job_id: jobId, phase: "aggregates", processed: 1, succeeded: 0, failed: 1, failures: [{ upload_id: uploadId, reason: (upRowErr as { message: string }).message }], next_cursor: stateJson, more: false, counters, error: (upRowErr as { message: string }).message }, 500);
   }
 
   const allChunks = Object.values(mergeChunkPaths).flat();
