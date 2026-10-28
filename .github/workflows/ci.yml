@@ -66,6 +66,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # Several admin self-tests import desktop source modules, which resolve their
+      # own dependencies from the desktop tree. Install that tree too so those
+      # imports resolve in this job without merging the two apps' builds.
+      - name: Install desktop dependencies for shared self-tests
+        run: npm --prefix ../Metalworker_desktop ci --no-audit --no-fund
+
       # The Expo web export and `expo lint` read EXPO_PUBLIC_* values at build time.
       # These are placeholders: the anon key is a public, row-level-security-limited
       # credential by design and this one is not a key to anything. The point is only

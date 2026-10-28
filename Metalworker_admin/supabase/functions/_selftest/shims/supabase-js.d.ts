@@ -16,7 +16,7 @@ declare module "npm:@supabase/supabase-js@2" {
    * would be a defect in the shim showing up as a defect in the functions.
    */
   export interface QueryBuilder {
-    select(columns?: string): QueryBuilder;
+    select(columns?: string, options?: { count?: "exact" | "planned" | "estimated"; head?: boolean }): QueryBuilder;
     insert(values: unknown): QueryBuilder;
     update(values: unknown): QueryBuilder;
     delete(): QueryBuilder;
@@ -32,10 +32,10 @@ declare module "npm:@supabase/supabase-js@2" {
     order(column: string, opts?: { ascending?: boolean }): QueryBuilder;
     limit(n: number): QueryBuilder;
     range(from: number, to: number): QueryBuilder;
-    maybeSingle(): PromiseLike<{ data: any; error: { message: string; code?: string } | null }>;
-    single(): PromiseLike<{ data: any; error: { message: string; code?: string } | null }>;
+    maybeSingle(): PromiseLike<{ data: any; error: { message: string; code?: string } | null; count?: number | null }>;
+    single(): PromiseLike<{ data: any; error: { message: string; code?: string } | null; count?: number | null }>;
     then<T = any>(
-      onfulfilled?: (value: { data: any; error: { message: string; code?: string } | null }) => T
+      onfulfilled?: (value: { data: any; error: { message: string; code?: string } | null; count?: number | null }) => T
     ): PromiseLike<T>;
   }
 
