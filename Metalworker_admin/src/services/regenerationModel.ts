@@ -61,6 +61,14 @@ export interface RegenerationView {
   started_at: string;
   updated_at: string;
   lease_active: boolean;
+  /** The job's own selection, frozen when it started. Null only for pre-scope jobs. */
+  scope: {
+    workbooks_selected: number;
+    all_workbooks: boolean;
+    eligible_total: number;
+    include_standalone: boolean;
+    workbooks: { upload_id: string; name: string; status: "pending" | "in_progress" | WorkbookResult["status"] }[];
+  } | null;
   workbooks_total: number;
   workbooks_finished: number;
   current_workbook: null | {
@@ -296,4 +304,83 @@ export function copyStateLabel(state: CopyState): string {
     case "failed":
       return "Not replaced";
   }
+}
+
+/* ──────────────────────────────────────────────
+   Workbook selection
+   ────────────────────────────────────────────── */
+
+/** One row of the selector, as `list_workbooks` returns it. */
+export interface WorkbookOption {
+  upload_id: string;
+  name: string;
+  uploaded_at: string | null;
+  bill_count: number;
+  eligible: boolean;
+  ineligible_reason: string | null;
+  has_combined_pdfs: boolean;
+}
+
+/** What a start request asks for. The server validates every part of it. */
+export interface RegenerationScope {
+  upload_ids: string[];
+  include_standalone: boolean;
+}
+
+/** Rows whose filename contains `query` (case-insensitive). Display only. */
+export function filterWorkbookOptions(options: WorkbookOption[], query: string): WorkbookOption[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return options;
+  return options.filter((o) => o.name.toLowerCase().includes(q));
+}
+
+/**
+ * Every eligible workbook — deliberately from the full list, never from the
+ * filtered one, so "Select all" means all even while a search is narrowing what
+ * is on screen.
+ */
+export function selectAllEligible(options: WorkbookOption[]): Set<string> {
+  return new Set(options.filter((o) => o.eligible).map((o) => o.upload_id));
+}
+
+/** Toggle one workbook. Ineligible workbooks cannot be selected. */
+export function toggleWorkbook(selected: ReadonlySet<string>, option: WorkbookOption): Set<string> {
+  const next = new Set(selected);
+  if (next.has(option.upload_id)) next.delete(option.upload_id);
+  else if (option.eligible) next.add(option.upload_id);
+  return next;
+}
+
+export function eligibleCount(options: WorkbookOption[]): number {
+  return options.filter((o) => o.eligible).length;
+}
+
+/** e.g. "3 of 24 workbooks selected". Counts only selections that are still eligible. */
+export function selectionLabel(selected: ReadonlySet<string>, options: WorkbookOption[]): string {
+  const total = eligibleCount(options);
+  const count = options.filter((o) => o.eligible && selected.has(o.upload_id)).length;
+  return `${count} of ${total} workbook${total === 1 ? "" : "s"} selected`;
+}
+
+/**
+ * The request for the current selection, or null when nothing would be done —
+ * the start button is disabled on null, so an empty job can never be requested.
+ * Ids are sent in list order and only if eligible.
+ */
+export function buildScope(selected: ReadonlySet<string>, options: WorkbookOption[], includeStandalone: boolean): RegenerationScope | null {
+  const ids = options.filter((o) => o.eligible && selected.has(o.upload_id)).map((o) => o.upload_id);
+  if (ids.length === 0 && !includeStandalone) return null;
+  return { upload_ids: ids, include_standalone: includeStandalone };
+}
+
+/** How a job's scope reads in the progress panel. */
+export function scopeLabel(view: RegenerationView): string {
+  const sc = view.scope;
+  if (!sc) return "All workbooks and standalone bills";
+  const workbooks = sc.all_workbooks
+    ? `All ${sc.workbooks_selected} eligible workbook${sc.workbooks_selected === 1 ? "" : "s"}`
+    : sc.workbooks_selected === 0
+      ? "No workbooks"
+      : `${sc.workbooks_selected} selected workbook${sc.workbooks_selected === 1 ? "" : "s"}`;
+  return `${workbooks} · standalone bills ${sc.include_standalone ? "included" : "not included"}`;
 }

@@ -20,6 +20,7 @@ import {
   COPY_NAMES,
   copyStateLabel,
   overallProgress,
+  scopeLabel,
   problemWorkbooks,
   stageLabel,
   stageProgress,
@@ -46,7 +47,7 @@ const TONE_BG: Record<Summary["tone"], string> = {
 
 export default function RegenerationPanel({ controller }: { controller: RegenerationController }) {
   const [showDetails, setShowDetails] = useState(true);
-  const { mode, view, wait, error, cancelling } = controller;
+  const { mode, view, wait, error, cancelling, attachedToExisting } = controller;
   if (mode === "idle") return null;
 
   const running = mode === "starting" || mode === "running";
@@ -142,6 +143,24 @@ export default function RegenerationPanel({ controller }: { controller: Regenera
       </div>
 
       {wait && <Notice tone="warning">{wait.message}</Notice>}
+      {attachedToExisting && view?.status === "running" && (
+        <Notice tone="warning">
+          A regeneration was already running, so your selection was not applied. This is the running job and its own scope.
+        </Notice>
+      )}
+
+      {view?.scope && (
+        <p className="text-xs text-text-secondary flex flex-wrap gap-x-4 gap-y-1">
+          <span>
+            <strong className="text-text">Scope:</strong> {scopeLabel(view)}
+          </span>
+          {view.scope.workbooks_selected > 0 && (
+            <span>
+              <strong className="text-text">Completed:</strong> {view.workbooks_finished} of {view.scope.workbooks_selected} workbooks
+            </span>
+          )}
+        </p>
+      )}
       {error && mode !== "error" && <Notice tone="danger">{error}</Notice>}
 
       {view && (
@@ -217,6 +236,35 @@ export default function RegenerationPanel({ controller }: { controller: Regenera
             </div>
           )}
 
+          {showDetails && view.scope && view.scope.workbooks.length > 1 && (
+            <div className="border-t border-border pt-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-text-muted mb-2">Selected workbooks</p>
+              <ul className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                {view.scope.workbooks.map((w) => (
+                  <li key={w.upload_id} className="flex items-center gap-2 text-xs">
+                    {w.status === "succeeded" ? (
+                      <CheckCircle2 size={13} className="text-success shrink-0" />
+                    ) : w.status === "failed" ? (
+                      <XCircle size={13} className="text-danger shrink-0" />
+                    ) : w.status === "partial" ? (
+                      <AlertTriangle size={13} className="text-warning shrink-0" />
+                    ) : w.status === "in_progress" ? (
+                      <Loader2 size={13} className="text-primary animate-spin shrink-0" />
+                    ) : (
+                      <span className="w-[13px] h-[13px] shrink-0 flex items-center justify-center">
+                        <span className="w-1.5 h-1.5 rounded-full bg-text-muted/60" />
+                      </span>
+                    )}
+                    <span className="truncate text-text font-medium flex-1" title={w.name}>
+                      {w.name}
+                    </span>
+                    <span className="text-text-muted shrink-0">{workbookStatusLabel(w.status)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Stat label="Bills regenerated" value={view.counters.bills_succeeded} />
             <Stat label="Bills failed" value={view.counters.bills_failed} bad={view.counters.bills_failed > 0} />
@@ -266,6 +314,23 @@ export default function RegenerationPanel({ controller }: { controller: Regenera
       )}
     </section>
   );
+}
+
+function workbookStatusLabel(status: string): string {
+  switch (status) {
+    case "succeeded":
+      return "Done";
+    case "partial":
+      return "Done, some bills failed";
+    case "failed":
+      return "Failed";
+    case "skipped":
+      return "Skipped";
+    case "in_progress":
+      return "In progress";
+    default:
+      return "Waiting";
+  }
 }
 
 function Notice({ tone, children }: { tone: "warning" | "danger"; children: ReactNode }) {

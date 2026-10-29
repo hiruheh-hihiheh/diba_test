@@ -5,8 +5,11 @@
 // the HTTP surface (auth, actions) and the Supabase-backed implementations of the
 // engine's store and storage interfaces.
 //
-// ACTIONS (POST body `{ action, job_id? }`)
-//   start   return the running job, or create one. Never creates a second job.
+// ACTIONS (POST body `{ action, job_id?, scope? }`)
+//   list_workbooks  the workbook uploads the selector offers, with eligibility.
+//   start   create a job for `scope = { upload_ids, include_standalone }`, validated
+//           against the database; or return the running job unchanged. Never creates
+//           a second job and never changes a running job's selection.
 //   step    advance the given job by a few units of work and report progress.
 //   status  report the running job (or the given job) without doing any work.
 //   cancel  stop the given job at a unit boundary; active PDFs are left as they are.
@@ -25,6 +28,7 @@ import {
   TransientError,
   cancelJob,
   jobStatus,
+  listWorkbooks,
   messageOf,
   startJob,
   stepJob,
@@ -36,6 +40,7 @@ import {
   type RegenerationStore,
   type UploadRow,
   type WorkbookBillRef,
+  type WorkbookUploadRow,
 } from "./engine.ts";
 
 const BUCKET = "bills";
@@ -105,21 +110,23 @@ function supabaseStore(admin: Client): RegenerationStore {
       if (error) dbFail("update job", error);
       return firstRow<JobRow>(data);
     },
-    async listWorkbookUploadIds() {
-      const ids: string[] = [];
+    async listWorkbookUploads() {
+      // Every workbook upload, whatever its status: the selector shows ineligible
+      // ones too (greyed, with the reason), and start-time validation needs to tell
+      // "ineligible" apart from "does not exist".
+      const out: WorkbookUploadRow[] = [];
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await admin
           .from("bill_uploads")
-          .select("id")
+          .select("id, original_filename, base_name, status, invoice_count, created_at, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
           .eq("creation_source", "workbook")
-          .eq("status", "completed")
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
           .range(from, from + PAGE - 1);
         if (error) dbFail("list workbooks", error);
-        const rows = (data ?? []) as { id: string }[];
-        ids.push(...rows.map((r) => r.id));
-        if (rows.length < PAGE) return ids;
+        const rows = (data ?? []) as WorkbookUploadRow[];
+        out.push(...rows);
+        if (rows.length < PAGE) return out;
       }
     },
     async countStandaloneBills(createdBefore) {
@@ -321,7 +328,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "Admin access only." }, 403);
   }
 
-  let body: { action?: string; job_id?: string | null } = {};
+  let body: { action?: string; job_id?: string | null; scope?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -339,8 +346,12 @@ Deno.serve(async (req) => {
 
   try {
     switch (action) {
+      case "list_workbooks":
+        return json(await listWorkbooks(deps));
       case "start":
-        return json(await startJob(deps, user.id as string));
+        // The scope is validated against the database inside startJob; a missing
+        // scope is refused, never treated as "all workbooks".
+        return json(await startJob(deps, user.id as string, body.scope));
       case "step":
         if (!jobId) return json({ ok: false, error: "job_id is required." }, 400);
         return json(await stepJob(deps, jobId));
@@ -364,7 +375,9 @@ Deno.serve(async (req) => {
         503
       );
     }
-    if (err instanceof PermanentError) return json({ ok: false, code: err.code, error: err.message }, 404);
+    if (err instanceof PermanentError) {
+      return json({ ok: false, code: err.code, error: err.message }, err.code === "job_not_found" ? 404 : 400);
+    }
     console.error("regenerate: request failed", messageOf(err));
     return json({ ok: false, code: err instanceof TransientError ? err.code : "unexpected_error", error: messageOf(err), retryable: true }, 503);
   }

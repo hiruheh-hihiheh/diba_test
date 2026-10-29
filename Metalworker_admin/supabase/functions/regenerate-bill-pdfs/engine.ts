@@ -171,6 +171,19 @@ export interface UploadRow {
   triplicate_pdf_path: string | null;
 }
 
+/** The `bill_uploads` columns the workbook selector shows. */
+export interface WorkbookUploadRow {
+  id: string;
+  original_filename: string | null;
+  base_name: string | null;
+  status: string;
+  invoice_count: number | null;
+  created_at: string | null;
+  original_pdf_path: string | null;
+  duplicate_pdf_path: string | null;
+  triplicate_pdf_path: string | null;
+}
+
 export interface WorkbookBillRef {
   id: string;
   sheet_order: number | null;
@@ -198,8 +211,8 @@ export interface RegenerationStore {
    * that no longer holds.
    */
   updateJob(id: string, expectedRevision: number, patch: JobPatch, lease: { token: string; now: string }): Promise<JobRow | null>;
-  /** Completed workbook uploads, oldest first. */
-  listWorkbookUploadIds(): Promise<string[]>;
+  /** Every Excel workbook upload (any status), oldest first. */
+  listWorkbookUploads(): Promise<WorkbookUploadRow[]>;
   /** Finalized bills that belong to no workbook, created no later than `createdBefore`. */
   countStandaloneBills(createdBefore: string): Promise<number>;
   nextStandaloneBill(afterId: string | null, createdBefore: string): Promise<BillRow | null>;
@@ -339,11 +352,31 @@ export interface Counters {
   aggregates_failed: number;
 }
 
+/**
+ * What the job was started for, fixed at start and never changed afterwards.
+ *
+ * `workbooks` (on JobState) holds exactly the upload ids the admin selected, in
+ * upload order; this records how that selection was described so every screen,
+ * including one that reconnects later, shows the job's own scope.
+ */
+export interface JobScope {
+  workbook_names: string[];
+  /** True when the selection was every eligible workbook at start time. */
+  all_workbooks: boolean;
+  /** Eligible workbooks that existed at start time. */
+  eligible_total: number;
+  /** Standalone Bill Creator bills are included only when explicitly chosen. */
+  include_standalone: boolean;
+}
+
 export interface JobState {
   v: 2;
   stage: Stage;
   started_at: string;
+  /** The selected workbook upload ids. Frozen for the lifetime of the job. */
   workbooks: string[];
+  /** Absent only on states written before scoped jobs existed: those were "everything". */
+  scope?: JobScope;
   wb_index: number;
   wb: WorkbookState | null;
   standalone_total: number;
@@ -364,15 +397,21 @@ export interface JobState {
 
 export type JobOutcome = "succeeded" | "partial" | "failed" | "empty" | "cancelled";
 
-export function initialState(workbooks: string[], standaloneTotal: number, startedAt: string): JobState {
+export function initialState(
+  workbooks: string[],
+  standaloneTotal: number,
+  startedAt: string,
+  scope: JobScope = { workbook_names: workbooks.map(() => ""), all_workbooks: true, eligible_total: workbooks.length, include_standalone: true }
+): JobState {
   return {
     v: 2,
-    stage: workbooks.length > 0 ? "workbook_prepare" : "standalone_bills",
+    stage: workbooks.length > 0 ? "workbook_prepare" : scope.include_standalone ? "standalone_bills" : "done",
     started_at: startedAt,
     workbooks,
+    scope,
     wb_index: 0,
     wb: null,
-    standalone_total: standaloneTotal,
+    standalone_total: scope.include_standalone ? standaloneTotal : 0,
     standalone_processed: 0,
     standalone_succeeded: 0,
     standalone_failed: 0,
@@ -535,7 +574,7 @@ export async function abandonUnit(ctx: Ctx, state: JobState, crashed: boolean): 
     case "workbook_prepare": {
       finishWorkbook(state, {
         upload_id: state.workbooks[state.wb_index],
-        name: `Workbook ${state.wb_index + 1}`,
+        name: scopedName(state, state.wb_index),
         status: "failed",
         bills_total: 0,
         bills_succeeded: 0,
@@ -579,7 +618,7 @@ async function prepareWorkbook(ctx: Ctx, state: JobState): Promise<void> {
   const uploadId = state.workbooks[state.wb_index];
   const upload = await ctx.deps.store.loadUpload(uploadId);
   if (!upload || upload.creation_source !== "workbook") {
-    finishWorkbook(state, skippedWorkbook(uploadId, uploadId, "workbook_missing", "This workbook was deleted after regeneration started."));
+    finishWorkbook(state, skippedWorkbook(uploadId, scopedName(state, state.wb_index), "workbook_missing", "This workbook was deleted after regeneration started."));
     return;
   }
   const name = upload.original_filename?.trim() || upload.base_name?.trim() || "Workbook";
@@ -1090,14 +1129,28 @@ async function cleanupWorkbook(ctx: Ctx, state: JobState): Promise<void> {
     for (const kind of COPY_ORDER) temp.push(chunkPath(wb, i, kind));
   }
   const fresh = new Set(COPY_ORDER.map((k) => finalPath(wb, k)));
+
+  // What the database points at decides what may be deleted, not the job's own
+  // flag: a publish can land in the database and the worker die before the job
+  // records it. Treating that workbook as unpublished would delete the very files
+  // it now references.
+  const upload = await ctx.deps.store.loadUpload(wb.upload_id);
+  const live = upload ? uploadPaths(upload) : null;
+  if (!wb.published && live && COPY_ORDER.every((k) => live[k] === finalPath(wb, k))) {
+    ctx.log("regenerate: publish had already landed; keeping the new aggregates", { upload: wb.upload_id });
+    wb.published = true;
+    wb.aggregate_failure = null;
+  }
+  const referenced = new Set(live ? COPY_ORDER.map((k) => live[k]) : []);
+
   if (wb.published) {
     for (const k of COPY_ORDER) {
       const old = wb.old_paths[k];
-      if (old && !fresh.has(old)) temp.push(old);
+      if (old && !fresh.has(old) && !referenced.has(old)) temp.push(old);
     }
   } else {
     const active = new Set(COPY_ORDER.map((k) => wb.old_paths[k]));
-    for (const p of fresh) if (!active.has(p)) temp.push(p);
+    for (const p of fresh) if (!active.has(p) && !referenced.has(p)) temp.push(p);
   }
   const warning = await removeAll(ctx, temp);
   finishWorkbook(state, workbookResult(wb, warning));
@@ -1148,7 +1201,8 @@ function finishWorkbook(state: JobState, result: WorkbookResult): void {
   state.results.push(result);
   state.wb = null;
   state.wb_index++;
-  state.stage = state.wb_index < state.workbooks.length ? "workbook_prepare" : "standalone_bills";
+  state.stage =
+    state.wb_index < state.workbooks.length ? "workbook_prepare" : includesStandalone(state) ? "standalone_bills" : "done";
 }
 
 /* ---------- standalone bills ---------- */
@@ -1187,6 +1241,15 @@ function recordStandaloneOutcome(state: JobState, billId: string, invoiceNo: str
   state.standalone_after = billId;
 }
 
+/** Older states had no scope and always went on to standalone bills. */
+function includesStandalone(state: JobState): boolean {
+  return state.scope ? state.scope.include_standalone : true;
+}
+
+function scopedName(state: JobState, index: number): string {
+  return state.scope?.workbook_names[index] || `Workbook ${index + 1}`;
+}
+
 export function outcomeOf(state: JobState): JobOutcome {
   const c = state.counters;
   const failed = c.bills_failed + c.aggregates_failed;
@@ -1212,7 +1275,115 @@ export interface ActionResult {
   units?: number;
 }
 
-export async function startJob(deps: RegenerationDeps, userId: string | null): Promise<ActionResult> {
+/* ──────────────────────────────────────────────
+   Workbook selection
+   ────────────────────────────────────────────── */
+
+/** Upper bound on one request's selection; far above any real workbook count. */
+export const MAX_SELECTED_WORKBOOKS = 5_000;
+
+/** One row of the workbook selector. */
+export interface WorkbookOption {
+  upload_id: string;
+  name: string;
+  uploaded_at: string | null;
+  /** `bill_uploads.invoice_count`: the sheets imported from the workbook. */
+  bill_count: number;
+  eligible: boolean;
+  ineligible_reason: string | null;
+  /** Whether the workbook currently has combined (aggregate) PDFs. */
+  has_combined_pdfs: boolean;
+}
+
+/**
+ * The one definition of "this workbook can be regenerated": a completed Excel
+ * upload. An upload that never finished, or failed, has no finalized bills to
+ * rebuild from. Used both to list the selector and to validate a start request.
+ */
+export function workbookOption(row: WorkbookUploadRow): WorkbookOption {
+  const eligible = row.status === "completed";
+  return {
+    upload_id: row.id,
+    name: row.original_filename?.trim() || row.base_name?.trim() || "Workbook",
+    uploaded_at: row.created_at ?? null,
+    bill_count: Number(row.invoice_count) || 0,
+    eligible,
+    ineligible_reason: eligible
+      ? null
+      : row.status === "failed"
+        ? "This upload failed, so it has no bills to regenerate."
+        : "This upload never finished, so it has no bills to regenerate.",
+    has_combined_pdfs: !!(row.original_pdf_path || row.duplicate_pdf_path || row.triplicate_pdf_path),
+  };
+}
+
+export interface WorkbookListResult {
+  ok: true;
+  workbooks: WorkbookOption[];
+  /** Finalized Bill Creator bills, which belong to no workbook. */
+  standalone_count: number;
+}
+
+export async function listWorkbooks(deps: RegenerationDeps): Promise<WorkbookListResult> {
+  const rows = await deps.store.listWorkbookUploads();
+  const standalone = await deps.store.countStandaloneBills(new Date(nowOf(deps)).toISOString());
+  return { ok: true, workbooks: rows.map(workbookOption), standalone_count: standalone };
+}
+
+/**
+ * Check a start request's scope against the database. Nothing about it is taken on
+ * trust: every id must be a distinct, eligible workbook upload, and an empty or
+ * missing selection is refused rather than read as "everything".
+ *
+ * Returns the selection in upload order (oldest first), not request order, so two
+ * requests for the same workbooks always produce the same job.
+ */
+export function validateScope(raw: unknown, rows: WorkbookUploadRow[]): { ids: string[]; scope: JobScope } {
+  const invalid = (message: string) => new PermanentError("invalid_scope", message);
+  if (!raw || typeof raw !== "object") throw invalid("Choose which workbooks to regenerate.");
+  const { upload_ids: ids, include_standalone: standalone } = raw as { upload_ids?: unknown; include_standalone?: unknown };
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || id.trim() === "")) {
+    throw invalid("The workbook selection must be a list of workbook ids.");
+  }
+  if (typeof standalone !== "boolean") throw invalid("Say explicitly whether standalone bills are included.");
+  if (ids.length > MAX_SELECTED_WORKBOOKS) throw invalid(`At most ${MAX_SELECTED_WORKBOOKS} workbooks can be selected at once.`);
+  if (new Set(ids).size !== ids.length) throw invalid("The same workbook was selected more than once.");
+  if (ids.length === 0 && !standalone) throw invalid("Select at least one workbook (or standalone bills) to regenerate.");
+
+  const byId = new Map(rows.map((r) => [r.id, workbookOption(r)]));
+  const unknown = (ids as string[]).filter((id) => !byId.has(id));
+  if (unknown.length > 0) {
+    throw invalid(
+      unknown.length === 1
+        ? "1 selected workbook does not exist or is not an Excel workbook upload."
+        : `${unknown.length} selected workbooks do not exist or are not Excel workbook uploads.`
+    );
+  }
+  const ineligible = (ids as string[]).map((id) => byId.get(id) as WorkbookOption).filter((o) => !o.eligible);
+  if (ineligible.length > 0) {
+    throw invalid(`Not eligible for regeneration: ${ineligible.map((o) => `${o.name} (${o.ineligible_reason})`).join("; ")}`);
+  }
+
+  const selected = new Set(ids as string[]);
+  const eligible = rows.map((r) => byId.get(r.id) as WorkbookOption).filter((o) => o.eligible);
+  const ordered = eligible.filter((o) => selected.has(o.upload_id));
+  return {
+    ids: ordered.map((o) => o.upload_id),
+    scope: {
+      workbook_names: ordered.map((o) => o.name),
+      all_workbooks: eligible.length > 0 && ordered.length === eligible.length,
+      eligible_total: eligible.length,
+      include_standalone: standalone,
+    },
+  };
+}
+
+/**
+ * Start a job for exactly the requested scope - or, when a job is already running,
+ * return THAT job untouched (`attached: true`). A second start can never change a
+ * running job's selection.
+ */
+export async function startJob(deps: RegenerationDeps, userId: string | null, requestedScope: unknown): Promise<ActionResult> {
   const { store } = deps;
   const running = await store.findRunningJob();
   if (running && parseState(running.cursor)) return { ok: true, job: describeJob(running, nowOf(deps)), attached: true };
@@ -1234,10 +1405,10 @@ export async function startJob(deps: RegenerationDeps, userId: string | null): P
     if (!closed) throw new TransientError("start_conflict", "A previous regeneration job is still being closed; please try again.");
   }
 
+  const { ids, scope } = validateScope(requestedScope, await store.listWorkbookUploads());
   const startedAt = new Date(nowOf(deps)).toISOString();
-  const workbooks = await store.listWorkbookUploadIds();
-  const standalone = await store.countStandaloneBills(startedAt);
-  const state = initialState(workbooks, standalone, startedAt);
+  const standalone = scope.include_standalone ? await store.countStandaloneBills(startedAt) : 0;
+  const state = initialState(ids, standalone, startedAt, scope);
   const inserted = await store.insertRunningJob({ started_by: userId, started_at: startedAt, cursor: JSON.stringify(state), phase: "bills" });
   if (inserted) return { ok: true, job: describeJob(inserted, nowOf(deps)), attached: false };
 
@@ -1455,6 +1626,14 @@ export interface RegenerationView {
   updated_at: string;
   /** True while some invocation holds the job (it is actively being worked on). */
   lease_active: boolean;
+  /** The job's own, frozen selection. */
+  scope: {
+    workbooks_selected: number;
+    all_workbooks: boolean;
+    eligible_total: number;
+    include_standalone: boolean;
+    workbooks: { upload_id: string; name: string; status: "pending" | "in_progress" | WorkbookOutcome }[];
+  } | null;
   workbooks_total: number;
   workbooks_finished: number;
   current_workbook: null | {
@@ -1503,6 +1682,7 @@ export function describeJob(row: JobRow, now: number): RegenerationView {
       ...base,
       outcome: row.status === "completed" ? "succeeded" : row.status === "abandoned" ? "cancelled" : row.status === "failed" ? "failed" : null,
       stage: "done",
+      scope: null,
       workbooks_total: 0,
       workbooks_finished: 0,
       current_workbook: null,
@@ -1569,6 +1749,22 @@ export function describeJob(row: JobRow, now: number): RegenerationView {
     ...base,
     outcome: state.outcome ?? (row.status === "abandoned" ? "cancelled" : row.status === "completed" ? outcomeOf(state) : null),
     stage: state.stage,
+    scope: {
+      workbooks_selected: state.workbooks.length,
+      all_workbooks: state.scope?.all_workbooks ?? true,
+      eligible_total: state.scope?.eligible_total ?? state.workbooks.length,
+      include_standalone: includesStandalone(state),
+      workbooks: state.workbooks.map((id, i) => {
+        const result = state.results[i];
+        const live = i === state.wb_index && state.wb ? state.wb.name : null;
+        const current = i === state.wb_index && state.stage !== "standalone_bills" && state.stage !== "done";
+        return {
+          upload_id: id,
+          name: result?.name ?? live ?? scopedName(state, i),
+          status: result ? result.status : current ? "in_progress" : "pending",
+        };
+      }),
+    },
     workbooks_total: state.workbooks.length,
     workbooks_finished: state.results.length,
     current_workbook: current,

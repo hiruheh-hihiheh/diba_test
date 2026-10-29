@@ -23,6 +23,7 @@ import {
   COPY_NAMES,
   copyStateLabel,
   overallProgress,
+  scopeLabel,
   problemWorkbooks,
   stageLabel,
   stageProgress,
@@ -42,7 +43,7 @@ export function RegenerationPanel({ controller }: Props) {
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [showDetails, setShowDetails] = useState(true);
-  const { mode, view, wait, error, cancelling } = controller;
+  const { mode, view, wait, error, cancelling, attachedToExisting } = controller;
 
   if (mode === "idle") return null;
 
@@ -150,6 +151,30 @@ export function RegenerationPanel({ controller }: Props) {
         </View>
       )}
 
+      {attachedToExisting && view?.status === "running" && (
+        <View style={[styles.notice, { backgroundColor: theme.colors.infoMuted }]}>
+          <Icon name="info" size={14} color={theme.colors.info} />
+          <Text style={[styles.noticeText, { color: theme.colors.text }]}>
+            A regeneration was already running, so your selection was not applied. This is the running job and its own scope.
+          </Text>
+        </View>
+      )}
+
+      {view?.scope && (
+        <View style={styles.scopeRow}>
+          <Text style={styles.scopeText}>
+            <Text style={styles.scopeStrong}>Scope: </Text>
+            {scopeLabel(view)}
+          </Text>
+          {view.scope.workbooks_selected > 0 && (
+            <Text style={styles.scopeText}>
+              <Text style={styles.scopeStrong}>Completed: </Text>
+              {view.workbooks_finished} of {view.scope.workbooks_selected} workbooks
+            </Text>
+          )}
+        </View>
+      )}
+
       {view && (
         <>
           <ProgressRow
@@ -230,6 +255,38 @@ export function RegenerationPanel({ controller }: Props) {
             </View>
           )}
 
+          {showDetails && view.scope && view.scope.workbooks.length > 1 && (
+            <View style={styles.section}>
+              <Text style={styles.overline}>Selected workbooks</Text>
+              {view.scope.workbooks.slice(0, 12).map((w) => (
+                <View key={w.upload_id} style={styles.problem}>
+                  <Icon
+                    name={w.status === "succeeded" ? "checkCircle" : w.status === "failed" ? "xCircle" : w.status === "partial" ? "alert" : w.status === "in_progress" ? "refresh" : "info"}
+                    size={14}
+                    color={
+                      w.status === "succeeded"
+                        ? theme.colors.success
+                        : w.status === "failed"
+                          ? theme.colors.danger
+                          : w.status === "partial"
+                            ? theme.colors.warning
+                            : w.status === "in_progress"
+                              ? theme.colors.primary
+                              : theme.colors.textMuted
+                    }
+                  />
+                  <Text style={[styles.problemTitle, styles.problemText]} numberOfLines={1}>
+                    {w.name}
+                  </Text>
+                  <Text style={styles.meta}>{workbookStatusLabel(w.status)}</Text>
+                </View>
+              ))}
+              {view.scope.workbooks.length > 12 && (
+                <Text style={styles.meta}>…and {view.scope.workbooks.length - 12} more.</Text>
+              )}
+            </View>
+          )}
+
           <View style={styles.stats}>
             <Stat label="Bills regenerated" value={view.counters.bills_succeeded} styles={styles} />
             <Stat label="Bills failed" value={view.counters.bills_failed} tone={view.counters.bills_failed > 0 ? theme.colors.danger : undefined} styles={styles} />
@@ -284,6 +341,23 @@ export function RegenerationPanel({ controller }: Props) {
    ────────────────────────────────────────────── */
 
 type Styles = ReturnType<typeof createStyles>;
+
+function workbookStatusLabel(status: string): string {
+  switch (status) {
+    case "succeeded":
+      return "Done";
+    case "partial":
+      return "Done, some bills failed";
+    case "failed":
+      return "Failed";
+    case "skipped":
+      return "Skipped";
+    case "in_progress":
+      return "In progress";
+    default:
+      return "Waiting";
+  }
+}
 
 function PanelButton({
   label,
@@ -474,6 +548,9 @@ function createStyles(theme: AppTheme) {
     copyDetail: { fontSize: theme.textSizes.caption, fontWeight: "600" },
     meta: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs, lineHeight: 17 },
     stats: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing.sm },
+    scopeRow: { gap: 2 },
+    scopeText: { color: theme.colors.textSecondary, fontSize: theme.textSizes.sm },
+    scopeStrong: { color: theme.colors.text, fontWeight: "700" },
     stat: {
       flexGrow: 1,
       flexBasis: 120,

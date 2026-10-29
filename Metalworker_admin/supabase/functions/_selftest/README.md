@@ -40,7 +40,8 @@ would pass vacuously — that is why it reads the container rather than the cell
 `test-per-bill`, `test-billing-folders`, `test-edit`, `test-jobkind`,
 `test-structure`, `test-folder-summary-export`, `test-bulk-zip`, `test-audit-log`,
 `test-bill-job-connections`, `test-bill-creator`, `test-fixture-hygiene`,
-`test-snapshot-consistency`, `test-regeneration` and `audit`.
+`test-snapshot-consistency`, `test-regeneration`, `test-regeneration-scope` and
+`audit`.
 
 ## What each one proves
 
@@ -56,6 +57,7 @@ would pass vacuously — that is why it reads the container rather than the cell
 | `test-audit-log.ts` | Does every `admin_audit_log` insert use columns that actually exist, and does no policy grant clients a read surface? Guards the audit trail against silent write failures. |
 | `test-fixture-hygiene.ts` | Can real business data reach a committed workbook? Inflates every member of all three workbooks and requires every identifier-shaped value to be an approved placeholder, then proves its own rules still fire against synthetic samples. |
 | `test-regeneration.ts` | Does "Regenerate All PDFs" rebuild stored PDFs safely, one workbook at a time? Runs the real `regenerate-bill-pdfs/engine.ts` against an in-memory database and bucket (`regeneration-fakes.ts`) that can inject transient errors, killed workers, missing/corrupt chunks and concurrent edits. Proves chunked assembly is byte-identical to a single-pass render, strict workbook sequencing, resume after reload, no duplicate jobs or double counts, bounded retries that end in a recorded failure instead of a loop, preserved active PDFs on every failure path, and that the client summary never claims success when something failed. |
+| `test-regeneration-scope.ts` | Does "Regenerate PDFs" touch only the workbooks the admin selected? Drives the real engine and the shared selector helpers: one or several selected workbooks are regenerated and nothing else is read, written or removed; Select all covers every eligible workbook even while a search narrows the list; an empty, duplicate, unknown, unfinished or non-workbook selection is refused server-side with no job created; a running job keeps its original scope through a reload and a second start; progress, failures and the summary count only the selection; standalone Bill Creator bills run only when explicitly chosen. |
 | `test-pdf.ts` | Is the output **three** documents named `<base>_original/_duplicate/_triplicate.pdf`, with a valid header, trailer, `/Pages /Count`, a `startxref` that lands on the xref, every xref offset resolving to its own object, and one content stream per page? Does every page belong to an invoice, are the pages in worksheet order, and did every bill keep its invoice number, total and quantity? A bill may legitimately span two pages, so pages are attributed through the footer rather than assumed. |
 | `test-jobkind.ts` | Is each page's job classification the *display* label (`LABOUR JOB`, `WITH METAL`) and not the raw stored token, and is it on the page belonging to its own invoice rather than swapped? Reports which sheets are which kind. |
 | `test-structure.ts` | The requirement that empty must not mean absent. Every reference row the source declared is still drawn, rows whose value is blank still carry their label, all seven line-item columns are present on every table, no text starts outside the printable width, and no empty cell was given a dash the workbook did not contain. |

@@ -58,6 +58,7 @@ import {
 } from "../services/invoiceLogos";
 import { useRegeneration } from "../hooks/useRegeneration";
 import { RegenerationPanel } from "../components/bills/RegenerationPanel";
+import { RegenerationScopeDialog } from "../components/bills/RegenerationScopeDialog";
 import { BillingFolderSheet } from "../components/bills/BillingFolderSheet";
 import { BulkOperationOverlay, type BulkOperation } from "../components/bills/BulkOperationOverlay";
 import { BillCopyActions } from "../components/bills/BillCopyActions";
@@ -150,7 +151,8 @@ const [createOpen, setCreateOpen] = useState(false);
   const [allMatchingIds, setAllMatchingIds] = useState<string[] | null>(null);
   const [selectingAll, setSelectingAll] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  /** The workbook selector for "Regenerate All PDFs". */
+  const [regenSelectOpen, setRegenSelectOpen] = useState(false);
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
@@ -864,7 +866,7 @@ const [createOpen, setCreateOpen] = useState(false);
             loading={regeneration.mode === "starting" || regeneration.mode === "running"}
             disabled={regeneration.active}
             style={styles.actionBarBtn}
-            onPress={() => setRegenConfirmOpen(true)}
+            onPress={() => setRegenSelectOpen(true)}
           />
         </View>
         <RegenerationPanel controller={regeneration} />
@@ -1522,19 +1524,18 @@ const [createOpen, setCreateOpen] = useState(false);
       {/* Removing is the same operation as assigning and needs the same re-prints;
           the only difference is that the result cannot be previewed, because the
           result is the absence of something. So it asks. */}
-      <ConfirmDialog
-        visible={regenConfirmOpen}
-        title="Regenerate all PDFs?"
-        message="Every finalized bill's Original, Duplicate and Triplicate PDF is rebuilt with the current layout from the bill records already saved — no workbook needs to be uploaded again and no bill data changes. Workbooks are processed one at a time, and each workbook's combined PDFs are only replaced once all three new copies are verified. Existing PDFs stay in place for anything that fails."
-        confirmLabel="Regenerate"
-        destructive={false}
-        icon="refresh"
-        onCancel={() => setRegenConfirmOpen(false)}
-        onConfirm={() => {
-          setRegenConfirmOpen(false);
-          regeneration.start();
-        }}
-      />
+      {/* Mounted only while open, so every opening loads a fresh list and starts
+          with nothing selected. */}
+      {regenSelectOpen && (
+        <RegenerationScopeDialog
+          visible
+          onCancel={() => setRegenSelectOpen(false)}
+          onConfirm={(scope) => {
+            setRegenSelectOpen(false);
+            regeneration.start(scope);
+          }}
+        />
+      )}
 
       <ConfirmDialog
         visible={bulkLogoConfirm}

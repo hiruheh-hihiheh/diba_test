@@ -54,6 +54,7 @@ import {
 } from "../services/bills";
 import { useRegeneration } from "../hooks/useRegeneration";
 import RegenerationPanel from "../components/bills/RegenerationPanel";
+import RegenerationScopeDialog from "../components/bills/RegenerationScopeDialog";
 import {
   BULK_ZIP_LIMITS,
   buildBulkZip,
@@ -286,27 +287,8 @@ export default function BillsPage() {
     void load(true);
   }, [load]);
   const regeneration = useRegeneration(reloadAfterRegeneration);
-
-  async function confirmRegeneration() {
-    const ok = await confirm({
-      title: "Regenerate all PDFs?",
-      message: (
-        <>
-          Every finalized bill&apos;s Original, Duplicate and Triplicate PDF is rebuilt with the current
-          layout from the bill records already saved —{" "}
-          <strong className="text-text">no workbook needs to be uploaded again</strong> and no bill data
-          changes.
-          <span className="block mt-2">
-            Workbooks are processed one at a time, and each workbook&apos;s combined PDFs are only replaced
-            once all three new copies are verified. Anything that fails keeps its existing PDFs.
-          </span>
-        </>
-      ),
-      confirmLabel: "Regenerate",
-      tone: "primary",
-    });
-    if (ok) regeneration.start();
-  }
+  /** The workbook selector for "Regenerate All PDFs". */
+  const [regenSelectOpen, setRegenSelectOpen] = useState(false);
 
   useEffect(() => {
     // Debounced so typing in the search box does not fire a request per
@@ -1036,7 +1018,7 @@ export default function BillsPage() {
             type="button"
             disabled={regeneration.active}
             title="Rebuild every stored invoice PDF with the current layout, from the saved bill records."
-            onClick={() => void confirmRegeneration()}
+            onClick={() => setRegenSelectOpen(true)}
             className="btn btn-secondary"
           >
             <RefreshCw size={15} className={regeneration.mode === "starting" || regeneration.mode === "running" ? "animate-spin" : ""} />
@@ -1093,6 +1075,18 @@ export default function BillsPage() {
       </div>
 
       <RegenerationPanel controller={regeneration} />
+
+      {/* Mounted only while open, so every opening loads a fresh list and starts
+          with nothing selected. */}
+      {regenSelectOpen && (
+        <RegenerationScopeDialog
+          onCancel={() => setRegenSelectOpen(false)}
+          onConfirm={(scope) => {
+            setRegenSelectOpen(false);
+            regeneration.start(scope);
+          }}
+        />
+      )}
 
       {/* Search + filters */}
       <div className="space-y-3">

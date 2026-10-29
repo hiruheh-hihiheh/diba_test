@@ -106,8 +106,16 @@ async function drive(world: FakeWorld, deps: RegenerationDeps, jobId: string, ma
   }
 }
 
-async function runFresh(world: FakeWorld, deps = world.deps()): Promise<DriveResult & { jobId: string }> {
-  const started = await startJob(deps, "admin-1");
+/** Every eligible workbook plus standalone bills: the explicit "regenerate everything" scope. */
+function everything(world: FakeWorld): { upload_ids: string[]; include_standalone: boolean } {
+  const ids = [...world.uploads.values()]
+    .filter((u) => u.creation_source === "workbook" && u.status === "completed")
+    .map((u) => u.id);
+  return { upload_ids: ids, include_standalone: true };
+}
+
+async function runFresh(world: FakeWorld, deps = world.deps(), scope: unknown = everything(world)): Promise<DriveResult & { jobId: string }> {
+  const started = await startJob(deps, "admin-1", scope);
   const jobId = (started.job as RegenerationView).job_id;
   return { jobId, ...(await drive(world, deps, jobId)) };
 }
@@ -283,10 +291,10 @@ section("3. one job, one worker at a time");
   const world = new FakeWorld();
   world.addWorkbook("SAMPLE.xlsx", sample);
   const deps = world.deps();
-  const [first, second] = await Promise.all([startJob(deps, "u1"), startJob(deps, "u2")]);
+  const [first, second] = await Promise.all([startJob(deps, "u1", everything(world)), startJob(deps, "u2", everything(world))]);
   check(first.job?.job_id === second.job?.job_id, "two simultaneous starts return the same job");
   check(!!first.attached !== !!second.attached, "exactly one of them created it");
-  const again = await startJob(deps, "u1");
+  const again = await startJob(deps, "u1", everything(world));
   check(again.attached === true && again.job?.job_id === first.job?.job_id, "a later start (double click, other tab) attaches instead of creating");
   check([...world.jobs.values()].filter((j) => j.status === "running").length === 1, "only one running job exists");
 
@@ -307,13 +315,13 @@ section("3. one job, one worker at a time");
 
   const after = await stepJob(deps, jobId);
   check(after.job?.status === "completed" && after.units === 0, "stepping a completed job does nothing and does not reopen it");
-  const next = await startJob(deps, "u1");
+  const next = await startJob(deps, "u1", everything(world));
   check(next.attached === false && next.job?.job_id !== jobId, "a new start after completion creates a new job");
 
   // A job left behind by the previous function version cannot block a new start.
   const legacy = new FakeWorld();
   legacy.jobs.set("old", { ...structuredClone(world.jobs.get(jobId)!), id: "old", status: "running", cursor: '{"upload_id":"x","stage":"merge"}', lease_until: null });
-  const fresh = await startJob(legacy.deps(), "u1");
+  const fresh = await startJob(legacy.deps(), "u1", { upload_ids: [], include_standalone: true });
   check(legacy.jobs.get("old")!.status === "failed" && fresh.attached === false, "a running job from the old regenerator is closed and a new one starts");
 }
 
@@ -327,7 +335,7 @@ section("4. resuming after interruptions");
   const world = new FakeWorld();
   const a = world.addWorkbook("BILL 301 TO.xlsx", bill301);
   const deps = world.deps();
-  const started = await startJob(deps, "u1");
+  const started = await startJob(deps, "u1", everything(world));
   const jobId = started.job!.job_id;
   for (let i = 0; i < 40; i++) {
     await stepJob(deps, jobId);
@@ -382,6 +390,24 @@ section("4. resuming after interruptions");
   check(run.final.outcome === "partial" && run.final.counters.aggregates_failed === 1 && run.final.counters.aggregates_succeeded === 1,
     "the job reports partial success with exact counts", `${run.final.outcome} ${JSON.stringify(run.final.counters)}`);
   check(tempFiles(world).length === 0, "the failed workbook's temporary files are removed");
+}
+{
+  // The publish lands in the database, then the worker dies before the job records
+  // it - every time, until the unit is abandoned. Cleanup must believe the database:
+  // the new aggregates are live and must not be deleted.
+  const world = new FakeWorld();
+  const a = world.addWorkbook("SAMPLE.xlsx", sample);
+  const oldA = uploadPaths(world, a.uploadId);
+  world.killOnCommit = (key, attempts) => key.startsWith("wb0:publish") && attempts <= MAX_UNIT_ATTEMPTS;
+  const run = await runFresh(world);
+  const live = uploadPaths(world, a.uploadId);
+  check(run.kills === MAX_UNIT_ATTEMPTS, "the publish commit is killed every time until the unit is abandoned", `${run.kills}`);
+  check(COPY_ORDER.every((k) => sameBytes(world.files.get(live[k] as string), expectedAggregate(world, a.uploadId, k))),
+    "the aggregates the database now references still exist and are complete");
+  check(COPY_ORDER.every((k) => !world.files.has(oldA[k] as string)) && tempFiles(world).length === 0,
+    "the superseded aggregates and chunks are cleaned up as for a normal publish");
+  check(run.final.workbook_results[0].status === "succeeded" && run.final.counters.aggregates_succeeded === 1,
+    "the workbook is reported as published, because it was", JSON.stringify(run.final.workbook_results[0]));
 }
 {
   // Transient errors are retried with backoff and do not change the result.
@@ -617,7 +643,7 @@ section("8. stopping a job");
   const a = world.addWorkbook("BILL 301 TO.xlsx", bill301);
   const oldA = uploadPaths(world, a.uploadId);
   const deps = world.deps();
-  const jobId = (await startJob(deps, "u1")).job!.job_id;
+  const jobId = (await startJob(deps, "u1", everything(world))).job!.job_id;
   let view: RegenerationView;
   do {
     view = (await stepJob(deps, jobId)).job!;
@@ -656,7 +682,7 @@ section("9. client view model");
   const badWorld = new FakeWorld();
   const a = badWorld.addWorkbook("BILL 301 TO.xlsx", bill301);
   badWorld.addWorkbook("SAMPLE.xlsx", sample);
-  badWorld.killOnCommit = (key, attempts) => key.startsWith("wb0:publish") && attempts <= MAX_UNIT_ATTEMPTS;
+  badWorld.killOnCommit = (key, attempts) => key.startsWith("wb0:assemble:original") && attempts <= MAX_UNIT_ATTEMPTS;
   const bad = (await runFresh(badWorld)).final as unknown as adminModel.RegenerationView;
   const badSummary = adminModel.summarize(bad);
   const problems = adminModel.problemWorkbooks(bad);
@@ -669,7 +695,7 @@ section("9. client view model");
   const w = new FakeWorld();
   w.addWorkbook("BILL 301 TO.xlsx", bill301);
   const deps = w.deps();
-  const jobId = (await startJob(deps, "u")).job!.job_id;
+  const jobId = (await startJob(deps, "u", everything(w))).job!.job_id;
   let sawBillsFraction = false;
   let sawChunkFraction = false;
   let publishIndeterminate = true;

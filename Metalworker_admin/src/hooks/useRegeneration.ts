@@ -17,7 +17,7 @@ import {
   startRegeneration,
   type RegenerationWait,
 } from "../services/regenerateBillPdfs";
-import type { RegenerationView } from "../services/regenerationModel";
+import type { RegenerationScope, RegenerationView } from "../services/regenerationModel";
 
 export type RegenerationMode =
   /** Nothing to show. */
@@ -43,7 +43,12 @@ export interface RegenerationController {
   cancelling: boolean;
   /** True whenever a job exists that has not finished: the start button must be off. */
   active: boolean;
-  start: () => void;
+  /**
+   * The last start found a job already running, so the requested selection was NOT
+   * applied; the panel shows that job's own scope instead.
+   */
+  attachedToExisting: boolean;
+  start: (scope: RegenerationScope) => void;
   resume: () => void;
   cancel: () => void;
   dismiss: () => void;
@@ -65,6 +70,7 @@ export function useRegeneration(onFinished?: () => void): RegenerationController
   const [wait, setWait] = useState<RegenerationWait | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [attachedToExisting, setAttachedToExisting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const onFinishedRef = useRef(onFinished);
 
@@ -141,12 +147,14 @@ export function useRegeneration(onFinished?: () => void): RegenerationController
     }
   }, []);
 
-  const start = useCallback(() => {
+  const start = useCallback((scope: RegenerationScope) => {
     setMode("starting");
     setError(null);
-    startRegeneration()
+    setAttachedToExisting(false);
+    startRegeneration(scope)
       .then((res) => {
         if (!res.job) throw new Error("The server did not return a regeneration job.");
+        setAttachedToExisting(res.attached === true);
         setView(res.job);
         if (res.job.status === "running") void drive(res.job.job_id);
         else setMode("finished");
@@ -194,6 +202,7 @@ export function useRegeneration(onFinished?: () => void): RegenerationController
     setView(null);
     setWait(null);
     setError(null);
+    setAttachedToExisting(false);
     setMode("idle");
   }, []);
 
@@ -204,5 +213,5 @@ export function useRegeneration(onFinished?: () => void): RegenerationController
     mode === "interrupted" ||
     (mode === "error" && view?.status === "running");
 
-  return { mode, view, wait, error, cancelling, active, start, resume, cancel, dismiss };
+  return { mode, view, wait, error, cancelling, active, attachedToExisting, start, resume, cancel, dismiss };
 }

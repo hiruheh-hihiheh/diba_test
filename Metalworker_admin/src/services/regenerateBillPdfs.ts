@@ -6,7 +6,7 @@
 // same job instead of starting another one.
 import { supabase } from "./supabase";
 import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from "@supabase/supabase-js";
-import type { RegenerationView } from "./regenerationModel";
+import type { RegenerationScope, RegenerationView, WorkbookOption } from "./regenerationModel";
 
 export interface RegenerationResponse {
   ok: true;
@@ -62,19 +62,39 @@ async function toRequestError(error: unknown): Promise<RegenerationRequestError>
   return new RegenerationRequestError(error instanceof Error ? error.message : String(error), true);
 }
 
-async function call(action: "start" | "step" | "status" | "cancel", jobId: string | null = null): Promise<RegenerationResponse> {
+async function invoke(body: Record<string, unknown>): Promise<unknown> {
   let res: { data: unknown; error: unknown };
   try {
-    res = await supabase.functions.invoke("regenerate-bill-pdfs", { body: { action, job_id: jobId } });
+    res = await supabase.functions.invoke("regenerate-bill-pdfs", { body });
   } catch (err) {
     throw await toRequestError(err);
   }
   if (res.error) throw await toRequestError(res.error);
-  const data = res.data as Partial<RegenerationResponse> & { error?: string } | null;
+  const data = res.data as { ok?: boolean; error?: string } | null;
   if (!data || data.ok !== true) {
     throw new RegenerationRequestError(data?.error ?? "The regeneration request failed.", false);
   }
-  return data as RegenerationResponse;
+  return data;
+}
+
+async function call(
+  action: "start" | "step" | "status" | "cancel",
+  jobId: string | null = null,
+  scope: RegenerationScope | null = null
+): Promise<RegenerationResponse> {
+  return (await invoke({ action, job_id: jobId, ...(scope ? { scope } : {}) })) as RegenerationResponse;
+}
+
+export interface RegenerationWorkbookList {
+  workbooks: WorkbookOption[];
+  /** Finalized Bill Creator bills, which belong to no workbook. */
+  standalone_count: number;
+}
+
+/** Every workbook upload the selector can offer, with its eligibility. */
+export async function listRegenerationWorkbooks(): Promise<RegenerationWorkbookList> {
+  const data = (await invoke({ action: "list_workbooks" })) as Partial<RegenerationWorkbookList>;
+  return { workbooks: data.workbooks ?? [], standalone_count: data.standalone_count ?? 0 };
 }
 
 /** The running job, if any. Used on page load to reconnect. */
@@ -82,9 +102,12 @@ export function getRegenerationStatus(jobId: string | null = null): Promise<Rege
   return call("status", jobId);
 }
 
-/** Start a job, or attach to the one already running (`attached: true`). */
-export function startRegeneration(): Promise<RegenerationResponse> {
-  return call("start");
+/**
+ * Start a job for exactly `scope`, or attach to the one already running
+ * (`attached: true`) — in which case the running job keeps its own scope.
+ */
+export function startRegeneration(scope: RegenerationScope): Promise<RegenerationResponse> {
+  return call("start", null, scope);
 }
 
 /** Stop a job at its next unit boundary. `busy` means try again in a moment. */
