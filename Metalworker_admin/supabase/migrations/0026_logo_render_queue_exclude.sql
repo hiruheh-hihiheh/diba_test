@@ -9,6 +9,11 @@
 
 BEGIN;
 
+-- Remove the one-argument overload from migration 0011 so there is exactly one
+-- RPC interface. Keeping both would make a call that supplies only p_limit
+-- ambiguous.
+DROP FUNCTION IF EXISTS public.list_bills_needing_logo_render(integer);
+
 CREATE OR REPLACE FUNCTION public.list_bills_needing_logo_render(
     p_limit integer DEFAULT 100,
     p_exclude uuid[] DEFAULT NULL

@@ -34,7 +34,7 @@ import { AlertTriangle, CheckSquare, Loader2, SearchX, Square, X } from "lucide-
 
 import {
   applyLogoToBills,
-  drainPendingLogoRenders,
+  retryLogoPdfs,
   fetchAssignableBills,
   ASSIGN_PAGE_SIZE,
   type AssignableBill,
@@ -91,28 +91,39 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
   const [applying, setApplying] = useState(false);
   const [progress, setProgress] = useState<{ assigned: number; reprinted: number } | null>(null);
   /** Shown after a partial success, naming the bills that could not be printed. */
-  const [report, setReport] = useState<{ failures: { invoice_no: string | null; reason: string }[]; warning?: string } | null>(null);
+  const [report, setReport] = useState<{ failures: { invoice_no: string | null; reason: string }[]; warning?: string; billIds?: string[]; status?: "pending" | "retrying" | "completed" | "partial" | "unknown" } | null>(null);
+  const [lastBillIds, setLastBillIds] = useState<string[]>([]);
   const [retrying, setRetrying] = useState(false);
 
   async function retryPending() {
     if (retrying) return;
     setRetrying(true);
+    setReport((prev) => (prev ? { ...prev, status: "retrying" } : prev));
     try {
-      const result = await drainPendingLogoRenders();
+      const result = await retryLogoPdfs(lastBillIds.length > 0 ? lastBillIds : report?.billIds ?? []);
+      const completed = !result.more_work && result.failures.length === 0 && !result.error;
       setReport({
         failures: result.failures.map((f) => ({
           invoice_no: f.invoice_no,
           reason: logoReprintFailureReason(f.reason),
         })),
+        billIds: lastBillIds.length > 0 ? lastBillIds : report?.billIds,
+        status: result.queue_failed ? "unknown" : completed ? "completed" : "partial",
         warning: result.queue_failed
           ? "The pending PDFs could not be checked. Try again."
+          : completed
+          ? undefined
           : result.more_work
           ? "Some PDFs are still pending. Retry again to continue."
-          : undefined,
+          : result.error,
       });
       if (result.queue_failed) toast.error("The pending PDFs could not be checked.");
+      else if (completed) toast.success("PDF regeneration completed. All pending documents are up to date.");
       else if (result.more_work) toast.error("Some PDFs are still pending.");
       else toast.success("Pending PDFs were re-printed.");
+      if (completed) {
+        await onApplied(result.reprinted, false);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Retry failed.");
     } finally {
@@ -270,6 +281,7 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
         return;
       }
 
+      setLastBillIds(ids);
       const result = await applyLogoToBills(ids, logo.id, (p) =>
         setProgress({ assigned: p.assigned, reprinted: p.reprinted })
       );
@@ -291,6 +303,8 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             invoice_no: f.invoice_no,
             reason: logoReprintFailureReason(f.reason),
           })),
+          billIds: ids,
+          status: "partial",
           warning:
             result.error ??
             (result.more_work
@@ -352,14 +366,16 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
         footer={
           report ? (
             <>
-              <button
-                type="button"
-                onClick={() => void retryPending()}
-                className="btn btn-secondary"
-                disabled={retrying}
-              >
-                {retrying ? "Retrying…" : "Retry PDF Generation"}
-              </button>
+              {report.status !== "completed" && (
+                <button
+                  type="button"
+                  onClick={() => void retryPending()}
+                  className="btn btn-secondary"
+                  disabled={retrying}
+                >
+                  {retrying ? "Retrying…" : "Retry PDF Generation"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -417,8 +433,10 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
             <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-warning-muted border border-warning/25 text-warning text-sm">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <span>
-                {report.warning ??
-                  "The logo was assigned, but these invoices could not be re-printed yet. Their stored PDFs still show the previous state, and will be re-printed on the next attempt."}
+                {report.status === "completed"
+                  ? "PDF regeneration completed. All pending documents are up to date."
+                  : report.warning ??
+                    "The logo was assigned, but these invoices could not be re-printed yet. Their stored PDFs still show the previous state, and will be re-printed on the next attempt."}
               </span>
             </div>
             <ul className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">

@@ -45,7 +45,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { formatBillDate } from "../../services/bills";
 import {
   applyLogoToBills,
-  drainPendingLogoRenders,
+  retryLogoPdfs,
   fetchAssignableBills,
   ASSIGN_PAGE_SIZE,
   type AssignableBill,
@@ -132,32 +132,46 @@ function AssignBody({
   const [report, setReport] = useState<{
     failures: { invoice_no: string | null; reason: string }[];
     warning?: string;
+    billIds?: string[];
+    status?: "pending" | "retrying" | "completed" | "partial" | "unknown";
   } | null>(null);
+  const [lastBillIds, setLastBillIds] = useState<string[]>([]);
   const [retrying, setRetrying] = useState(false);
 
   async function retryPending() {
     if (retrying) return;
     setRetrying(true);
+    setReport((prev) => (prev ? { ...prev, status: "retrying" } : prev));
     try {
-      const result = await drainPendingLogoRenders();
+      const result = await retryLogoPdfs(lastBillIds.length > 0 ? lastBillIds : report?.billIds ?? []);
+      const completed = !result.more_work && result.failures.length === 0 && !result.error;
       setReport({
         failures: result.failures.map((f) => ({
           invoice_no: f.invoice_no,
           reason: logoReprintFailureReason(f.reason),
         })),
+        billIds: lastBillIds.length > 0 ? lastBillIds : report?.billIds,
+        status: result.queue_failed ? "unknown" : completed ? "completed" : result.failures.length > 0 || result.more_work ? "partial" : "completed",
         warning: result.queue_failed
           ? "The pending PDFs could not be checked. Try again."
+          : completed
+          ? undefined
           : result.more_work
           ? "Some PDFs are still pending. Retry again to continue."
-          : undefined,
+          : result.error,
       });
       notify(
         result.queue_failed
           ? "The pending PDFs could not be checked."
+          : completed
+          ? "PDF regeneration completed. All pending documents are up to date."
           : result.more_work
           ? "Some PDFs are still pending."
           : "Pending PDFs were re-printed."
       );
+      if (completed) {
+        await onApplied(result.reprinted, false);
+      }
     } catch (err) {
       notify("Retry failed", err instanceof Error ? err.message : "Please try again.");
     } finally {
@@ -328,6 +342,7 @@ function AssignBody({
         return;
       }
 
+      setLastBillIds(ids);
       const result = await applyLogoToBills(ids, logo.id, (p) =>
         setProgress({ assigned: p.assigned, reprinted: p.reprinted })
       );
@@ -349,6 +364,8 @@ function AssignBody({
             invoice_no: f.invoice_no,
             reason: logoReprintFailureReason(f.reason),
           })),
+          billIds: ids,
+          status: "partial",
           warning:
             result.error ??
             (result.more_work
@@ -402,8 +419,10 @@ function AssignBody({
             {report ? (
               <ScrollView style={styles.reportBox}>
                 <Text style={styles.warning}>
-                  {report.warning ??
-                    "The logo was assigned, but these invoices could not be re-printed yet. Their stored PDFs still show the previous state, and will be re-printed on the next attempt."}
+                  {report.status === "completed"
+                    ? "PDF regeneration completed. All pending documents are up to date."
+                    : report.warning ??
+                      "The logo was assigned, but these invoices could not be re-printed yet. Their stored PDFs still show the previous state, and will be re-printed on the next attempt."}
                 </Text>
                 {report.failures.map((failure, i) => (
                   <Text key={`${failure.invoice_no}-${i}`} style={styles.reportRow}>
@@ -599,11 +618,13 @@ function AssignBody({
 
             {report ? (
               <>
-                <Button
-                  title={retrying ? "Retrying…" : "Retry PDF Generation"}
-                  loading={retrying}
-                  onPress={() => void retryPending()}
-                />
+                {report.status !== "completed" && (
+                  <Button
+                    title={retrying ? "Retrying…" : "Retry PDF Generation"}
+                    loading={retrying}
+                    onPress={() => void retryPending()}
+                  />
+                )}
                 <Button title="Close" variant="ghost" onPress={onClose} disabled={retrying} />
               </>
             ) : (

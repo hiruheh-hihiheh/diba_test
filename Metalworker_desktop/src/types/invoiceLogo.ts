@@ -186,6 +186,8 @@ export interface BillLogoApplyResult {
    * whole of the recovery story — an interrupted job resumes by being repeated.
    */
   more_work: boolean;
+  /** True when the queue check itself failed (distinct from an empty queue). */
+  queue_failed?: boolean;
   /**
    * Bills that could not be re-printed, each with a reason.
    *

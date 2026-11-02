@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
   }
 
   /* ---- read the request ---------------------------------------------------- */
-  let body: { bill_ids?: unknown; logo_id?: unknown; limit?: unknown; exclude_ids?: unknown };
+  let body: { bill_ids?: unknown; logo_id?: unknown; limit?: unknown; exclude_ids?: unknown; retry?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -286,7 +286,8 @@ Deno.serve(async (req) => {
      Calling drain with no outstanding work is a cheap no-op rather than an
      error, so a client can always make one more call without having to know
      whether the previous one finished the queue. */
-  const wantsAssign = body.bill_ids !== undefined;
+  const wantsAssign = body.bill_ids !== undefined && body.retry !== true;
+  const wantsRetry = body.bill_ids !== undefined && body.retry === true;
   let billIds: string[] = [];
   let logoId: string | null = null;
 
@@ -311,6 +312,17 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "That logo could not be identified." }, 400);
     }
     logoId = (body.logo_id as string | null) ?? null;
+  }
+
+  if (wantsRetry) {
+    if (!Array.isArray(body.bill_ids) || body.bill_ids.length === 0) {
+      return json({ ok: false, error: "No bills were selected." }, 400);
+    }
+    billIds = [...new Set(body.bill_ids.filter((v): v is string => typeof v === "string"))];
+    if (billIds.length === 0) return json({ ok: false, error: "No bills were selected." }, 400);
+    if (billIds.some((id) => !UUID_RE.test(id))) {
+      return json({ ok: false, error: "The selection contains an id that is not a bill." }, 400);
+    }
   }
 
   const requestedLimit = Number(body.limit);
@@ -378,10 +390,36 @@ Deno.serve(async (req) => {
     ? body.exclude_ids.filter((v): v is string => typeof v === "string" && UUID_RE.test(v))
     : [];
 
-  const { data: queue, error: queueError } = await authClient.rpc("list_bills_needing_logo_render", {
-    p_limit: limit,
-    p_exclude: excludeIds.length > 0 ? excludeIds : null,
-  });
+  let queue: { id: string; bill_upload_id: string; logo_id: string | null; has_logo: boolean }[] | null = null;
+  let queueError: { message: string; code?: string } | null = null;
+
+  if (wantsRetry) {
+    const { data: rows, error: readError } = await admin
+      .from("bills")
+      .select("id, bill_upload_id, logo_id, logo_rendered_logo_id")
+      .in("id", billIds);
+    if (readError) {
+      queueError = readError;
+    } else {
+      queue = (rows ?? [])
+        .filter((r: { logo_rendered_logo_id: unknown; logo_id: unknown }) => r.logo_rendered_logo_id !== r.logo_id)
+        .slice(0, limit)
+        .map((r: { id: unknown; bill_upload_id: unknown; logo_id: unknown }) => ({
+          id: r.id as string,
+          bill_upload_id: r.bill_upload_id as string,
+          logo_id: (r.logo_id as string | null) ?? null,
+          has_logo: r.logo_id !== null,
+        }));
+    }
+  } else {
+    const rpc = await authClient.rpc("list_bills_needing_logo_render", {
+      p_limit: limit,
+      p_exclude: excludeIds.length > 0 ? excludeIds : null,
+    });
+    queue = (rpc.data ?? null) as typeof queue;
+    queueError = rpc.error;
+  }
+
   if (queueError) {
     console.error("set-bill-logos: work queue failed:", queueError.message, queueError.code);
     // The assignment has already succeeded, so this is reported as a warning
@@ -395,6 +433,12 @@ Deno.serve(async (req) => {
       more_work: true,
       warning: "The logos were assigned, but the PDFs could not be re-printed. Try Re-print again.",
     });
+  }
+
+  if (wantsRetry) {
+    // Bills that are already up to date are counted as unchanged, so the client
+    // sees an honest total rather than a silent zero.
+    unchanged = Math.max(0, billIds.length - (queue?.length ?? 0));
   }
 
   const queued = (queue ?? []) as {
@@ -503,14 +547,32 @@ Deno.serve(async (req) => {
   /* Is there still outstanding work? Asking for a single row is the cheapest way
      to find out that exists — one indexed read, rather than counting a queue that
      might hold thousands of rows. */
-  const { data: stillQueued, error: stillQueuedError } = await authClient.rpc("list_bills_needing_logo_render", {
-    p_limit: 1,
-    p_exclude: excludeIds.length > 0 ? excludeIds : null,
-  });
-  if (stillQueuedError) {
-    console.error("set-bill-logos: final queue check failed:", stillQueuedError.message, stillQueuedError.code);
+  let stillQueued: unknown = null;
+  let stillQueuedError: { message: string; code?: string } | null = null;
+
+  if (wantsRetry) {
+    const { data: allRows, error: allError } = await admin
+      .from("bills")
+      .select("id, logo_id, logo_rendered_logo_id")
+      .in("id", billIds);
+    if (allError) {
+      stillQueuedError = allError;
+    } else {
+      stillQueued = (allRows ?? []).filter((r: { logo_rendered_logo_id: unknown; logo_id: unknown }) => r.logo_rendered_logo_id !== r.logo_id);
+    }
+  } else {
+    const rpc = await authClient.rpc("list_bills_needing_logo_render", {
+      p_limit: 1,
+      p_exclude: excludeIds.length > 0 ? excludeIds : null,
+    });
+    stillQueued = rpc.data;
+    stillQueuedError = rpc.error;
   }
-  const moreWork = stillQueuedError ? true : (stillQueued ?? []).length > 0;
+
+  if (stillQueuedError) {
+    console.error("set-bill-logos: final queue check failed:", (stillQueuedError as { message?: string }).message, (stillQueuedError as { code?: string }).code);
+  }
+  const moreWork = stillQueuedError ? true : Array.isArray(stillQueued) && stillQueued.length > 0;
 
   /* Audit, written with the service role and never allowed to fail the request:
      losing an audit line must not undo work the user was told succeeded. One row

@@ -930,6 +930,90 @@ export async function applyLogoToBills(
   return { ok: true, assigned, unchanged, reprinted, more_work: remaining, failures };
 }
 
+export async function retryLogoPdfs(
+  billIds: readonly string[],
+  onProgress?: (progress: { reprinted: number; remaining: boolean }) => void
+): Promise<BillLogoApplyResult> {
+  const ids = [...new Set(billIds.filter((id) => typeof id === "string" && id !== ""))];
+  if (ids.length === 0) {
+    return { ok: true, assigned: 0, unchanged: 0, reprinted: 0, more_work: false, failures: [] };
+  }
+
+  let reprinted = 0;
+  const failures: BillLogoApplyResult["failures"] = [];
+  const MAX_LOGO_BATCHES = 50;
+  let batchCount = 0;
+  // eslint-disable-next-line no-useless-assignment
+  let remaining = false;
+
+  for (;;) {
+    if (batchCount >= MAX_LOGO_BATCHES) {
+      remaining = true;
+      break;
+    }
+    batchCount++;
+
+    const { data, error } = await supabase.functions.invoke<{
+      ok?: boolean;
+      error?: string;
+      reason?: string;
+      warning?: string;
+      assigned?: number;
+      unchanged?: number;
+      reprinted?: number;
+      more_work?: boolean;
+      failures?: BillLogoApplyResult["failures"];
+    }>("set-bill-logos", { body: { bill_ids: ids, retry: true, limit: 40 } });
+
+    if (error) {
+      const detail = await readErrorBody(error);
+      return {
+        ok: true,
+        assigned: 0,
+        unchanged: 0,
+        reprinted,
+        more_work: true,
+        failures,
+        error: detail?.error ?? "The logos were assigned, but some PDFs could not be re-printed yet.",
+      };
+    }
+    if (data?.warning) {
+      return {
+        ok: true,
+        assigned: 0,
+        unchanged: data.unchanged ?? 0,
+        reprinted: data.reprinted ?? reprinted,
+        more_work: true,
+        failures,
+        error: data.warning,
+      };
+    }
+    if (!data?.ok) {
+      return {
+        ok: false,
+        error: data?.error ?? "The logo could not be assigned.",
+        reason: data?.reason,
+        assigned: 0,
+        unchanged: 0,
+        reprinted: 0,
+        more_work: false,
+        failures: [],
+      };
+    }
+
+    reprinted += data.reprinted ?? 0;
+    for (const failure of data.failures ?? []) {
+      if (!failures.some((f) => f.bill_id === failure.bill_id)) failures.push(failure);
+    }
+    onProgress?.({ reprinted, remaining: !!data.more_work });
+
+    remaining = !!data.more_work;
+    if (!data.more_work) break;
+  }
+
+  return { ok: true, assigned: 0, unchanged: 0, reprinted, more_work: remaining, failures };
+}
+
 /**
  * Re-print any bills whose stored documents no longer match their logo.
  *
