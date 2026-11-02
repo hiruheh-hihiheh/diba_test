@@ -120,33 +120,44 @@ const inputCls =
  * disabled, because with no bills there is no bill to copy and a greyed-out control only
  * raises the question of why.
  */
-const CREATE_BILL_CHOICES: {
-  to: string;
-  label: string;
-  body: string;
-  icon: React.ReactNode;
-  needsExistingBill?: boolean;
-}[] = [
-  {
-    to: "/bills/create?mode=empty",
-    label: "Create New Bill",
-    body: "A blank bill. You fill in the customer, the line items and the taxes.",
-    icon: <FilePlus2 size={17} />,
-  },
-  {
-    to: "/bills/create?mode=profile",
-    label: "New Bill + Profile",
-    body: "The same bill, with your Invoice Business Profile already filled in.",
-    icon: <UserRound size={17} />,
-  },
-  {
-    to: "/bills/create?copy=pick",
-    label: "Copy Existing Bill",
-    body: "Start from a bill that already exists. The original is never changed.",
-    icon: <Copy size={17} />,
-    needsExistingBill: true,
-  },
-];
+/**
+ * The three ways a document can start, for one section.
+ *
+ * Built from the document type rather than kept as two lists, because the three choices
+ * are the same feature with different nouns and a different route. Duplicating the array
+ * would let the Challan menu and the Challan page drift apart silently.
+ */
+function createBillChoices(documentType: BillDocumentType) {
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const base = `${info.route}/create`;
+  const challan = documentType === "delivery_challan";
+  const noun = info.noun.toLowerCase();
+  return [
+    {
+      to: `${base}?mode=empty`,
+      label: `Create New ${info.noun}`,
+      body: challan
+        ? "A blank challan. You fill in the customer, the material rows and the transport details."
+        : "A blank bill. You fill in the customer, the line items and the taxes.",
+      icon: <FilePlus2 size={17} />,
+    },
+    {
+      to: `${base}?mode=profile`,
+      label: `New ${info.noun} + Profile`,
+      body: challan
+        ? "The same blank challan, with your Invoice Business Profile company details and signature wording."
+        : "The same bill, with your Invoice Business Profile already filled in.",
+      icon: <UserRound size={17} />,
+    },
+    {
+      to: `${base}?copy=pick`,
+      label: `Copy Existing ${info.noun}`,
+      body: `Start from a ${noun} that already exists. The original is never changed.`,
+      icon: <Copy size={17} />,
+      needsExistingBill: true,
+    },
+  ];
+}
 
 /**
  * The bill workspace, for one document type.
@@ -1051,8 +1062,8 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           {/* A bill does not have to come from a workbook. This sits NEXT TO the upload
               button rather than replacing it, because both are how a bill starts and
               neither is more correct than the other — an admin creating one bill by hand
-              should not have to go looking somewhere else to find the button. Bill
-              Creator makes Tax Invoices only, so it is offered in Tax Bills only. */}
+              should not have to go looking somewhere else to find the button. Both
+              sections offer it, each with its own form and its own document type. */}
           {info.supportsBillCreator && (
           <div className="relative">
             <button
@@ -1063,7 +1074,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
             className="btn btn-secondary"
           >
             <FilePlus2 size={15} />
-              Create Bill
+              {info.section === "Challan Bills" ? "Create Challan" : "Create Bill"}
               <ChevronDown size={15} className={createMenuOpen ? "rotate-180 transition-transform" : "transition-transform"} />
             </button>
 
@@ -1078,9 +1089,9 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
               {/* `total`, not the number of rows on this page: a search that happens to
                   match nothing must not make "Copy Existing Bill" disappear. It is the
                   whole table that decides whether there is anything to copy. */}
-              {CREATE_BILL_CHOICES.filter(
-                (choice) => choice.needsExistingBill !== true || total > 0
-              ).map((choice) => (
+              {createBillChoices(documentType)
+                .filter((choice) => choice.needsExistingBill !== true || total > 0)
+                .map((choice) => (
                 <Link
                   key={choice.to}
                   to={choice.to}
@@ -1093,7 +1104,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
                     <span className="block text-xs text-text-muted">{choice.body}</span>
                   </span>
                 </Link>
-              ))}
+                ))}
             </AnchoredPopover>
           </div>
           )}

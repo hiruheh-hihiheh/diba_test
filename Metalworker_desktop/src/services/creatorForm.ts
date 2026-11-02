@@ -314,6 +314,12 @@ export interface CreatorLineDraft {
   rate: string;
   /** Read-only: the amount is quantity x rate, and the server recomputes it anyway. */
   amount: string;
+  /**
+   * A Delivery Challan's REMARKS column, editable and copied. A Tax Invoice has no
+   * such column, so the value is carried in the form but dropped by the server when
+   * the document type is `tax_invoice`.
+   */
+  remarks: string;
 }
 
 /** An empty form. Two ways in, and nothing else. */
@@ -331,6 +337,7 @@ export function blankCreatorLine(key: string, index: number): CreatorLineDraft {
     quantity: "",
     rate: "",
     amount: "",
+    remarks: "",
   };
 }
 
@@ -466,6 +473,10 @@ export function linesToPatch(lines: readonly CreatorLineDraft[]): LineItemPatch[
     /* Present and null on purpose: the key's presence is what asks the server to
        recompute. Omitting the key would ask it to keep whatever the row had. */
     amount: null,
+    /* Sent for both types: an invoice's `cleanLineItems` drops it, and a challan keeps
+       it. Sending it only for challans would mean a copy that changed document type
+       could lose a remark that the source held. */
+    remarks: (line.remarks ?? "").trim() === "" ? null : line.remarks,
   }));
 }
 
@@ -486,6 +497,7 @@ export function linesToItems(lines: readonly CreatorLineDraft[]): BillLineItem[]
          quantity is a row they have not finished, and treating the half-filled amount as
          final is how a total comes to include a line that is still being typed. */
       amount: quantity !== null && rate !== null ? round2(quantity * rate) : null,
+      remarks: (line.remarks ?? "").trim() === "" ? null : line.remarks,
     };
   });
 }
@@ -509,6 +521,48 @@ export function linesToItems(lines: readonly CreatorLineDraft[]): BillLineItem[]
  * the server would keep words that no longer match the money — the one inconsistency on
  * a tax invoice that a customer is entitled to reject.
  */
+/**
+ * The text fields a Delivery Challan can carry.
+ *
+ * Deliberately a subset rather than the invoice list: a challan has no Our Challan, no
+ * E-way Bill and no Place of Supply row, so sending them would put values in columns the
+ * template never prints and invite a later reader to think they are part of the
+ * document. Everything else — customer, seller, transport, references, signatures — is
+ * shared with the invoice because the two templates really do print it.
+ */
+const CHALLAN_TEXT_FIELDS: readonly string[] = [
+  "invoice_no",
+  "your_challan_no",
+  "order_no",
+  "order_no_label",
+  "party_name",
+  "party_address",
+  "party_gst_no",
+  "state",
+  "state_code",
+  "transporter_mode",
+  "vehicle_number",
+  "seller_name",
+  "seller_descriptor",
+  "seller_tax_line",
+  "seller_address",
+  "seller_contact",
+  "certification",
+  "on_behalf_of",
+  "signature_designation",
+  "receiver_signature",
+  "notes_extra",
+  "job_kind",
+];
+
+const CHALLAN_DATE_FIELDS: readonly string[] = [
+  "invoice_date",
+  "your_challan_date",
+  "order_date",
+];
+
+export type CreatorDocumentType = "tax_invoice" | "delivery_challan";
+
 const TEXT_FIELDS: readonly string[] = [
   "invoice_no",
   "our_challan_no",
@@ -557,26 +611,46 @@ export interface BuildPatchOptions {
   /** Omitted to leave the stored rates alone. */
   reverseChargeGst?: string | null;
   roundOff?: string | null;
+  /**
+   * Which document the form is editing. Omitted means a Tax Invoice, so every existing
+   * caller keeps the invoice field set. A challan sends only what its template prints:
+   * no tax rates, no bank, no terms and no amount in words. The server nulls those
+   * columns anyway; not sending them keeps the request honest and the two clients
+   * identical.
+   */
+  documentType?: CreatorDocumentType;
 }
 
 export function buildPatch(options: BuildPatchOptions): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   const { values } = options;
+  const challan = options.documentType === "delivery_challan";
+  const textFields = challan ? CHALLAN_TEXT_FIELDS : TEXT_FIELDS;
+  const dateFields = challan ? CHALLAN_DATE_FIELDS : DATE_FIELDS;
+  const rateFields = challan ? [] : RATE_FIELDS;
 
-  for (const field of TEXT_FIELDS) {
+  for (const field of textFields) {
     const raw = values[field];
     if (raw === undefined) continue;
     patch[field] = raw.trim() === "" ? null : raw.trim();
   }
-  for (const field of DATE_FIELDS) {
+  for (const field of dateFields) {
     const raw = values[field];
     if (raw === undefined) continue;
     patch[field] = readDate(raw);
   }
-  for (const field of RATE_FIELDS) {
+  for (const field of rateFields) {
     const raw = values[field];
     if (raw === undefined) continue;
     patch[field] = readNumber(raw);
+  }
+  if (challan) {
+    /* Line items, and nothing financial. `round_off`, `reverse_charge_gst` and
+       `amount_in_words` are invoice-only decisions and are not sent at all — not even
+       as null, because null means "regenerate" to the server and a challan has no
+       total to write words for. */
+    if (options.lines !== undefined) patch.line_items = linesToPatch(options.lines);
+    return patch;
   }
   /* `reverse_charge_gst` and `round_off` are decisions, not derivations: 9 of the 20
      reference invoices round, and the rounded figure is the one that was billed. Left out
@@ -838,6 +912,7 @@ export function linesFromRecord(
     quantity: asText(item.quantity),
     rate: asText(item.rate),
     amount: asText(item.amount),
+    remarks: asText(item.remarks),
   }));
 }
 
@@ -938,8 +1013,13 @@ const PROFILE_BANK: readonly (readonly [keyof BankDetails, string])[] = [
  * resolved company name, and doing it in the form would mean the form had an opinion
  * about the profile it is meant to be showing. The section says so.
  */
-export function seedFromProfile(profile: SourceRow, keyPrefix: string): CreatorSeed {
+export function seedFromProfile(
+  profile: SourceRow,
+  keyPrefix: string,
+  documentType: CreatorDocumentType = "tax_invoice"
+): CreatorSeed {
   const values: CreatorFormValues = {};
+  const challan = documentType === "delivery_challan";
 
   /* Every profile-backed field is set, INCLUDING to "" when the profile has nothing to
      say. That is not the same as leaving it out of the patch, and the difference matters:
@@ -973,21 +1053,29 @@ export function seedFromProfile(profile: SourceRow, keyPrefix: string): CreatorS
   }
   values.seller_contact = contacts.join(", ");
 
+  /* A Delivery Challan does not print a bank block, payment terms or an amount in
+     words, so the profile must not preload them. Leaving them blank is not cosmetic: a
+     challan that carried a payment window would be claiming a commercial term the
+     document does not have. */
   const bank = blankBank();
-  for (const [key, column] of PROFILE_BANK) {
-    const value = asText(profile[column]);
-    if (value !== "") bank[key] = { label: bank[key]!.label, value };
+  if (!challan) {
+    for (const [key, column] of PROFILE_BANK) {
+      const value = asText(profile[column]);
+      if (value !== "") bank[key] = { label: bank[key]!.label, value };
+    }
   }
 
   return {
     values,
     lines: firstBlankLine(keyPrefix),
     bank,
-    terms: [
-      asText(profile.term_1),
-      asText(profile.term_2),
-      asText(profile.term_3),
-    ],
+    terms: challan
+      ? ["", "", ""]
+      : [
+          asText(profile.term_1),
+          asText(profile.term_2),
+          asText(profile.term_3),
+        ],
     /* Empty, and `amountInWordsForPatch` keeps it out of the patch entirely: words for a
        bill with no total yet cannot be written, and the server generates them from the
        total on every save. */

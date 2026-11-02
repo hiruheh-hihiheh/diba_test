@@ -32,6 +32,7 @@ import { Check, Copy, Loader2 } from "lucide-react";
 import Modal from "../ui/Modal";
 import SearchInput from "../ui/SearchInput";
 import { fetchBills } from "../../services/bills";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import { getBillConnectionCounts } from "../../services/billJobConnections";
 import { formatBillDate, formatJobKind } from "../../services/billFormat";
 import type { Bill } from "../../types/bill";
@@ -41,27 +42,44 @@ const PAGE_SIZE = 25;
 
 export interface BillSourcePickerProps {
   open: boolean;
+  /** Which document series to pick from. A challan picker never lists an invoice. */
+  documentType?: BillDocumentType;
   onClose: () => void;
   /** Called with the confirmed source bill. The original is never modified. */
   onConfirm: (billId: string) => void;
 }
 
-export default function BillSourcePicker({ open, onClose, onConfirm }: BillSourcePickerProps) {
+export default function BillSourcePicker({
+  open,
+  documentType = "tax_invoice",
+  onClose,
+  onConfirm,
+}: BillSourcePickerProps) {
   /* A thin shell around a keyed child. The reset-on-close behaviour this dialog needs —
      never reopen pointing at the last bill somebody looked at — is what a fresh mount
      gives for free, so it is expressed as a `key` rather than as a list of setState calls
      in an effect that a fourth piece of state would silently be left out of. */
   if (!open) return null;
-  return <BillSourcePickerBody onClose={onClose} onConfirm={onConfirm} />;
+  return (
+    <BillSourcePickerBody
+      documentType={documentType}
+      onClose={onClose}
+      onConfirm={onConfirm}
+    />
+  );
 }
 
 function BillSourcePickerBody({
+  documentType,
   onClose,
   onConfirm,
 }: {
+  documentType: BillDocumentType;
   onClose: () => void;
   onConfirm: (billId: string) => void;
 }) {
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const noun = info.noun.toLowerCase();
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Bill[]>([]);
   const [counts, setCounts] = useState<Map<string, { total: number }>>(new Map());
@@ -83,7 +101,9 @@ function BillSourcePickerBody({
        the next page loads, which is what makes typing feel continuous. */
     const timer = setTimeout(() => {
       setLoading(true);
-      fetchBills({ search: search.trim(), page: 1, pageSize: PAGE_SIZE })
+      /* Scoped to the picker's document type. This is the first of the two guards
+         against a cross-type copy: an invoice is simply not a row this query returns. */
+      fetchBills({ search: search.trim(), page: 1, pageSize: PAGE_SIZE, documentType })
         .then((page) => {
           if (!live) return;
           setRows(page.rows);
@@ -100,7 +120,7 @@ function BillSourcePickerBody({
           });
         })
         .catch((err: unknown) => {
-          if (live) setError(err instanceof Error ? err.message : "Could not load bills.");
+          if (live) setError(err instanceof Error ? err.message : `Could not load ${info.nounPlural.toLowerCase()}.`);
         })
         .finally(() => {
           if (live) setLoading(false);
@@ -110,7 +130,7 @@ function BillSourcePickerBody({
       live = false;
       clearTimeout(timer);
     };
-  }, [search]);
+  }, [search, documentType, info.nounPlural]);
 
   const escRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -141,7 +161,7 @@ function BillSourcePickerBody({
       <Modal
         open
         onClose={() => setChosen(null)}
-        title="Create from Previous Bill"
+        title={`Create from Previous ${info.noun}`}
         size="md"
         footer={
           <div className="flex items-center justify-end gap-2">
@@ -165,13 +185,13 @@ function BillSourcePickerBody({
       >
         <div className="px-6 py-5">
           <p className="text-sm text-text-secondary">
-            You&rsquo;re creating a new bill from
+            You&rsquo;re creating a new {noun} from
           </p>
           <dl className="mt-3 rounded-xl border border-border bg-bg-secondary divide-y divide-border">
             {[
-              ["Invoice number", describe.invoice],
+              [info.numberLabel, describe.invoice],
               ["Customer", describe.party],
-              ["Invoice date", describe.date],
+              [info.dateLabel, describe.date],
               ["Job type", describe.kind],
               [
                 "Jobs already linked to that bill",
@@ -195,12 +215,12 @@ function BillSourcePickerBody({
             </p>
             <ul className="text-sm text-text-secondary space-y-1 list-disc list-inside">
               <li>
-                A new <strong>draft</strong> bill is created. The bill you picked keeps its
-                invoice number, its three PDFs and everything else it already had.
+                A new <strong>draft</strong> {noun} is created. The {noun} you picked keeps its
+                number, its three PDFs and everything else it already had.
               </li>
               <li>
-                The draft starts with this bill&rsquo;s customer, address, line items,
-                taxes, bank details, terms and letterhead.
+                The draft starts with this {noun}&rsquo;s customer, address, line items,
+                {documentType === "delivery_challan" ? "remarks and transport details" : "taxes, bank details and terms"} and letterhead.
               </li>
               <li>
                 Fields you are likely to change &mdash; the invoice number, the date, the
@@ -225,19 +245,19 @@ function BillSourcePickerBody({
     <Modal
       open
       onClose={onClose}
-      title="Create from Previous Bill"
-      subtitle="Pick a bill to copy from. Only its stored data is read — the PDF is never opened or re-parsed."
+      title={`Create from Previous ${info.noun}`}
+      subtitle={`Pick a ${noun} to copy from. Only ${info.nounPlural.toLowerCase()} are listed, and only stored data is read — the PDF is never opened or re-parsed.`}
       size="xl"
     >
       <div className="px-6 py-4">
         <SearchInput
           value={search}
           onChange={setSearch}
-          scope="all bills"
-          unit="bill"
+          scope={`all ${info.nounPlural.toLowerCase()}`}
+          unit={noun}
           resultCount={rows.length}
           totalCount={total}
-          placeholder="Invoice number, customer, sheet name, date, job type, folder or bill id"
+          placeholder={`${info.numberLabel.replace(/\.$/, "")}, customer, sheet name, date, job type, folder or ${noun} id`}
         />
         {search.trim() !== "" && (
           <p className="mt-1 text-xs text-text-muted">
@@ -261,8 +281,8 @@ function BillSourcePickerBody({
         ) : rows.length === 0 ? (
           <p className="py-10 text-center text-sm text-text-muted">
             {search.trim() === ""
-              ? "No bills yet. Create one first, then it can be copied."
-              : "No bill matches that search."}
+              ? `No ${info.nounPlural.toLowerCase()} yet. Create one first, then it can be copied.`
+              : `No ${noun} matches that search.`}
           </p>
         ) : (
           <ul className="mt-3 divide-y divide-border rounded-xl border border-border overflow-hidden">
@@ -273,7 +293,7 @@ function BillSourcePickerBody({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2 flex-wrap">
                       <span className="text-sm font-bold text-text">
-                        {row.invoice_no?.trim() || "No invoice number"}
+                        {row.invoice_no?.trim() || `No ${noun} number`}
                       </span>
                       <span className="text-sm text-text-secondary truncate">
                         {row.party_name?.trim() || "No customer named"}
@@ -302,7 +322,7 @@ function BillSourcePickerBody({
 
         {total > rows.length && (
           <p className="mt-3 text-xs text-text-muted text-center">
-            Showing the first {rows.length}. Narrow the search to see a specific bill.
+            Showing the first {rows.length}. Narrow the search to see a specific {noun}.
           </p>
         )}
       </div>

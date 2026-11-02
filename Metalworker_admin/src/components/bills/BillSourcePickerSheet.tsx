@@ -43,12 +43,15 @@ import { useTheme } from "../../context/ThemeContext";
 import { fetchBills } from "../../services/bills";
 import { formatBillDate, formatJobKind } from "../../services/billFormat";
 import { getBillConnectionCounts } from "../../services/billJobConnections";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import type { Bill } from "../../types/bill";
 
 const PAGE_SIZE = 25;
 
 export interface BillSourcePickerSheetProps {
   visible: boolean;
+  /** Which document series to list. A challan picker never shows an invoice. */
+  documentType?: BillDocumentType;
   onClose: () => void;
   /** Called with the confirmed source bill id. The original is never modified. */
   onConfirm: (billId: string) => void;
@@ -67,8 +70,14 @@ export function BillSourcePickerSheet(props: BillSourcePickerSheetProps) {
   return <BillSourcePickerSheetBody {...props} />;
 }
 
-function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheetProps) {
+function BillSourcePickerSheetBody({
+  documentType = "tax_invoice",
+  onClose,
+  onConfirm,
+}: BillSourcePickerSheetProps) {
   const { theme } = useTheme();
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const noun = info.noun.toLowerCase();
 
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Bill[]>([]);
@@ -90,7 +99,13 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
     const timer = setTimeout(
       () => {
         setLoading(true);
-        fetchBills({ search: search.trim(), page: 1, pageSize: PAGE_SIZE })
+        /* Type-scoped here, and checked again on the server when the draft is created. */
+        fetchBills({
+          search: search.trim(),
+          page: 1,
+          pageSize: PAGE_SIZE,
+          documentType,
+        })
           .then((page) => {
             if (!live) return;
             setRows(page.rows);
@@ -106,7 +121,12 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
             });
           })
           .catch((err: unknown) => {
-            if (live) setError(err instanceof Error ? err.message : "Could not load bills.");
+            if (live)
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : `Could not load ${info.nounPlural.toLowerCase()}.`
+              );
           })
           .finally(() => {
             if (live) setLoading(false);
@@ -118,23 +138,23 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
       live = false;
       clearTimeout(timer);
     };
-  }, [search]);
+  }, [search, documentType, info.nounPlural]);
 
   const chosenSummary = useMemo(() => {
     if (!chosen) return null;
     return {
-      invoice: chosen.invoice_no || "no invoice number",
+      invoice: chosen.invoice_no || `no ${noun} number`,
       party: chosen.party_name || "no customer named",
       date: formatBillDate(chosen.invoice_date),
       kind: formatJobKind(chosen.job_kind) || "no job type",
     };
-  }, [chosen]);
+  }, [chosen, noun]);
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Copy from a previous bill</Text>
+          <Text style={styles.headerTitle}>Copy from a previous {noun}</Text>
           <Pressable
             onPress={onClose}
             hitSlop={10}
@@ -148,15 +168,15 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
         {chosen && chosenSummary ? (
           <ScrollView contentContainerStyle={styles.body}>
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>You’re creating a new bill from…</Text>
+              <Text style={styles.cardTitle}>You’re creating a new {noun} from…</Text>
               <Text style={styles.summaryInvoice}>{chosenSummary.invoice}</Text>
               <Text style={styles.summaryLine}>{chosenSummary.party}</Text>
               <Text style={styles.summaryMuted}>
                 {chosenSummary.date} · {chosenSummary.kind}
               </Text>
               <Text style={styles.note}>
-                A draft is created from this bill’s data. The original is not changed, and
-                its PDF is not replaced.
+                A draft is created from this {noun}’s data. The original is not changed,
+                and its PDF is not replaced.
               </Text>
             </View>
 
@@ -172,7 +192,7 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
               onPress={() => setChosen(null)}
               accessibilityRole="button"
             >
-              <Text style={styles.ghostBtnText}>Pick a different bill</Text>
+              <Text style={styles.ghostBtnText}>Pick a different {noun}</Text>
             </Pressable>
           </ScrollView>
         ) : (
@@ -181,16 +201,16 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
               style={styles.search}
               value={search}
               onChangeText={setSearch}
-              placeholder="Invoice number, customer, sheet, date or job type"
+              placeholder={`${info.numberLabel.replace(/\.$/, "")}, customer, sheet, date or job type`}
               placeholderTextColor={theme.colors.textMuted}
               autoCorrect={false}
             />
             <Text style={styles.resultCount}>
               {total === 0
                 ? search.trim() === ""
-                  ? "No bills yet"
+                  ? `No ${info.nounPlural.toLowerCase()} yet`
                   : "Nothing matches"
-                : `${total} bill${total === 1 ? "" : "s"}`}
+                : `${total} ${noun}${total === 1 ? "" : "s"}`}
             </Text>
 
             {loading && rows.length === 0 ? (
@@ -206,8 +226,8 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
                 ListEmptyComponent={
                   <Text style={styles.empty}>
                     {search.trim() === ""
-                      ? "There are no bills to copy yet."
-                      : "No bill matches that search."}
+                      ? `There are no ${info.nounPlural.toLowerCase()} to copy yet.`
+                      : `No ${noun} matches that search.`}
                   </Text>
                 }
                 renderItem={({ item }) => {
@@ -220,7 +240,7 @@ function BillSourcePickerSheetBody({ onClose, onConfirm }: BillSourcePickerSheet
                     >
                       <View style={styles.rowMain}>
                         <Text style={styles.rowTitle}>
-                          {item.invoice_no || "No invoice number"}
+                          {item.invoice_no || `No ${noun} number`}
                         </Text>
                         <Text style={styles.rowSub}>
                           {item.party_name || "No customer named"}

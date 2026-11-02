@@ -78,6 +78,7 @@ import { fetchInvoiceLogos } from "../services/invoiceLogos";
 import { fetchInvoiceBusinessProfile } from "../services/invoiceBusinessProfile";
 import { getBillConnections, unlinkJobsFromBill } from "../services/billJobConnections";
 import { fetchBill, fetchBillLineItems, fetchBills } from "../services/bills";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import { formatBillDate, formatMoney } from "../services/billFormat";
 import {
   CreatorError,
@@ -152,8 +153,11 @@ const AUTOSAVE_MS = 1200;
  * memory so that "save draft, refresh, keep typing" is one bill — which is the whole
  * resumability claim.
  */
-function draftKeyFor(mode: Mode, sourceBillId: string | null): string {
-  const storageKey = `bill-creator:${mode}:${sourceBillId ?? ""}`;
+function draftKeyFor(mode: Mode, sourceBillId: string | null, documentType: BillDocumentType): string {
+  /* The type is part of the key. A challan draft and an invoice draft are different
+     documents, and reusing one form's idempotency token for the other would make the
+     server treat the second as a retry of the first. */
+  const storageKey = `bill-creator:${documentType}:${mode}:${sourceBillId ?? ""}`;
   try {
     const existing = window.sessionStorage.getItem(storageKey);
     if (existing) return existing;
@@ -228,10 +232,12 @@ function ReviewField({
    The page: which mode, and the entry screen
    ────────────────────────────────────────────── */
 
-export default function CreateBillPage() {
+export default function CreateBillPage({ documentType = "tax_invoice" }: { documentType?: BillDocumentType }) {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { mode, sourceBillId } = useMemo(() => readMode(params), [params]);
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const challan = documentType === "delivery_challan";
 
   /* `copy=pick` is not a mode — it means the picker is open. It lives in the URL so that a
      refresh reopens the dialog rather than silently becoming a blank new bill, which is
@@ -246,7 +252,7 @@ export default function CreateBillPage() {
        a line of explanation is a better answer than a button that goes nowhere. */
     if (mode !== null) return;
     let live = true;
-    fetchBills({ page: 1, pageSize: 1 })
+    fetchBills({ page: 1, pageSize: 1, documentType })
       .then((page) => {
         if (live) setAnyBillExists(page.total > 0);
       })
@@ -256,7 +262,7 @@ export default function CreateBillPage() {
     return () => {
       live = false;
     };
-  }, [mode]);
+  }, [mode, documentType]);
 
   if (mode !== null) {
     /* The key is the whole trick, and it is not a performance flourish. Changing mode has
@@ -264,7 +270,14 @@ export default function CreateBillPage() {
        throw the old form away and build a new one — rather than to reset a dozen pieces of
        state inside an effect and hope the list was complete. It also means no state can
        leak from a half-typed copy into the next new bill. */
-    return <CreatorForm key={`${mode}:${sourceBillId ?? ""}`} mode={mode} sourceBillId={sourceBillId} />;
+    return (
+      <CreatorForm
+        key={`${documentType}:${mode}:${sourceBillId ?? ""}`}
+        mode={mode}
+        sourceBillId={sourceBillId}
+        documentType={documentType}
+      />
+    );
   }
 
   return (
@@ -272,31 +285,44 @@ export default function CreateBillPage() {
       <div className="panel-flat">
         <header className="px-6 py-5 border-b border-border">
           <h2 className="text-[15px] font-semibold text-text tracking-[-0.01em]">
-            How should this bill start?
+            How should this {challan ? "challan" : "bill"} start?
           </h2>
           <p className="mt-1 text-[12.5px] text-text-muted leading-relaxed max-w-[38rem]">
-            Every option produces the same bill, with the same Original, Duplicate and
-            Triplicate PDFs. They differ only in what is filled in when the form opens.
+            Every option produces the same {info.noun.toLowerCase()}, with the same Original,
+            Duplicate and Triplicate PDFs. They differ only in what is filled in when the form
+            opens.
           </p>
         </header>
         <div className="p-3 grid gap-1.5">
           <EntryChoice
             icon={<FilePlus2 size={18} />}
-            title="Create New Bill"
-            body="A blank bill. Fill in the customer, the line items and the taxes yourself."
+            title={challan ? "Create New Challan" : "Create New Bill"}
+            body={
+              challan
+                ? "A blank challan. Fill in the customer, the material rows and the transport details yourself."
+                : "A blank bill. Fill in the customer, the line items and the taxes yourself."
+            }
             onClick={() => setParams({ mode: "empty" })}
           />
           <EntryChoice
             icon={<UserRound size={18} />}
-            title="New Bill + Profile"
-            body="The same blank bill, with your Invoice Business Profile preloaded — company details, bank block, terms and footer wording."
+            title={challan ? "New Challan + Profile" : "New Bill + Profile"}
+            body={
+              challan
+                ? "The same blank challan, with your Invoice Business Profile preloaded — company details, address, contacts and signature wording. No bank or payment terms."
+                : "The same blank bill, with your Invoice Business Profile preloaded — company details, bank block, terms and footer wording."
+            }
             onClick={() => setParams({ mode: "profile" })}
           />
           {anyBillExists ? (
             <EntryChoice
               icon={<Copy size={18} />}
-              title="Copy Existing Bill"
-              body="Start from a bill that already exists. Its data is copied; the original is never changed."
+              title={challan ? "Copy Existing Challan" : "Copy Existing Bill"}
+              body={
+                challan
+                  ? "Start from a challan that already exists. Only Delivery Challans are listed; the original is never changed."
+                  : "Start from a bill that already exists. Its data is copied; the original is never changed."
+              }
               onClick={() => setParams({ copy: "pick" })}
             />
           ) : (
@@ -306,9 +332,11 @@ export default function CreateBillPage() {
             <p className="flex items-start gap-2.5 px-4 py-3 rounded-lg border border-dashed border-border text-[12px] text-text-muted">
               <Info size={14} className="shrink-0 mt-0.5" />
               <span>
-                <strong className="font-semibold text-text-secondary">Copy an existing bill</strong>{" "}
-                appears once there is a bill to copy. Upload a workbook under Bills to create
-                the first one.
+                <strong className="font-semibold text-text-secondary">
+                  Copy an existing {challan ? "challan" : "bill"}
+                </strong>{" "}
+                appears once there is one to copy. Upload a workbook under {info.section}, or
+                create the first one here.
               </span>
             </p>
           )}
@@ -316,17 +344,18 @@ export default function CreateBillPage() {
         <div className="px-4 py-3 border-t border-border">
           <button
             type="button"
-            onClick={() => navigate("/bills")}
+            onClick={() => navigate(info.route)}
             className="btn btn-ghost btn-sm"
           >
             <ArrowLeft size={14} />
-            Back to bills
+            Back to {info.section}
           </button>
         </div>
       </div>
 
       <BillSourcePicker
         open={params.get("copy") === "pick"}
+        documentType={documentType}
         onClose={() => setParams({})}
         onConfirm={(chosenId) => setParams({ copy: chosenId })}
       />
@@ -341,12 +370,16 @@ export default function CreateBillPage() {
 function CreatorForm({
   mode,
   sourceBillId,
+  documentType,
 }: {
   mode: "empty" | "profile" | "copy";
   sourceBillId: string | null;
+  documentType: BillDocumentType;
 }) {
   const navigate = useNavigate();
   const toast = useToast();
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const challan = documentType === "delivery_challan";
 
   /* ── Loading ─────────────────────────────────────────────── */
 
@@ -378,6 +411,7 @@ function CreatorForm({
   /* ── Server's numbers. Displayed, never computed here. ──── */
 
   const [serverTotals, setServerTotals] = useState<{
+    total_quantity: number | null;
     amount_before_tax: number | null;
     cgst: number | null;
     sgst: number | null;
@@ -413,14 +447,21 @@ function CreatorForm({
   const [profileCompanyName, setProfileCompanyName] = useState<string | null>(null);
 
   const isCopy = mode === "copy";
-  const draftKey = useMemo(() => draftKeyFor(mode, sourceBillId), [mode, sourceBillId]);
+  const draftKey = useMemo(
+    () => draftKeyFor(mode, sourceBillId, documentType),
+    [mode, sourceBillId, documentType]
+  );
+  const documentNoun = challan ? "challan" : "bill";
 
   usePageMeta({
-    title: "Create Bill",
-    crumbs: [{ label: "Bills", to: "/bills" }, { label: "Create Bill" }],
+    title: challan ? "Create Challan" : "Create Bill",
+    crumbs: [
+      { label: info.section, to: info.route },
+      { label: `Create ${info.noun}` },
+    ],
     subtitle: isCopy
-      ? "A new draft from an existing bill. The original is not changed."
-      : "A new bill, saved as a draft until you generate it.",
+      ? `A new draft from an existing ${documentNoun}. The original is not changed.`
+      : `A new ${documentNoun}, saved as a draft until you generate it.`,
   });
 
   /* ── Loading the form's starting state ───────────────────── */
@@ -466,11 +507,24 @@ function CreatorForm({
              never opened, downloaded or parsed: re-deriving a bill from a printed
              document would produce a second parser whose disagreements are invisible. */
           const [bill, items, profile] = await Promise.all([
-            fetchBill(sourceBillId),
+            fetchBill(sourceBillId, documentType),
             fetchBillLineItems(sourceBillId),
             fetchInvoiceBusinessProfile(),
           ]);
           if (!live) return;
+
+          /* `fetchBill` is already scoped, so this is the in-memory check: a stale link
+             or a hand-edited URL must not seed a challan from an invoice (or the
+             reverse). The server refuses the same request again on create. */
+          if ((bill.document_type ?? "tax_invoice") !== documentType) {
+            setLoadError(
+              challan
+                ? "That is a Tax Invoice. A Delivery Challan can only be copied from another Delivery Challan."
+                : "That is a Delivery Challan. A Tax Invoice can only be copied from another Tax Invoice."
+            );
+            setLoading(false);
+            return;
+          }
 
           if (profile?.payment_days !== undefined && profile.payment_days !== null) {
             setProfilePaymentDays(Number(profile.payment_days));
@@ -499,7 +553,7 @@ function CreatorForm({
           /* The difference between the two buttons is entirely in this call. */
           applySeed(
             mode === "profile" && profile
-              ? seedFromProfile(profile as unknown as Record<string, unknown>, "new")
+              ? seedFromProfile(profile as unknown as Record<string, unknown>, "new", documentType)
               : seedEmpty("new")
           );
           setLogoId(undefined);
@@ -526,7 +580,7 @@ function CreatorForm({
     return () => {
       live = false;
     };
-  }, [mode, sourceBillId, applySeed]);
+  }, [mode, sourceBillId, applySeed, documentType, challan]);
 
   /* ── The link set, read back from the bill ──────────────── */
 
@@ -608,6 +662,7 @@ function CreatorForm({
 
   const buildRequest = useCallback(
     (overrides: Partial<Parameters<typeof saveCreatorDraft>[0]> = {}) => ({
+      documentType,
       billId,
       sourceBillId,
       useCurrentProfile,
@@ -624,6 +679,7 @@ function CreatorForm({
       ...overrides,
     }),
     [
+      documentType,
       billId,
       sourceBillId,
       useCurrentProfile,
@@ -645,6 +701,7 @@ function CreatorForm({
      CGST while a new save has none would show a tax the invoice is no longer charging. */
   const applyServerTotals = useCallback((result: CreatorDraftRef) => {
     setServerTotals({
+      total_quantity: result.total_quantity,
       amount_before_tax: result.amount_before_tax,
       cgst: result.cgst,
       sgst: result.sgst,
@@ -758,13 +815,13 @@ function CreatorForm({
         setDuplicates([]);
         toast.success(
           result.jobs_error
-            ? `Invoice generated. The bill was created, but its job links failed: ${result.jobs_error}`
-            : "Invoice generated — Original, Duplicate and Triplicate."
+            ? `${challan ? "Challan" : "Invoice"} generated. The ${documentNoun} was created, but its job links failed: ${result.jobs_error}`
+            : `${challan ? "Challan" : "Invoice"} generated — Original, Duplicate and Triplicate.`
         );
-        /* Away to the list, because the work is done and the list is where an admin
-           verifies it. Staying here would show a form for a bill that can no longer be
-           edited. */
-        navigate("/bills");
+        /* Away to the section's own list, because the work is done and the list is where
+           an admin verifies it. Staying here would show a form for a document that can
+           no longer be edited. */
+        navigate(info.route);
       } catch (err) {
         if (err instanceof CreatorError && err.isDuplicateInvoiceNo) {
           /* The draft is saved and intact; only the finalize was refused. The bills that
@@ -782,7 +839,7 @@ function CreatorForm({
         setBusy(null);
       }
     },
-    [buildRequest, toast, navigate]
+    [buildRequest, toast, navigate, challan, documentNoun, info.route]
   );
 
   /* ── Jobs ────────────────────────────────────────────────── */
@@ -845,7 +902,7 @@ function CreatorForm({
     return (
       <div className="flex items-center gap-3 py-16 justify-center text-sm text-text-muted">
         <Loader2 size={18} className="animate-spin" />
-        {isCopy ? "Reading the bill being copied…" : "Opening the bill creator…"}
+        {isCopy ? `Reading the ${documentNoun} being copied…` : `Opening the ${challan ? "challan" : "bill"} creator…`}
       </div>
     );
   }
@@ -858,10 +915,10 @@ function CreatorForm({
           <p className="mt-1 text-sm text-text-secondary">{loadError}</p>
           <button
             type="button"
-            onClick={() => navigate("/bills")}
+            onClick={() => navigate(info.route)}
             className="mt-3 px-3 py-2 rounded-lg border border-border text-xs font-bold text-text-secondary hover:bg-surface-hover cursor-pointer"
           >
-            Back to Bills
+            Back to {info.section}
           </button>
         </div>
       </div>
@@ -876,7 +933,9 @@ function CreatorForm({
         {/* One line telling the admin what this document is and what state it is in. */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <h2 className="text-lg font-bold text-text">
-            {isCopy ? "New bill from a previous bill" : "New bill"}
+            {isCopy
+              ? `New ${documentNoun} from a previous ${documentNoun}`
+              : `New ${documentNoun}`}
           </h2>
           <span className="px-2 py-0.5 rounded-md bg-warning-muted text-warning text-[11px] font-bold uppercase tracking-wider">
             Draft — not generated
@@ -907,8 +966,10 @@ function CreatorForm({
             </label>
             <p className="text-xs text-text-muted basis-full sm:basis-auto sm:flex-1 min-w-[18rem]">
               {useCurrentProfile
-                ? "The company details, bank block, terms and footer wording below have been replaced with today's profile."
-                : "Unticked, this bill keeps the wording the source bill was finalized with — so a change to the profile cannot rewrite a bill that was already issued."}
+                ? challan
+                  ? "The company details, address, contacts and signature wording below have been replaced with today's profile. Bank and payment terms are never put on a challan."
+                  : "The company details, bank block, terms and footer wording below have been replaced with today's profile."
+                : `Unticked, this ${documentNoun} keeps the wording the source ${documentNoun} was finalized with — so a change to the profile cannot rewrite one that was already issued.`}
             </p>
           </div>
         )}
@@ -921,7 +982,7 @@ function CreatorForm({
             <ul className="mt-1 space-y-0.5 text-sm text-text-secondary">
               {problems.map((problem) => (
                 <li key={`${problem.field}:${problem.message}`}>
-                  <strong className="text-text">{fieldLabel(problem.field)}:</strong> {problem.message}
+                  <strong className="text-text">{fieldLabel(problem.field, challan)}:</strong> {problem.message}
                 </li>
               ))}
             </ul>
@@ -930,19 +991,38 @@ function CreatorForm({
 
         <div className="space-y-4">
           {/* ── A. Invoice Information ───────────────────────── */}
-          <SectionCard title="A. Invoice Information" cols={3}>
-            <ReviewField label="Invoice number" highlight={hi("invoice_no")} hint={problemFor("invoice_no") ?? undefined}>
-              <TextInput value={values.invoice_no ?? ""} onChange={(v) => setField("invoice_no", v)} placeholder="INV/2026/001" />
+          <SectionCard
+            title={challan ? "A. Challan Information" : "A. Invoice Information"}
+            cols={3}
+          >
+            <ReviewField
+              label={challan ? "Challan number" : "Invoice number"}
+              highlight={hi("invoice_no")}
+              hint={problemFor("invoice_no") ?? undefined}
+            >
+              <TextInput
+                value={values.invoice_no ?? ""}
+                onChange={(v) => setField("invoice_no", v)}
+                placeholder={challan ? "CH/2026/001" : "INV/2026/001"}
+              />
             </ReviewField>
-            <ReviewField label="Invoice date" highlight={hi("invoice_date")} hint={problemFor("invoice_date") ?? undefined}>
+            <ReviewField
+              label={challan ? "Challan date" : "Invoice date"}
+              highlight={hi("invoice_date")}
+              hint={problemFor("invoice_date") ?? undefined}
+            >
               <TextInput type="date" value={values.invoice_date ?? ""} onChange={(v) => setField("invoice_date", v)} />
             </ReviewField>
-            <ReviewField label="Our challan no." highlight={hi("our_challan_no")}>
-              <TextInput value={values.our_challan_no ?? ""} onChange={(v) => setField("our_challan_no", v)} />
-            </ReviewField>
-            <ReviewField label="Our challan date" highlight={hi("our_challan_date")}>
-              <TextInput type="date" value={values.our_challan_date ?? ""} onChange={(v) => setField("our_challan_date", v)} />
-            </ReviewField>
+            {!challan && (
+              <>
+                <ReviewField label="Our challan no." highlight={hi("our_challan_no")}>
+                  <TextInput value={values.our_challan_no ?? ""} onChange={(v) => setField("our_challan_no", v)} />
+                </ReviewField>
+                <ReviewField label="Our challan date" highlight={hi("our_challan_date")}>
+                  <TextInput type="date" value={values.our_challan_date ?? ""} onChange={(v) => setField("our_challan_date", v)} />
+                </ReviewField>
+              </>
+            )}
             <ReviewField label="Your challan no." highlight={hi("your_challan_no")}>
               <TextInput value={values.your_challan_no ?? ""} onChange={(v) => setField("your_challan_no", v)} />
             </ReviewField>
@@ -950,7 +1030,7 @@ function CreatorForm({
               <TextInput type="date" value={values.your_challan_date ?? ""} onChange={(v) => setField("your_challan_date", v)} />
             </ReviewField>
             <ReviewField
-              label="Order number"
+              label={challan ? "Service / purchase / sales order no." : "Order number"}
               highlight={hi("order_no")}
               hint="The label beside it is the workbook's own — a 'Service Order No.' stays that."
             >
@@ -962,12 +1042,16 @@ function CreatorForm({
             <ReviewField label="Order date" highlight={hi("order_date")}>
               <TextInput type="date" value={values.order_date ?? ""} onChange={(v) => setField("order_date", v)} />
             </ReviewField>
-            <ReviewField label="E-way bill no." highlight={hi("eway_bill_no")}>
-              <TextInput value={values.eway_bill_no ?? ""} onChange={(v) => setField("eway_bill_no", v)} />
-            </ReviewField>
-            <ReviewField label="E-way bill date" highlight={hi("eway_bill_date")}>
-              <TextInput type="date" value={values.eway_bill_date ?? ""} onChange={(v) => setField("eway_bill_date", v)} />
-            </ReviewField>
+            {!challan && (
+              <>
+                <ReviewField label="E-way bill no." highlight={hi("eway_bill_no")}>
+                  <TextInput value={values.eway_bill_no ?? ""} onChange={(v) => setField("eway_bill_no", v)} />
+                </ReviewField>
+                <ReviewField label="E-way bill date" highlight={hi("eway_bill_date")}>
+                  <TextInput type="date" value={values.eway_bill_date ?? ""} onChange={(v) => setField("eway_bill_date", v)} />
+                </ReviewField>
+              </>
+            )}
             <ReviewField label="Transporter mode" wide>
               <TextInput value={values.transporter_mode ?? ""} onChange={(v) => setField("transporter_mode", v)} />
             </ReviewField>
@@ -977,25 +1061,37 @@ function CreatorForm({
           </SectionCard>
 
           {/* ── B. Customer / Recipient ─────────────────────── */}
-          <SectionCard title="B. Customer / Recipient" cols={2}>
-            <ReviewField label="Recipient heading" hint="Printed above the customer's name, e.g. 'Bill To'.">
-              <TextInput value={values.recipient_label ?? ""} onChange={(v) => setField("recipient_label", v)} />
-            </ReviewField>
-            <ReviewField label="Recipient name" highlight={hi("party_name")} hint={problemFor("party_name") ?? undefined}>
+          <SectionCard title={challan ? "B. Customer / Party" : "B. Customer / Recipient"} cols={2}>
+            {!challan && (
+              <>
+                <ReviewField label="Recipient heading" hint="Printed above the customer's name, e.g. 'Bill To'.">
+                  <TextInput value={values.recipient_label ?? ""} onChange={(v) => setField("recipient_label", v)} />
+                </ReviewField>
+              </>
+            )}
+            <ReviewField
+              label={challan ? "Customer / party name" : "Recipient name"}
+              highlight={hi("party_name")}
+              hint={problemFor("party_name") ?? undefined}
+            >
               <TextInput value={values.party_name ?? ""} onChange={(v) => setField("party_name", v)} />
             </ReviewField>
-            <ReviewField label="Recipient note" wide hint="A second line under the name, e.g. 'Kindly attend'.">
-              <TextInput value={values.recipient_note ?? ""} onChange={(v) => setField("recipient_note", v)} />
-            </ReviewField>
+            {!challan && (
+              <ReviewField label="Recipient note" wide hint="A second line under the name, e.g. 'Kindly attend'.">
+                <TextInput value={values.recipient_note ?? ""} onChange={(v) => setField("recipient_note", v)} />
+              </ReviewField>
+            )}
             <ReviewField label="Address" wide hint="One line per row is printed as one line.">
               <TextArea value={values.party_address ?? ""} onChange={(v) => setField("party_address", v)} rows={4} />
             </ReviewField>
-            <ReviewField label="Customer GST number" hint={problemFor("party_gst_no") ?? undefined}>
+            <ReviewField label={challan ? "Party GST number" : "Customer GST number"} hint={problemFor("party_gst_no") ?? undefined}>
               <TextInput value={values.party_gst_no ?? ""} onChange={(v) => setField("party_gst_no", v)} inputMode="text" />
             </ReviewField>
-            <ReviewField label="Place of supply" hint="Decided by IGST versus CGST/SGST. The tax section below reads the same way.">
-              <TextInput value={values.place_of_supply ?? ""} onChange={(v) => setField("place_of_supply", v)} />
-            </ReviewField>
+            {!challan && (
+              <ReviewField label="Place of supply" hint="Decided by IGST versus CGST/SGST. The tax section below reads the same way.">
+                <TextInput value={values.place_of_supply ?? ""} onChange={(v) => setField("place_of_supply", v)} />
+              </ReviewField>
+            )}
             <ReviewField label="State">
               <TextInput value={values.state ?? ""} onChange={(v) => setField("state", v)} />
             </ReviewField>
@@ -1046,8 +1142,14 @@ function CreatorForm({
                     <th className="w-24 py-1">HSN</th>
                     <th className="w-20 py-1">UOM</th>
                     <th className="w-28 py-1">Qty</th>
-                    <th className="w-28 py-1">Rate</th>
-                    <th className="w-28 py-1 text-right">Amount</th>
+                    {challan ? (
+                      <th className="w-48 py-1">Remarks</th>
+                    ) : (
+                      <>
+                        <th className="w-28 py-1">Rate</th>
+                        <th className="w-28 py-1 text-right">Amount</th>
+                      </>
+                    )}
                     <th className="w-24 py-1" />
                   </tr>
                 </thead>
@@ -1069,15 +1171,23 @@ function CreatorForm({
                       <td className="py-1 pr-1">
                         <NumberInput value={line.quantity} onChange={(v) => setLine(line.key, "quantity", v)} />
                       </td>
-                      <td className="py-1 pr-1">
-                        <NumberInput value={line.rate} onChange={(v) => setLine(line.key, "rate", v)} align="right" />
-                      </td>
-                      <td className="py-1 pr-1 text-right tabular-nums text-text-secondary">
-                        {/* Read-only. The amount is quantity x rate and the server
-                            recomputes it; showing a figure an admin could edit here would
-                            be showing a number the invoice does not use. */}
-                        {lineAmount(line) === null ? "—" : formatMoney(lineAmount(line))}
-                      </td>
+                      {challan ? (
+                        <td className="py-1 pr-1">
+                          <TextInput value={line.remarks} onChange={(v) => setLine(line.key, "remarks", v)} />
+                        </td>
+                      ) : (
+                        <>
+                          <td className="py-1 pr-1">
+                            <NumberInput value={line.rate} onChange={(v) => setLine(line.key, "rate", v)} align="right" />
+                          </td>
+                          <td className="py-1 pr-1 text-right tabular-nums text-text-secondary">
+                            {/* Read-only. The amount is quantity x rate and the server
+                                recomputes it; showing a figure an admin could edit here would
+                                be showing a number the invoice does not use. */}
+                            {lineAmount(line) === null ? "—" : formatMoney(lineAmount(line))}
+                          </td>
+                        </>
+                      )}
                       <td className="py-1">
                         <div className="flex items-center gap-0.5">
                           <RowButton title="Move up" disabled={lines[0]?.key === line.key} onClick={() => moveLine(line.key, -1)}>
@@ -1096,7 +1206,7 @@ function CreatorForm({
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={6} className="pt-2">
+                    <td colSpan={challan ? 5 : 6} className="pt-2">
                       <button
                         type="button"
                         onClick={addLine}
@@ -1120,7 +1230,8 @@ function CreatorForm({
             </p>
           </SectionCard>
 
-          {/* ── E. Tax & Totals ─────────────────────────────── */}
+          {/* ── E. Tax & Totals (Tax Invoice only) ──────────── */}
+          {!challan && (
           <SectionCard
             title="E. Tax & Totals"
             cols={3}
@@ -1184,8 +1295,36 @@ function CreatorForm({
               </p>
             )}
           </SectionCard>
+          )}
 
-          {/* ── F. Bank Details ─────────────────────────────── */}
+          {/* ── E. Summary (Delivery Challan only) ──────────── */}
+          {challan && (
+            <SectionCard
+              title="E. Summary"
+              cols={2}
+              description="A challan moves material; it charges nothing. Only the total quantity and the job type are printed."
+            >
+              <Field label="Total quantity" hint="Recalculated from the line items on every save.">
+                <div className="px-3 py-2 rounded-lg bg-bg-secondary border border-border text-sm text-text tabular-nums">
+                  {serverTotals?.total_quantity ?? lineTotals.totalQuantity ?? "—"}
+                </div>
+              </Field>
+              <Field label="Job type" hint="Printed beside the total quantity as LABOUR JOB or WITH METAL.">
+                <select
+                  value={values.job_kind ?? ""}
+                  onChange={(event) => setField("job_kind", event.target.value)}
+                  className="w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="">Not specified</option>
+                  <option value="LABOUR JOB">Labour Job</option>
+                  <option value="WITH METAL">With Metal</option>
+                </select>
+              </Field>
+            </SectionCard>
+          )}
+
+          {/* ── F. Bank Details (Tax Invoice only) ──────────── */}
+          {!challan && (
           <SectionCard
             title="F. Bank Details"
             cols={2}
@@ -1205,9 +1344,11 @@ function CreatorForm({
                 : "These four lines are printed exactly as shown, in this order."}
             </p>
           </SectionCard>
+          )}
 
-          {/* ── G. Terms & Conditions ───────────────────────── */}
-          <SectionCard title="G. Terms & Conditions" cols={1}>
+          {/* ── F. Terms & Conditions (Tax Invoice only) ────── */}
+          {!challan && (
+          <SectionCard title="F. Terms & Conditions" cols={1}>
             {([1, 2, 3] as const).map((n) => (
               <Field
                 key={n}
@@ -1271,10 +1412,22 @@ function CreatorForm({
               )}
             </p>
           </SectionCard>
+          )}
 
-          {/* ── H. Footer / Signature ───────────────────────── */}
-          <SectionCard title="H. Footer / Signature" cols={2}>
-            <ReviewField label="Certification" wide hint="The sentence above the two signature blocks.">
+          {/* ── G. Closing / Signatures ─────────────────────── */}
+          <SectionCard
+            title={challan ? "F. Closing / Signatures" : "G. Footer / Signature"}
+            cols={2}
+          >
+            <ReviewField
+              label={challan ? "Material receipt acknowledgement" : "Certification"}
+              wide
+              hint={
+                challan
+                  ? "The line above the two signature blocks, e.g. 'Received above material in good & condition'."
+                  : "The sentence above the two signature blocks."
+              }
+            >
               <TextArea value={values.certification ?? ""} onChange={(v) => setField("certification", v)} rows={2} />
             </ReviewField>
             <ReviewField label="For, <company>" wide>
@@ -1286,16 +1439,18 @@ function CreatorForm({
             <ReviewField label="Receiver's signature label">
               <TextInput value={values.receiver_signature ?? ""} onChange={(v) => setField("receiver_signature", v)} />
             </ReviewField>
-            <ReviewField label="Extra notes" wide hint="Anything else printed on the invoice.">
+            <ReviewField label="Extra notes" wide hint="Anything else printed on the document.">
               <TextArea value={values.notes_extra ?? ""} onChange={(v) => setField("notes_extra", v)} rows={2} />
             </ReviewField>
-            <Field label="Job type" wide hint="How this bill is grouped with the jobs it is linked to.">
-              <TextInput value={values.job_kind ?? ""} onChange={(v) => setField("job_kind", v)} />
-            </Field>
+            {!challan && (
+              <Field label="Job type" wide hint="How this bill is grouped with the jobs it is linked to.">
+                <TextInput value={values.job_kind ?? ""} onChange={(v) => setField("job_kind", v)} />
+              </Field>
+            )}
           </SectionCard>
 
-          {/* ── I. Job Assignment ───────────────────────────── */}
-          <SectionCard title="I. Job Assignment" cols={1}>
+          {/* ── H. Job Assignment ───────────────────────────── */}
+          <SectionCard title={challan ? "G. Job Assignment" : "H. Job Assignment"} cols={1}>
             {connections.length === 0 ? (
               <p className="text-sm text-text-muted">
                 No jobs linked yet. Linking is optional — a bill does not need a job — and a copy
@@ -1359,8 +1514,8 @@ function CreatorForm({
             </p>
           </SectionCard>
 
-          {/* ── J. Invoice Logo ─────────────────────────────── */}
-          <SectionCard title="J. Invoice Logo" cols={1}>
+          {/* ── I. Logo ─────────────────────────────────────── */}
+          <SectionCard title={challan ? "H. Challan Logo" : "I. Invoice Logo"} cols={1}>
             <div className="flex flex-wrap items-center gap-3">
               <SmallButton onClick={() => setLogoPickerOpen(true)}>
                 {logoId ? "Change logo" : "Choose logo"}
@@ -1383,9 +1538,9 @@ function CreatorForm({
             </p>
           </SectionCard>
 
-          {/* ── K. Folder, Preview & Finalize ───────────────── */}
+          {/* ── J. Folder, Preview & Finalize ───────────────── */}
           <SectionCard
-            title="K. Preview & Generate"
+            title={challan ? "I. Preview & Generate" : "J. Preview & Generate"}
             cols={2}
             description="Nothing is generated until you choose to. A draft can be left and finished later."
           >
@@ -1414,10 +1569,11 @@ function CreatorForm({
               </div>
             </Field>
 
-            <Field label="Copy designation" hint="Set by the bill itself — you do not choose it.">
+            <Field label="Copy designation" hint="Set by the document itself — you do not choose it.">
               <div className="px-3 py-2 rounded-lg bg-bg-secondary border border-border text-sm text-text-secondary">
-                All three copies print with the bill&rsquo;s own customer, totals, bank, terms and
-                signature. The only difference is the designation in the corner.
+                {challan
+                  ? "All three copies print with the challan's own customer, material table, total quantity and signatures. The only difference is the designation in the corner."
+                  : "All three copies print with the bill's own customer, totals, bank, terms and signature. The only difference is the designation in the corner."}
               </div>
             </Field>
 
@@ -1448,7 +1604,9 @@ function CreatorForm({
       <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-surface/95 backdrop-blur px-4 py-3">
         <div className="max-w-[100rem] mx-auto flex flex-wrap items-center gap-3">
           <span className="text-sm text-text-secondary tabular-nums">
-            {formatMoney(serverTotals?.amount_after_tax ?? lineTotals.amountBeforeTax)}
+            {challan
+              ? `Total quantity ${serverTotals?.total_quantity ?? lineTotals.totalQuantity ?? "—"}`
+              : formatMoney(serverTotals?.amount_after_tax ?? lineTotals.amountBeforeTax)}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <FooterButton
@@ -1467,13 +1625,13 @@ function CreatorForm({
               primary
               icon={busy === "finalize" ? <Loader2 size={16} className="animate-spin" /> : <FilePlus2 size={16} />}
             >
-              Generate Invoice
+              {challan ? "Generate Challan" : "Generate Invoice"}
             </FooterButton>
           </div>
         </div>
         {duplicates.length === 0 && (
           <p className="max-w-[100rem] mx-auto mt-1 text-[11px] text-text-muted">
-            Generating writes three PDFs and makes the bill final. It cannot be undone.
+            Generating writes three PDFs and makes the {documentNoun} final. It cannot be undone.
           </p>
         )}
       </div>
@@ -1493,7 +1651,7 @@ function CreatorForm({
       <LinkBillsToJobsModal
         open={jobsModalOpen}
         billId={billId ?? ""}
-        billLabel={values.invoice_no || values.party_name || "this draft"}
+        billLabel={values.invoice_no || values.party_name || `this ${documentNoun}`}
         initialTab={jobsTab}
         onClose={() => setJobsModalOpen(false)}
         onLinked={() => {
@@ -1549,7 +1707,7 @@ function CreatorForm({
       <Modal
         open={duplicates.length > 0}
         onClose={() => setDuplicates([])}
-        title="That invoice number is already used"
+        title={`That ${documentNoun} number is already used`}
         tone="danger"
         size="md"
         footer={
@@ -1573,8 +1731,8 @@ function CreatorForm({
       >
         <div className="px-6 py-4">
           <p className="text-sm text-text-secondary">
-            Your draft is saved and nothing has been generated. These bills already use this
-            invoice number:
+            Your draft is saved and nothing has been generated. These {documentNoun}s already
+            use this {documentNoun} number:
           </p>
           <ul className="mt-3 divide-y divide-border rounded-lg border border-border">
             {duplicates.map((duplicate) => (
@@ -1588,9 +1746,9 @@ function CreatorForm({
             ))}
           </ul>
           <p className="mt-3 text-xs text-text-muted">
-            Generating anyway creates a second bill with the same number. Neither is overwritten
-            and neither is marked as the wrong one — which is why this is your choice and not a
-            default.
+            Generating anyway creates a second {documentNoun} with the same number. Neither is
+            overwritten and neither is marked as the wrong one — which is why this is your
+            choice and not a default.
           </p>
         </div>
       </Modal>
@@ -1714,10 +1872,10 @@ function FooterButton({
 }
 
 /** A server-named column, spelled the way the section header above it is. */
-function fieldLabel(field: string): string {
+function fieldLabel(field: string, challan = false): string {
   const known: Record<string, string> = {
-    invoice_no: "Invoice number",
-    invoice_date: "Invoice date",
+    invoice_no: challan ? "Challan number" : "Invoice number",
+    invoice_date: challan ? "Challan date" : "Invoice date",
     party_name: "Customer",
     party_gst_no: "Customer GST number",
     line_items: "Line items",

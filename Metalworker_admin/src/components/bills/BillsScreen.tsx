@@ -870,10 +870,10 @@ const [createOpen, setCreateOpen] = useState(false);
         </View>
 
         <View style={styles.actionBar}>
-          {/* Bill Creator makes Tax Invoices only, so it lives in Tax Bills. */}
+          {/* Both sections offer the creator, each with its own form and document type. */}
           {info.supportsBillCreator && (
             <Button
-              title="Create bill"
+              title={documentType === "delivery_challan" ? "Create challan" : "Create bill"}
               icon="plus"
               onPress={() => setCreateOpen(true)}
               style={styles.actionBarBtn}
@@ -1738,24 +1738,37 @@ function CreateBillChoiceSheet({
 }) {
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
+  const challan = documentType === "delivery_challan";
+  const noun = info.noun.toLowerCase();
+  /* The type is in the URL, so a process restart mid-form comes back to the same form
+     rather than silently to a Tax Invoice. */
+  const base = `/bill-create?documentType=${documentType}&mode=`;
 
   const choices: { title: string; body: string; onPress: () => void }[] = [
     {
-      title: "Create New Bill",
-      body: "A blank bill, section by section.",
-      onPress: () => onChoose("/bill-create?mode=empty"),
+      title: `Create New ${info.noun}`,
+      body: challan
+        ? "A blank challan, section by section."
+        : "A blank bill, section by section.",
+      onPress: () => onChoose(`${base}empty`),
     },
     {
-      title: "New Bill + Profile",
-      body: "The same blank bill, preloaded from your Invoice Business Profile.",
-      onPress: () => onChoose("/bill-create?mode=profile"),
+      title: `New ${info.noun} + Profile`,
+      body: challan
+        ? "The same blank challan, preloaded from your Invoice Business Profile company details and signature wording."
+        : "The same blank bill, preloaded from your Invoice Business Profile.",
+      onPress: () => onChoose(`${base}profile`),
     },
   ];
   if (hasBills) {
     choices.push({
-      title: "Copy Existing Bill",
-      body: "A new draft from a bill already in the list. The original is never changed.",
-      onPress: () => onChoose("/bill-create?mode=copy"),
+      title: `Copy Existing ${info.noun}`,
+      body: challan
+        ? "A new draft from a challan already in this list. The original is never changed."
+        : "A new draft from a bill already in the list. The original is never changed.",
+      onPress: () => onChoose(`${base}copy`),
     });
   }
 
@@ -1763,9 +1776,9 @@ function CreateBillChoiceSheet({
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
-          <Text style={styles.sheetTitle}>Create a bill</Text>
+          <Text style={styles.sheetTitle}>Create a {noun}</Text>
           <Text style={styles.sheetSubtitle}>
-            All three produce the same bill and the same three PDFs — they differ only in
+            All three produce the same {noun} and the same three PDFs — they differ only in
             what starts filled in.
           </Text>
           {choices.map((choice) => (

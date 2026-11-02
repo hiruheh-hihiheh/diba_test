@@ -30,13 +30,14 @@ import {
   amountInWords,
   applicableFromAmounts,
   bankLinesOf,
+  documentTypeOf,
   parseBankLines,
   round2,
   round3,
   supplyTypeOf,
 } from "./billDocument.ts";
 import { LIMITS, type BillPatch, type LineItemPatch } from "./billEdit.ts";
-import type { BillLineItem, CopyKind } from "./parseBill.ts";
+import type { BillLineItem, CopyKind, DocumentType } from "./parseBill.ts";
 
 /**
  * A stored multi-line value as its lines.
@@ -374,11 +375,12 @@ export function lineItemsToPatch(items: readonly BillLineItem[]): LineItemPatch[
  * editor too, which is out of scope for a feature that promises to reuse the existing
  * calculation semantics.
  */
-export function emptyBillRecord(copy: CopyKind = "original"): BillRecord {
+export function emptyBillRecord(copy: CopyKind = "original", documentType: DocumentType = "tax_invoice"): BillRecord {
   return {
     id: "",
     sheet_name: "",
     copy,
+    document_type: documentType,
 
     job_kind: null,
 
@@ -487,9 +489,14 @@ export function blankLineItem(index: number): BillLineItem {
  * inherited and every rate the user typed is charged. The form shows all three computed
  * amounts live for that reason.
  */
-export function copyBaseRecord(source: BillRecord | null): BillRecord {
-  const base = emptyBillRecord();
+export function copyBaseRecord(source: BillRecord | null, documentType?: DocumentType): BillRecord {
+  const type = documentType ?? (source ? documentTypeOf(source) : "tax_invoice");
+  const base = emptyBillRecord("original", type);
   if (!source) return base;
+  /* A Delivery Challan charges nothing, so there is no applicability to inherit and no
+     tax amounts to read it from. The base stays blank in every financial column, which
+     is what makes `computeBillValues` take its challan branch. */
+  if (type === "delivery_challan") return base;
   return {
     ...base,
     cgst: numberOrNull((source as unknown as Record<string, unknown>).cgst),
@@ -540,6 +547,11 @@ export interface FinalizeInput {
     totalGst: number;
     amountAfterTax: number;
   };
+  /**
+   * Which document is being generated. Defaults to a Tax Invoice, so every existing
+   * caller keeps its behaviour; the Challan Creator passes its own type explicitly.
+   */
+  documentType?: DocumentType;
 }
 
 /**
@@ -563,18 +575,25 @@ export interface FinalizeInput {
 export function validateForFinalize(input: FinalizeInput): CreatorFieldError[] {
   const errors: CreatorFieldError[] = [];
   const { patch, lineItems, totals } = input;
+  const documentType: DocumentType = input.documentType ?? "tax_invoice";
+  const challan = documentType === "delivery_challan";
+  const noun = challan ? "challan" : "invoice";
 
   const add = (field: string, message: string) => errors.push({ field, message });
 
+  /* Both documents are identified by their own number and date. A challan has no
+     financial requirements at all — a row with a number, a date, material and a
+     quantity is a complete delivery challan — so it is never blocked by a missing
+     rate, tax rate, GST number or amount. */
   if (textOrNull(patch.invoice_no) === null) {
-    add("invoice_no", "The invoice number is required.");
+    add("invoice_no", `The ${noun} number is required.`);
   }
   if (textOrNull(patch.invoice_date) === null) {
-    add("invoice_date", "The invoice date is required.");
+    add("invoice_date", `The ${noun} date is required.`);
   }
 
   if (lineItems.length === 0) {
-    add("line_items", "Add at least one line item before generating the invoice.");
+    add("line_items", `Add at least one line item before generating the ${noun}.`);
   }
 
   lineItems.forEach((item, index) => {
@@ -591,6 +610,10 @@ export function validateForFinalize(input: FinalizeInput): CreatorFieldError[] {
     if (qty !== null && qty < 0) {
       add(where, `Line ${index + 1}: quantity cannot be negative.`);
     }
+    /* The financial checks below are invoice-only. A challan line has no rate or amount
+       at all, and treating their absence as a half-finished row would make every
+       legitimate challan impossible to generate. */
+    if (challan) return;
     if (rate !== null && rate < 0) {
       add(where, `Line ${index + 1}: rate cannot be negative.`);
     }
@@ -606,6 +629,8 @@ export function validateForFinalize(input: FinalizeInput): CreatorFieldError[] {
       add(where, `Line ${index + 1}: give it a quantity and a rate, or an amount.`);
     }
   });
+
+  if (challan) return errors;
 
   const rc = patch.reverse_charge_gst;
   if (rc !== null && rc !== undefined && rc !== "Yes" && rc !== "No") {

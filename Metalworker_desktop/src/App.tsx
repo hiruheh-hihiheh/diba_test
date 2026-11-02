@@ -70,7 +70,14 @@ export default function App() {
                       nested under /bills, and an entry screen with no query string is the
                       state the page boots into - the mode it is in lives in the query, so
                       arriving here with none puts the three entry choices up. */}
-                  <Route path="/bills/create" element={<CreateBillPage />} />
+                  <Route path="/bills/create" element={<CreateBillPage key="tax_invoice" documentType="tax_invoice" />} />
+                  {/* The Challan Creator. Same page, same architecture, its own field
+                      set, validation and numbering series — the type is a prop rather
+                      than a second implementation. */}
+                  <Route
+                    path="/challan-bills/create"
+                    element={<CreateBillPage key="delivery_challan" documentType="delivery_challan" />}
+                  />
                   <Route path="/bills/logos" element={<InvoiceLogosPage />} />
                   {/* The company-level defaults: name, address, bank block, terms,
                       footer wording. Sits beside the Logo Library because both answer

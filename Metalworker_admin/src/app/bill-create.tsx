@@ -24,12 +24,22 @@ import {
   CreateBillScreen,
   type CreatorMode,
 } from "../components/bills/CreateBillScreen";
+import type { BillDocumentType } from "../services/billDocumentTypes";
 
 export default function BillCreateRoute() {
-  const params = useLocalSearchParams<{ mode?: string | string[]; copy?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    mode?: string | string[];
+    copy?: string | string[];
+    documentType?: string | string[];
+  }>();
 
   const mode = readMode(params.mode);
   const sourceBillId = typeof params.copy === "string" ? params.copy : null;
+  /* The document type travels in the URL for the same reason the mode does: a phone
+     reclaims the process mid-form, and the form that comes back must still be the
+     challan form rather than silently a tax invoice. */
+  const documentType: BillDocumentType =
+    params.documentType === "delivery_challan" ? "delivery_challan" : "tax_invoice";
 
   /* The screen is re-mounted per mode by keeping the mode in the URL and letting the
      component key its own state on it. Choosing a mode therefore REPLACES the URL rather
@@ -39,20 +49,28 @@ export default function BillCreateRoute() {
     <CreateBillScreen
       mode={mode}
       sourceBillId={sourceBillId}
+      documentType={documentType}
       onChooseMode={(chosen) => {
         router.setParams({ mode: chosen, copy: undefined });
       }}
       onChooseSource={(billId) => {
-        router.setParams({ mode: "copy", copy: billId });
+        router.setParams({ mode: "copy", copy: billId, documentType });
       }}
       onBackToEntry={() => {
         /* Clearing the params drops the mode, which takes the screen back to the entry
            view because `readMode(undefined)` — and only that — returns null. */
-        router.setParams({ mode: undefined, copy: undefined } as never);
+        router.setParams({ mode: undefined, copy: undefined, documentType } as never);
       }}
       onExit={() => {
         if (router.canGoBack()) router.back();
-        else router.replace("/bills");
+        else {
+          /* Cast because Expo's generated route union lags the filesystem for a route
+             added to a section that already existed; the path itself is real and the
+             section it names is `challan-bills.tsx`. */
+          router.replace(
+            (documentType === "delivery_challan" ? "/challan-bills" : "/bills") as never
+          );
+        }
       }}
     />
   );

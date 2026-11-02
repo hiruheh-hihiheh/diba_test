@@ -53,6 +53,7 @@ import {
   readNumber,
   termsToPatch,
   type BankDetails,
+  type CreatorDocumentType,
   type CreatorFormValues,
   type CreatorLineDraft,
 } from "./creatorForm";
@@ -139,6 +140,8 @@ export class CreatorError extends Error {
  * own lines, because showing two sources for the same number is how they start to differ.
  */
 export interface CreatorTotals {
+  /** The challan's Total Quantity. Null on a Tax Invoice, which has no such total. */
+  total_quantity: number | null;
   amount_before_tax: number;
   cgst: number;
   sgst: number;
@@ -180,6 +183,12 @@ export interface CreatorFinalizeResult extends CreatorDraftRef {
    ────────────────────────────────────────────── */
 
 export interface CreatorRequest {
+  /**
+   * Which document this creator is making. Sent on every request and checked by the
+   * server against the draft and against the copy source, so a challan form can never
+   * quietly produce a tax invoice. Omitted means `tax_invoice`.
+   */
+  documentType?: CreatorDocumentType;
   /** Omitted on the first save; the server then creates the draft and returns its id. */
   billId?: string | null;
   /**
@@ -220,14 +229,21 @@ export interface CreatorRequest {
  * to the server, so it is preserved here rather than collapsed into falsy checks.
  */
 export function buildCreatorBody(request: CreatorRequest, action: "save" | "preview" | "finalize") {
+  const documentType = request.documentType ?? "tax_invoice";
+  const challan = documentType === "delivery_challan";
   const body: Record<string, unknown> = {
     action,
+    document_type: documentType,
     patch: buildPatch({
       values: request.values,
       lines: request.lines,
-      amountInWords: request.amountInWords,
-      reverseChargeGst: request.reverseChargeGst,
-      roundOff: request.roundOff,
+      documentType,
+      /* A challan has no financial decisions. Passing them would let an invoice field
+         ride along in the request even though `buildPatch` drops it, and the type's
+         whole point is that the two forms send different things. */
+      amountInWords: challan ? undefined : request.amountInWords,
+      reverseChargeGst: challan ? undefined : request.reverseChargeGst,
+      roundOff: challan ? undefined : request.roundOff,
     }),
   };
   if (request.billId) body.bill_id = request.billId;
@@ -242,15 +258,18 @@ export function buildCreatorBody(request: CreatorRequest, action: "save" | "prev
   if (request.confirmDuplicateInvoiceNo) body.confirm_duplicate_invoice_no = true;
   /* The bank rides inside the patch rather than beside it, because `applyPatch` is what
      validates and normalises it. Sending it separately would mean a second, unvalidated
-     path to a column that the editor already knows how to write. */
-  const bank = readBank(request.bank ?? null);
-  if (bank) body.patch = { ...(body.patch as object), bank_details: bank };
-  const terms = termsToPatch([
-    request.values.term_1 ?? "",
-    request.values.term_2 ?? "",
-    request.values.term_3 ?? "",
-  ]);
-  if (terms) body.patch = { ...(body.patch as object), terms };
+     path to a column that the editor already knows how to write. A challan has neither
+     a bank block nor terms, so neither is ever sent for one. */
+  if (!challan) {
+    const bank = readBank(request.bank ?? null);
+    if (bank) body.patch = { ...(body.patch as object), bank_details: bank };
+    const terms = termsToPatch([
+      request.values.term_1 ?? "",
+      request.values.term_2 ?? "",
+      request.values.term_3 ?? "",
+    ]);
+    if (terms) body.patch = { ...(body.patch as object), terms };
+  }
   return body;
 }
 
@@ -265,6 +284,7 @@ interface CreatorWireResponse {
   status?: "draft" | "finalized";
   saved_at?: string;
   amount_after_tax?: number | null;
+  total_quantity?: number | null;
   amount_in_words?: string | null;
   /* The six computed figures. Optional on the wire because a FAILED response carries no
      totals at all, so the parser has to tolerate their absence even though a successful
@@ -368,6 +388,7 @@ function draftRef(data: CreatorWireResponse, fallbackId: string | null): Creator
  */
 function readTotals(data: CreatorWireResponse): CreatorTotals {
   return {
+    total_quantity: data.total_quantity ?? null,
     amount_before_tax: data.amount_before_tax ?? 0,
     cgst: data.cgst ?? 0,
     sgst: data.sgst ?? 0,
@@ -492,6 +513,7 @@ export {
   readNumber,
   termsToPatch,
   type BankDetails,
+  type CreatorDocumentType,
   type CreatorFormValues,
   type CreatorLineDraft,
 };

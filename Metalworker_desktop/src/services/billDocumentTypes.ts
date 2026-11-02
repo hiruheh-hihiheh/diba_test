@@ -30,7 +30,7 @@ export interface DocumentTypeInfo {
   hasMoney: boolean;
   /** Whether items carry a REMARKS column. */
   hasRemarks: boolean;
-  /** Bill Creator makes Tax Invoices only. */
+  /** Whether this section offers the Bill Creator (blank, + profile, copy). */
   supportsBillCreator: boolean;
   /** Standalone (Bill Creator) bills can be included in this section's regeneration. */
   hasStandaloneBills: boolean;
@@ -65,8 +65,11 @@ export const DOCUMENT_TYPE_INFO: Record<BillDocumentType, DocumentTypeInfo> = {
     billingFolderType: "challan_billing",
     hasMoney: false,
     hasRemarks: true,
-    supportsBillCreator: false,
-    hasStandaloneBills: false,
+    /* A challan can be typed by hand exactly like an invoice, with its own form and
+       its own entry modes. Its creator shares the architecture but never the field
+       set, the validation or the numbering series. */
+    supportsBillCreator: true,
+    hasStandaloneBills: true,
     route: "/challan-bills",
   },
 };

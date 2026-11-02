@@ -81,7 +81,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
-import { billFromRecord, amountInWords, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
+import { billFromRecord, amountInWords, documentTypeOf, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
 import {
   safeBillToken,
   COPY_LABEL,
@@ -90,6 +90,7 @@ import {
   type CopyKind,
 } from "../process-bill-upload/_shared/parseBill.ts";
 import { computeBillValues, EditError, type BillPatch } from "../process-bill-upload/_shared/billEdit.ts";
+import { isDocumentType, type DocumentType } from "../process-bill-upload/_shared/documentType.ts";
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
 import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
 import { profileForBill, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
@@ -138,6 +139,8 @@ interface RequestBody {
   folder_id?: unknown;
   /** `undefined` = leave alone, `[]` = unlink all, otherwise the full new set. */
   job_ids?: unknown;
+  /** `tax_invoice` or `delivery_challan`. Required to be one of the two when sent. */
+  document_type?: unknown;
   /** Set only after the admin has seen a duplicate-invoice-number warning. */
   confirm_duplicate_invoice_no?: unknown;
 }
@@ -212,9 +215,50 @@ Deno.serve(async (req) => {
   }
   const patch = body.patch as BillPatch;
 
+  /* The document type is decided ONCE, here, and every later decision is scoped by it:
+     which base a copy computes against, which fields are validated, which type the
+     duplicate-number check reads, and which renderer layout runs. A client that sends a
+     value that is not one of the two is refused rather than defaulted, because silently
+     falling back to `tax_invoice` is how a challan ends up filed as an invoice. Absent
+     is still allowed for older clients, which only ever knew Tax Invoices. */
+  if (body.document_type !== undefined && !isDocumentType(body.document_type)) {
+    return json({ ok: false, error: "Unknown document type." }, 400);
+  }
+  const documentType: DocumentType = body.document_type === "delivery_challan" ? "delivery_challan" : "tax_invoice";
+  const documentNoun = documentType === "delivery_challan" ? "challan" : "invoice";
+
   const billId = typeof body.bill_id === "string" ? body.bill_id.trim() : "";
   const sourceBillId = typeof body.source_bill_id === "string" ? body.source_bill_id.trim() : "";
   const useCurrentProfile = body.use_current_profile === true;
+  /* Every request that names a source is checked, not only the one that creates the
+     draft. Otherwise a later save could name a Tax Invoice as the source of a challan
+     and inherit its profile snapshot, which is the one thing a client-supplied id must
+     never be able to do across document types. */
+  if (sourceBillId !== "") {
+    const { data: sourceType, error: sourceTypeError } = await admin
+      .from(TABLE)
+      .select("document_type")
+      .eq("id", sourceBillId)
+      .maybeSingle();
+    if (sourceTypeError) {
+      console.error("create-bill: source type read failed:", sourceTypeError.message);
+      return json({ ok: false, error: "The document being copied could not be read." }, 500);
+    }
+    if (sourceType && (sourceType as Record<string, unknown>).document_type !== documentType) {
+      return json(
+        {
+          ok: false,
+          error:
+            documentType === "delivery_challan"
+              ? "That is a Tax Invoice. A Delivery Challan can only be copied from another Delivery Challan."
+              : "That is a Delivery Challan. A Tax Invoice can only be copied from another Tax Invoice.",
+          reason: "source_document_type_mismatch",
+        },
+        409
+      );
+    }
+  }
+
   const creatorKey =
     typeof body.patch === "object" && body.patch !== null && "creator_draft_key" in (body.patch as object)
       ? String(((body.patch as Record<string, unknown>).creator_draft_key) ?? "").trim()
@@ -241,18 +285,28 @@ Deno.serve(async (req) => {
     }
     if (!read.row) return json({ ok: false, error: "That draft no longer exists." }, 404);
     if (read.row.status === "finalized") {
-      /* A finalized invoice is immutable here. `update-bill` exists for changing one,
+      /* A finalized document is immutable here. `update-bill` exists for changing one,
          and routing that through here would give a second, differently-audited path to
          the same edit. */
       return json(
-        { ok: false, error: "This invoice has already been generated. Edit it from the bill instead." },
+        { ok: false, error: `This ${documentNoun} has already been generated. Edit it from the ${documentNoun} instead.` },
         409
       );
     }
-    /* Bill Creator makes Tax Invoices only; a Delivery Challan is never reachable
-       through it, whatever id a request names. */
-    if (read.row.document_type === "delivery_challan") {
-      return json({ ok: false, error: "That is a Delivery Challan; it cannot be edited in Bill Creator." }, 409);
+    /* A draft of the OTHER document type is never reachable through this request. The
+       type comes from the client, so it is checked against the stored row rather than
+       trusted: a challan id sent by a tax-invoice form is refused, and vice versa. */
+    if (read.row.document_type !== documentType) {
+      return json(
+        {
+          ok: false,
+          error:
+            documentType === "delivery_challan"
+              ? "That is a Tax Invoice; a Delivery Challan draft must be created from the Challan Bills section."
+              : "That is a Delivery Challan; a Tax Invoice draft must be created from the Tax Bills section.",
+        },
+        409
+      );
     }
     existing = read.row;
     currentItems = read.lineItems;
@@ -269,6 +323,7 @@ Deno.serve(async (req) => {
       key: creatorKey,
       sourceBillId,
       useCurrentProfile,
+      documentType,
     });
     if (made.error !== undefined) {
       if (made.code === "23505" && made.existingId) {
@@ -343,6 +398,9 @@ Deno.serve(async (req) => {
      cannot work it out from the form alone and would otherwise have to show a blank
      where the invoice is about to print a figure. */
   const totals = {
+    total_quantity: values.total_quantity === null || values.total_quantity === undefined
+      ? null
+      : Number(values.total_quantity),
     amount_before_tax: Number(values.amount_before_tax ?? 0),
     cgst: Number(values.cgst ?? 0),
     sgst: Number(values.sgst ?? 0),
@@ -359,7 +417,12 @@ Deno.serve(async (req) => {
      override and is left untouched. This runs on every save, not only the first, so
      autosaves and later edits keep the words consistent with the total. */
   const manualWords = typeof patch.amount_in_words === "string";
-  if (!manualWords && sourceBillId !== "") {
+  if (documentType === "delivery_challan") {
+    /* A challan has no money and therefore no words for it. `computeBillValues` already
+       nulled every monetary column; this only prevents the invoice-only regeneration
+       below from putting a figure back. */
+    values.amount_in_words = null;
+  } else if (!manualWords && sourceBillId !== "") {
     const { data: source } = await admin
       .from(TABLE)
       .select("amount_after_tax, amount_in_words")
@@ -448,10 +511,14 @@ Deno.serve(async (req) => {
      without noticing. */
   let duplicateMatches: DuplicateMatch[] | null = null;
   if (action === "finalize" && values.invoice_no) {
+    /* Scoped to the SAME document type, which is the whole point: a challan number and an
+       invoice number are separate series, and a challan numbered 341 must not be warned
+       about an invoice numbered 341. */
     const { data: dupes } = await admin
       .from(TABLE)
       .select("id, invoice_no, invoice_date, sheet_name, party_name, status")
       .eq("invoice_no", String(values.invoice_no))
+      .eq("document_type", documentType)
       .neq("id", draftId);
     duplicateMatches = findDuplicateInvoiceNos(values.invoice_no, (dupes ?? []) as DuplicateMatch[]);
     if (duplicateMatches.length > 0 && body.confirm_duplicate_invoice_no !== true) {
@@ -462,7 +529,7 @@ Deno.serve(async (req) => {
       return json(
         {
           ok: false,
-          error: `Invoice number ${String(values.invoice_no)} is already used by ${duplicateMatches.length} other bill${duplicateMatches.length === 1 ? "" : "s"}.`,
+          error: `${documentType === "delivery_challan" ? "Challan" : "Invoice"} number ${String(values.invoice_no)} is already used by ${duplicateMatches.length} other ${documentNoun}${duplicateMatches.length === 1 ? "" : "s"}.`,
           reason: "duplicate_invoice_no",
           duplicates: duplicateMatches,
           bill_id: draftId,
@@ -560,7 +627,7 @@ Deno.serve(async (req) => {
     return json(
       {
         ok: false,
-        error: "The invoice could not be produced. Nothing has been generated.",
+        error: `The ${documentNoun} could not be produced. Nothing has been generated.`,
         reason: "pdf_failed",
       },
       500
@@ -615,6 +682,7 @@ Deno.serve(async (req) => {
   const blockers = validateForFinalize({
     patch,
     lineItems: storedItems,
+    documentType,
     totals: {
       amountBeforeTax: totals.amount_before_tax,
       totalGst: totals.total_gst,
@@ -667,7 +735,7 @@ Deno.serve(async (req) => {
       return json(
         {
           ok: false,
-          error: "The invoice documents could not be stored, so nothing was generated. Your draft is saved.",
+          error: `The ${documentNoun} documents could not be stored, so nothing was generated. Your draft is saved.`,
           reason: "storage_failed",
           bill_id: draftId,
         },
@@ -758,6 +826,7 @@ Deno.serve(async (req) => {
      bill row the audit entry points at, and duplicating a financial document into a
      log table is how a log table starts leaking one. */
   await writeAudit(admin, user.id, actorUsername, created ? (sourceBillId !== "" ? "bill.copied" : "bill.created") : "bill.finalized", draftId, {
+    document_type: documentType,
     invoice_no: row.invoice_no ?? null,
     invoice_date: row.invoice_date ?? null,
     amount_after_tax: row.amount_after_tax ?? null,
@@ -852,7 +921,7 @@ async function createDraft(
   admin: ReturnType<typeof createClient>,
   userId: string,
   patch: BillPatch,
-  options: { key: string; sourceBillId: string; useCurrentProfile: boolean }
+  options: { key: string; sourceBillId: string; useCurrentProfile: boolean; documentType: DocumentType }
 ): Promise<{
   row?: Record<string, unknown>;
   uploadId?: string;
@@ -880,7 +949,7 @@ async function createDraft(
      exactly the three amounts that decision needs. Those amounts are a SIGNAL, not a
      total — `computeBillValues` recomputes all three from the copy's own base and rates,
      so a source charging 900 cannot leak into a 100-base copy as a 900 charge. */
-  let base: BillRecord = emptyBillRecord();
+  let base: BillRecord = emptyBillRecord("original", options.documentType);
   if (options.sourceBillId !== "") {
     const { data: source, error: sourceError } = await admin
       .from(TABLE)
@@ -902,11 +971,24 @@ async function createDraft(
     if (!source) {
       return {
         error: "source bill not found",
-        userMessage: "The bill you are copying no longer exists. Pick another one to copy.",
+        userMessage: `The ${options.documentType === "delivery_challan" ? "challan" : "bill"} you are copying no longer exists. Pick another one to copy.`,
         status: 409,
       };
     }
-    base = copyBaseRecord(source as unknown as BillRecord);
+    /* The source must be the SAME document type as the draft being created. This is the
+       server-side half of "a Tax Invoice can never seed a challan copy": the picker
+       already filters, and this refuses a request that did not. */
+    if (documentTypeOf(source as unknown as BillRecord) !== options.documentType) {
+      return {
+        error: "source document type mismatch",
+        userMessage:
+          options.documentType === "delivery_challan"
+            ? "That is a Tax Invoice. A Delivery Challan can only be copied from another Delivery Challan."
+            : "That is a Delivery Challan. A Tax Invoice can only be copied from another Tax Invoice.",
+        status: 409,
+      };
+    }
+    base = copyBaseRecord(source as unknown as BillRecord, options.documentType);
   }
 
   let values: Record<string, unknown>;
@@ -945,6 +1027,10 @@ async function createDraft(
       invoice_count: 1,
       created_by: userId,
       creation_source: "manual",
+      /* `bills_upload_document_type_fkey` is a composite key: the bill's type must
+         resolve to an upload of the same type. Writing the default here would make
+         every challan bill fail the foreign key. */
+      document_type: options.documentType,
     })
     .select("id")
     .maybeSingle();
@@ -958,13 +1044,27 @@ async function createDraft(
   }
   const uploadId = String((upload as Record<string, unknown>).id);
 
+  /* A challan never carries a figure. `computeBillValues` already nulls every monetary
+     column, so this is belt-and-braces against a future field being copied into the
+     values object: nothing financial can reach a `delivery_challan` row. */
+  if (options.documentType === "delivery_challan") {
+    for (const column of [
+      "amount_before_tax", "cgst", "cgst_rate", "sgst", "sgst_rate", "igst", "igst_rate",
+      "total_gst", "amount_after_tax", "reverse_charge_gst", "round_off", "amount_in_words",
+      "bank_details", "terms",
+    ]) {
+      values[column] = null;
+    }
+  }
+
   const insert: Record<string, unknown> = {
     ...values,
+    document_type: options.documentType,
     bill_upload_id: uploadId,
     /* `sheet_name` is NOT NULL and unique per upload. One creation, one bill, so one
        sheet - and naming it after the invoice number means the upload list reads
        sensibly even though there is no sheet. */
-    sheet_name: String(values.invoice_no ?? "MANUAL"),
+    sheet_name: String(values.invoice_no ?? (options.documentType === "delivery_challan" ? "CHALLAN" : "MANUAL")),
     status: "draft",
     origin: options.sourceBillId !== "" ? "copy" : "manual",
     copied_from_bill_id: options.sourceBillId !== "" ? options.sourceBillId : null,
