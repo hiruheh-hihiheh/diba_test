@@ -62,17 +62,25 @@ function json(body: unknown, status = 200): Response {
 }
 
 type Client = ReturnType<typeof createClient>;
-type DbError = { message: string; code?: string } | null;
+type DbError = { message?: string; code?: string; details?: string; hint?: string } | null;
 
 /** Raised when the job table predates migration 0024. */
 class MigrationRequiredError extends Error {}
 
 function dbFail(op: string, error: DbError): never {
-  const message = error?.message ?? "unknown error";
-  if (/revision|lease_token|lease_until/.test(message) && /column|schema cache/i.test(message)) {
-    throw new MigrationRequiredError(message);
+  const message = (error?.message ?? "").trim();
+  const code = error?.code ?? "";
+  const details = error?.details ?? "";
+  const hint = error?.hint ?? "";
+  const combined = [message, code && `code=${code}`, details && `details=${details}`, hint && `hint=${hint}`]
+    .filter(Boolean)
+    .join(" | ");
+  const finalMessage = combined || "unknown database error";
+  console.error(`regenerate-bill-pdfs: ${op} failed:`, { message, code, details, hint });
+  if (/revision|lease_token|lease_until/.test(finalMessage) && /column|schema cache/i.test(finalMessage)) {
+    throw new MigrationRequiredError(finalMessage);
   }
-  throw new TransientError("db_unavailable", `${op}: ${message}`);
+  throw new TransientError("db_unavailable", `${op}: ${finalMessage}`);
 }
 
 function supabaseStore(admin: Client): RegenerationStore {
@@ -133,10 +141,12 @@ function supabaseStore(admin: Client): RegenerationStore {
     async countStandaloneBills(createdBefore) {
       const { count, error } = await admin
         .from("bills")
-        // FK-qualified: two foreign keys link bills to bill_uploads since 0025.
-        .select("id, bill_uploads!bills_upload_document_type_fkey!inner(creation_source)", { count: "exact", head: true })
+        // Use the original bills_bill_upload_id_fkey relationship, which is
+        // unambiguous and present since migration 0005.
+        .select("id, bill_uploads!bills_bill_upload_id_fkey!inner(creation_source)", { count: "exact", head: true })
         .eq("bill_uploads.creation_source", "manual")
         .eq("status", "finalized")
+        .eq("document_type", "tax_invoice")
         .lte("created_at", createdBefore);
       if (error) dbFail("count standalone bills", error);
       return count ?? 0;
@@ -144,9 +154,10 @@ function supabaseStore(admin: Client): RegenerationStore {
     async nextStandaloneBill(afterId, createdBefore) {
       let q = admin
         .from("bills")
-        .select("*, bill_uploads!bills_upload_document_type_fkey!inner(creation_source)")
+        .select("*, bill_uploads!bills_bill_upload_id_fkey!inner(creation_source)")
         .eq("bill_uploads.creation_source", "manual")
         .eq("status", "finalized")
+        .eq("document_type", "tax_invoice")
         .lte("created_at", createdBefore)
         .order("id", { ascending: true })
         .limit(1);
