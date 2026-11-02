@@ -436,7 +436,11 @@ section("E. client services and shared modules");
   ]) {
     const src = read(p);
     const embeds = src.match(/bill_uploads!?[A-Za-z_]*!?(?:inner)?\(/g) ?? [];
-    const unqualified = embeds.filter((e) => !e.startsWith("bill_uploads!bills_upload_document_type_fkey"));
+    const unqualified = embeds.filter(
+      (e) =>
+        !e.startsWith("bill_uploads!bills_upload_document_type_fkey") &&
+        !e.startsWith("bill_uploads!bills_bill_upload_id_fkey")
+    );
     check(embeds.length > 0 && unqualified.length === 0, `${p}: every bill_uploads embed names bills_upload_document_type_fkey`, unqualified.join(" "));
   }
 

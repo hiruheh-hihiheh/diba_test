@@ -993,6 +993,8 @@ export async function retryLogoPdfs(
     const { data, error } = await supabase.functions.invoke<{
       ok?: boolean;
       error?: string;
+      reason?: string;
+      warning?: string;
       assigned?: number;
       unchanged?: number;
       reprinted?: number;
@@ -1040,7 +1042,7 @@ export async function retryLogoPdfs(
     for (const failure of data.failures ?? []) {
       if (!failures.some((f) => f.bill_id === failure.bill_id)) failures.push(failure);
     }
-    onProgress?.({ assigned: 0, reprinted, remaining: !!data.more_work });
+    onProgress?.({ reprinted, remaining: !!data.more_work });
 
     remaining = !!data.more_work;
     if (!data.more_work) break;
