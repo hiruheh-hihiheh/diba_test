@@ -131,18 +131,22 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
     };
   }, [search, open]);
 
+  const loadRequestRef = useRef(0);
   const load = useCallback(async () => {
     if (!open) return;
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     setLoadError(null);
     try {
       const result = await fetchAssignableBills(search, page, ASSIGN_PAGE_SIZE);
+      if (requestId !== loadRequestRef.current) return;
       setRows(result.rows);
       setTotal(result.total);
     } catch (err) {
+      if (requestId !== loadRequestRef.current) return;
       setLoadError(err instanceof Error ? err.message : "The invoices could not be loaded.");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [open, search, page]);
 
@@ -294,10 +298,6 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
       for (const row of result.rows) out.push(row.id);
       if (result.rows.length < CHUNK) break;
       if (out.length >= result.total) break;
-      /* A hard stop, so a pathological dataset cannot spin here. Beyond this the
-         admin still gets the first several thousand assigned, and the remainder
-         stays queued for the server to finish on its next pass. */
-      if (out.length >= 5000) break;
     }
     return out;
   }, [search]);

@@ -495,8 +495,11 @@ Deno.serve(async (req) => {
   /* Is there still outstanding work? Asking for a single row is the cheapest way
      to find out that exists — one indexed read, rather than counting a queue that
      might hold thousands of rows. */
-  const { data: stillQueued } = await authClient.rpc("list_bills_needing_logo_render", { p_limit: 1 });
-  const moreWork = (stillQueued ?? []).length > 0;
+  const { data: stillQueued, error: stillQueuedError } = await authClient.rpc("list_bills_needing_logo_render", { p_limit: 1 });
+  if (stillQueuedError) {
+    console.error("set-bill-logos: final queue check failed:", stillQueuedError.message, stillQueuedError.code);
+  }
+  const moreWork = stillQueuedError ? true : (stillQueued ?? []).length > 0;
 
   /* Audit, written with the service role and never allowed to fail the request:
      losing an audit line must not undo work the user was told succeeded. One row

@@ -213,10 +213,6 @@ function AssignBody({
       for (const row of result.rows) out.push(row.id);
       if (result.rows.length < CHUNK) break;
       if (out.length >= result.total) break;
-      /* A hard stop, so a pathological dataset cannot spin here. Beyond this the
-         admin still gets the first several thousand assigned, and the remainder
-         stays queued for the server to finish on its next pass. */
-      if (out.length >= 5000) break;
     }
     return out;
   }, [search]);

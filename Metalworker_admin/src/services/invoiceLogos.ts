@@ -830,7 +830,22 @@ export async function applyLogoToBills(
   let carryIds: string[] | undefined = ids;
   let carryLogoId: string | null | undefined = logoId;
 
+  /* Bounded drain: a permanently failing bill stays in the queue, so an unbounded
+     loop would never finish. Stop when a batch makes no progress (no re-print and
+     no new failure) or when a safety cap is reached; `remaining` then stays true
+     so the caller knows work is still outstanding and can retry. */
+  const MAX_LOGO_BATCHES = 10000;
+  let batchCount = 0;
+  const seenFailureIds = new Set<string>();
+  let remaining = false;
+
   for (;;) {
+    if (batchCount >= MAX_LOGO_BATCHES) {
+      remaining = true;
+      break;
+    }
+    batchCount++;
+
     const body: Record<string, unknown> = {};
     if (carryIds !== undefined) {
       body.bill_ids = carryIds;
@@ -915,14 +930,29 @@ export async function applyLogoToBills(
       assigned = data.assigned ?? 0;
       unchanged = data.unchanged ?? 0;
     }
-    reprinted += data.reprinted ?? 0;
+    const batchReprinted = data.reprinted ?? 0;
+    reprinted += batchReprinted;
+    let newFailure = false;
     for (const failure of data.failures ?? []) {
+      if (!seenFailureIds.has(failure.bill_id)) {
+        seenFailureIds.add(failure.bill_id);
+        newFailure = true;
+      }
       if (!failures.some((f) => f.bill_id === failure.bill_id)) failures.push(failure);
     }
 
     onProgress?.({ assigned, reprinted, remaining: !!data.more_work });
 
+    remaining = !!data.more_work;
     if (!data.more_work) break;
+
+    /* Stop a permanently failing queue from spinning forever: if a batch re-printed
+       nothing and introduced no new failure, every remaining failure has already
+       been reported and retrying will not change the outcome this run. */
+    if (batchReprinted === 0 && !newFailure && (data.failures ?? []).length > 0) {
+      break;
+    }
+
     carryIds = undefined;
     carryLogoId = undefined;
   }
@@ -934,7 +964,7 @@ export async function applyLogoToBills(
     detail: { bills: ids.length, assigned, unchanged, reprinted },
   });
 
-  return { ok: true, assigned, unchanged, reprinted, more_work: false, failures };
+  return { ok: true, assigned, unchanged, reprinted, more_work: remaining, failures };
 }
 
 /**
@@ -951,7 +981,18 @@ export async function drainPendingLogoRenders(
   let reprinted = 0;
   const failures: BillLogoApplyResult["failures"] = [];
 
+  const MAX_LOGO_BATCHES = 10000;
+  let batchCount = 0;
+  const seenFailureIds = new Set<string>();
+  let remaining = false;
+
   for (;;) {
+    if (batchCount >= MAX_LOGO_BATCHES) {
+      remaining = true;
+      break;
+    }
+    batchCount++;
+
     const { data, error } = await supabase.functions.invoke<{
       ok?: boolean;
       error?: string;
@@ -961,12 +1002,24 @@ export async function drainPendingLogoRenders(
     }>("set-bill-logos", { body: { limit: 40 } });
 
     if (error || !data?.ok) break;
-    reprinted += data.reprinted ?? 0;
+    const batchReprinted = data.reprinted ?? 0;
+    reprinted += batchReprinted;
+    let newFailure = false;
     for (const failure of data.failures ?? []) {
+      if (!seenFailureIds.has(failure.bill_id)) {
+        seenFailureIds.add(failure.bill_id);
+        newFailure = true;
+      }
       if (!failures.some((f) => f.bill_id === failure.bill_id)) failures.push(failure);
     }
     onProgress?.({ reprinted, remaining: !!data.more_work });
+
+    remaining = !!data.more_work;
     if (!data.more_work) break;
+
+    if (batchReprinted === 0 && !newFailure && (data.failures ?? []).length > 0) {
+      break;
+    }
   }
 
   return { reprinted, failures };
@@ -1107,12 +1160,17 @@ export async function fetchAssignableBills(
         `invoice_no.ilike.%${needle}%`,
         `party_name.ilike.%${needle}%`,
         `order_no.ilike.%${needle}%`,
-        /* A date typed as `2026-04` or `04/2026` is a partial match, not a range.
-           The admin is looking for a bill they can see the date of, not composing a
-           filter, and a range would silently exclude everything they typed. */
-        `invoice_date.ilike.%${needle}%`,
       ].join(",")
     );
+  }
+
+  /* Date search: `invoice_date` is a real `date` column, so text operators such as
+     `ilike` cannot be applied to it. Parse the (already-sanitised) needle into a
+     bounded range instead, and let an unrecognised value fall through to the text
+     search above rather than breaking it. */
+  const range = dateRangeForNeedle(needle);
+  if (range) {
+    q = q.gte("invoice_date", range.from).lte("invoice_date", range.to);
   }
 
   const { data, error, count } = await q.range(from, from + pageSize - 1);
@@ -1124,6 +1182,69 @@ export async function fetchAssignableBills(
 /* ──────────────────────────────────────────────
    Helpers
    ────────────────────────────────────────────── */
+
+/**
+ * Turn a search needle into an inclusive `invoice_date` range when it looks like a
+ * date, or null when it does not.
+ *
+ * Supported shapes:
+ *   2026-08-15, 15/08/2026, 15-08-2026  -> that single day
+ *   2026-08, 08/2026, 08-2026            -> the whole month
+ *   2026                                 -> the whole year
+ */
+function dateRangeForNeedle(needle: string): { from: string; to: string } | null {
+  const n = needle.trim();
+  if (!n) return null;
+
+  const isoDay = n.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoDay) {
+    const [, y, m, d] = isoDay;
+    const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    if (isValidDate(iso)) return { from: iso, to: iso };
+  }
+
+  const dayFirst = n.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
+  if (dayFirst) {
+    const [, d, m, y] = dayFirst;
+    const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    if (isValidDate(iso)) return { from: iso, to: iso };
+  }
+
+  const isoMonth = n.match(/^(\d{4})-(\d{1,2})$/);
+  if (isoMonth) {
+    const [, y, m] = isoMonth;
+    return monthRange(Number(y), Number(m));
+  }
+
+  const monthFirst = n.match(/^(\d{1,2})[\/.\-](\d{4})$/);
+  if (monthFirst) {
+    const [, m, y] = monthFirst;
+    return monthRange(Number(y), Number(m));
+  }
+
+  const yearOnly = n.match(/^(\d{4})$/);
+  if (yearOnly) {
+    const y = Number(yearOnly[1]);
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+
+  return null;
+}
+
+function isValidDate(iso: string): boolean {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+}
+
+function monthRange(year: number, month: number): { from: string; to: string } | null {
+  if (month < 1 || month > 12) return null;
+  const mm = String(month).padStart(2, "0");
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    from: `${year}-${mm}-01`,
+    to: `${year}-${mm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
 
 /** One line describing a bill's logo, for a list row or a subtitle. */
 export function describeBillLogo(logoId: string | null, logos: Map<string, BillLogoRef>): string {
