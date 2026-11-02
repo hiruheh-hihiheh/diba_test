@@ -128,10 +128,10 @@ export function BillLogoControl({
         return;
       }
 
-      if (result.failures.length > 0) {
+      if (result.failures.length > 0 || result.more_work === true || !!result.error) {
         notify(
           "The logo was saved, but the PDF could not be re-printed.",
-          "It will be re-printed on the next attempt."
+          result.error ?? "It will be re-printed on the next attempt."
         );
       } else if (logoId === null) {
         notify("Logo removed", "This invoice now prints without a logo.");

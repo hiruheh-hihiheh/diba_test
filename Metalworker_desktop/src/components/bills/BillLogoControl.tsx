@@ -126,9 +126,9 @@ export function BillLogoControl({ billId, initialState = null, onChanged }: Bill
         return;
       }
 
-      if (result.failures.length > 0) {
+      if (result.failures.length > 0 || result.more_work === true || !!result.error) {
         toast.error(
-          "The logo was saved, but this invoice's PDF could not be re-printed. It will be re-printed on the next attempt."
+          result.error ?? "The logo was saved, but this invoice's PDF could not be re-printed. It will be re-printed on the next attempt."
         );
       } else if (logoId === null) {
         toast.success("Logo removed from this bill.");

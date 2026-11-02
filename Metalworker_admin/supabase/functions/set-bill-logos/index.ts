@@ -503,7 +503,10 @@ Deno.serve(async (req) => {
   /* Is there still outstanding work? Asking for a single row is the cheapest way
      to find out that exists — one indexed read, rather than counting a queue that
      might hold thousands of rows. */
-  const { data: stillQueued, error: stillQueuedError } = await authClient.rpc("list_bills_needing_logo_render", { p_limit: 1 });
+  const { data: stillQueued, error: stillQueuedError } = await authClient.rpc("list_bills_needing_logo_render", {
+    p_limit: 1,
+    p_exclude: excludeIds.length > 0 ? excludeIds : null,
+  });
   if (stillQueuedError) {
     console.error("set-bill-logos: final queue check failed:", stillQueuedError.message, stillQueuedError.code);
   }

@@ -34,6 +34,7 @@ import { AlertTriangle, CheckSquare, Loader2, SearchX, Square, X } from "lucide-
 
 import {
   applyLogoToBills,
+  drainPendingLogoRenders,
   fetchAssignableBills,
   ASSIGN_PAGE_SIZE,
   type AssignableBill,
@@ -91,6 +92,33 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
   const [progress, setProgress] = useState<{ assigned: number; reprinted: number } | null>(null);
   /** Shown after a partial success, naming the bills that could not be printed. */
   const [report, setReport] = useState<{ failures: { invoice_no: string | null; reason: string }[]; warning?: string } | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  async function retryPending() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      const result = await drainPendingLogoRenders();
+      setReport({
+        failures: result.failures.map((f) => ({
+          invoice_no: f.invoice_no,
+          reason: logoReprintFailureReason(f.reason),
+        })),
+        warning: result.queue_failed
+          ? "The pending PDFs could not be checked. Try again."
+          : result.more_work
+          ? "Some PDFs are still pending. Retry again to continue."
+          : undefined,
+      });
+      if (result.queue_failed) toast.error("The pending PDFs could not be checked.");
+      else if (result.more_work) toast.error("Some PDFs are still pending.");
+      else toast.success("Pending PDFs were re-printed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setRetrying(false);
+    }
+  }
   /** The extra confirmation for a very large apply. */
   const [confirming, setConfirming] = useState(false);
 
@@ -323,13 +351,24 @@ export function BillLogoAssignModal({ logo, onClose, onApplied }: BillLogoAssign
         hideClose={applying}
         footer={
           report ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn btn-primary"
-            >
-              Close
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => void retryPending()}
+                className="btn btn-secondary"
+                disabled={retrying}
+              >
+                {retrying ? "Retrying…" : "Retry PDF Generation"}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn btn-primary"
+                disabled={retrying}
+              >
+                Close
+              </button>
+            </>
           ) : (
             <>
               <span className="mr-auto text-sm text-text-muted tabular-nums">

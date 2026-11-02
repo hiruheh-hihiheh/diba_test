@@ -45,6 +45,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { formatBillDate } from "../../services/bills";
 import {
   applyLogoToBills,
+  drainPendingLogoRenders,
   fetchAssignableBills,
   ASSIGN_PAGE_SIZE,
   type AssignableBill,
@@ -132,6 +133,37 @@ function AssignBody({
     failures: { invoice_no: string | null; reason: string }[];
     warning?: string;
   } | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  async function retryPending() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      const result = await drainPendingLogoRenders();
+      setReport({
+        failures: result.failures.map((f) => ({
+          invoice_no: f.invoice_no,
+          reason: logoReprintFailureReason(f.reason),
+        })),
+        warning: result.queue_failed
+          ? "The pending PDFs could not be checked. Try again."
+          : result.more_work
+          ? "Some PDFs are still pending. Retry again to continue."
+          : undefined,
+      });
+      notify(
+        result.queue_failed
+          ? "The pending PDFs could not be checked."
+          : result.more_work
+          ? "Some PDFs are still pending."
+          : "Pending PDFs were re-printed."
+      );
+    } catch (err) {
+      notify("Retry failed", err instanceof Error ? err.message : "Please try again.");
+    } finally {
+      setRetrying(false);
+    }
+  }
   /** The extra confirmation for a very large apply. */
   const [confirming, setConfirming] = useState(false);
 
@@ -566,7 +598,14 @@ function AssignBody({
             )}
 
             {report ? (
-              <Button title="Close" onPress={onClose} />
+              <>
+                <Button
+                  title={retrying ? "Retrying…" : "Retry PDF Generation"}
+                  loading={retrying}
+                  onPress={() => void retryPending()}
+                />
+                <Button title="Close" variant="ghost" onPress={onClose} disabled={retrying} />
+              </>
             ) : (
               <Button title="Cancel" variant="ghost" onPress={onClose} disabled={applying} />
             )}

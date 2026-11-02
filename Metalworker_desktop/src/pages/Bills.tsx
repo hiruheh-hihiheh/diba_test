@@ -611,7 +611,8 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
       /* Only the bills that really went are unticked. A bill that failed to
          re-print is still assigned and still selected, so a retry finds it without
          the admin having to hunt for it again. */
-      if (result.failures.length > 0) {
+      const partial = result.failures.length > 0 || result.more_work === true || !!result.error;
+      if (partial) {
         selection.prune(ids.filter((id) => !result.failures.some((f) => f.bill_id === id)));
       } else {
         setAllMatchingCount(null);
@@ -623,15 +624,22 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
          leaving the row reading as unchanged for a beat. */
       await load(true);
 
-      if (result.failures.length > 0) {
+      if (result.failures.length > 0 || result.more_work === true || !!result.error) {
+        const detail =
+          result.failures.length > 0
+            ? `${result.failures.length} could not be re-printed`
+            : result.error ?? "PDF regeneration is still pending.";
         toast.error({
           title: `Logo ${logoId ? "assigned" : "removed"} on ${result.assigned} ${
             result.assigned === 1 ? "bill" : "bills"
-          }, ${result.failures.length} could not be re-printed`,
-          description: result.failures
-            .slice(0, 3)
-            .map((f) => `${f.invoice_no ?? "A bill"} — ${logoReprintFailureReason(f.reason)}`)
-            .join("; "),
+          }, ${detail}`,
+          description:
+            result.failures.length > 0
+              ? result.failures
+                  .slice(0, 3)
+                  .map((f) => `${f.invoice_no ?? "A bill"} — ${logoReprintFailureReason(f.reason)}`)
+                  .join("; ")
+              : result.error ?? "Retry PDF Generation to continue.",
         });
         return;
       }
