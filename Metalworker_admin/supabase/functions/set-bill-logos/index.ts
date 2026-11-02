@@ -314,6 +314,13 @@ Deno.serve(async (req) => {
     logoId = (body.logo_id as string | null) ?? null;
   }
 
+  /* Excluded IDs let one processing run skip bills it has already attempted and
+     failed, so later pending bills are still reached instead of re-reading the
+     same failures. They are still retryable by a later call that omits them. */
+  const excludeIds = Array.isArray(body.exclude_ids)
+    ? body.exclude_ids.filter((v): v is string => typeof v === "string" && UUID_RE.test(v))
+    : [];
+
   if (wantsRetry) {
     if (!Array.isArray(body.bill_ids) || body.bill_ids.length === 0) {
       return json({ ok: false, error: "No bills were selected." }, 400);
@@ -322,6 +329,11 @@ Deno.serve(async (req) => {
     if (billIds.length === 0) return json({ ok: false, error: "No bills were selected." }, 400);
     if (billIds.some((id) => !UUID_RE.test(id))) {
       return json({ ok: false, error: "The selection contains an id that is not a bill." }, 400);
+    }
+    /* Scoped retry: never re-read bills the caller has already attempted and
+       failed this run. They remain retryable by a later call that omits them. */
+    if (excludeIds.length > 0) {
+      billIds = billIds.filter((id) => !excludeIds.includes(id));
     }
   }
 
@@ -383,12 +395,6 @@ Deno.serve(async (req) => {
      `list_bills_needing_logo_render` filters its result set with the caller's own
      `auth.uid()`, so under the service role it would not refuse loudly — it would
      return zero rows, and every bill would silently stay out of date. */
-  /* Excluded IDs let one processing run skip bills it has already attempted and
-     failed, so later pending bills are still reached instead of re-reading the
-     same failures. They are still retryable by a later call that omits them. */
-  const excludeIds = Array.isArray(body.exclude_ids)
-    ? body.exclude_ids.filter((v): v is string => typeof v === "string" && UUID_RE.test(v))
-    : [];
 
   let queue: { id: string; bill_upload_id: string; logo_id: string | null; has_logo: boolean }[] | null = null;
   let queueError: { message: string; code?: string } | null = null;
@@ -431,6 +437,7 @@ Deno.serve(async (req) => {
       unchanged,
       reprinted: 0,
       more_work: true,
+       queue_failed: true,
       warning: "The logos were assigned, but the PDFs could not be re-printed. Try Re-print again.",
     });
   }

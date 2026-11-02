@@ -816,9 +816,9 @@ export async function applyLogoToBills(
     reprinted: 0,
     more_work: false,
     failures: [],
+    queue_failed: false,
   };
   if (ids.length === 0) return empty;
-
   let assigned = 0;
   let unchanged = 0;
   let reprinted = 0;
@@ -879,6 +879,7 @@ export async function applyLogoToBills(
           reprinted: 0,
           more_work: false,
           failures: [],
+    queue_failed: true,
         };
       }
       /* A batch failed after the assignment succeeded. The bills are correct and
@@ -907,6 +908,7 @@ export async function applyLogoToBills(
         reprinted: data.reprinted ?? reprinted,
         more_work: true,
         failures,
+         queue_failed: true,
         error: data.warning,
       };
     }
@@ -922,6 +924,7 @@ export async function applyLogoToBills(
           reprinted: 0,
           more_work: false,
           failures: [],
+    queue_failed: true,
         };
       }
       break;
@@ -965,7 +968,7 @@ export async function applyLogoToBills(
     detail: { bills: ids.length, assigned, unchanged, reprinted },
   });
 
-  return { ok: true, assigned, unchanged, reprinted, more_work: remaining, failures };
+  return { ok: true, assigned, unchanged, reprinted, more_work: remaining, failures, queue_failed: false };
 }
 
 export async function retryLogoPdfs(
@@ -1022,6 +1025,7 @@ export async function retryLogoPdfs(
         reprinted: data.reprinted ?? reprinted,
         more_work: true,
         failures,
+         queue_failed: true,
         error: data.warning,
       };
     }
@@ -1035,6 +1039,7 @@ export async function retryLogoPdfs(
         reprinted: 0,
         more_work: false,
         failures: [],
+    queue_failed: true,
       };
     }
 
