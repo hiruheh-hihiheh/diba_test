@@ -816,3 +816,72 @@ export function paymentDaysOf(record: BillRecord): { days: number | null; own: b
 export function bankLinesOfRecord(record: BillRecord): string[] {
   return bankLinesOf(record.bank_details);
 }
+
+/* ──────────────────────────────────────────────
+   Line-item rows
+   ────────────────────────────────────────────── */
+
+/**
+ * The `bill_line_items` columns a read must ask for.
+ *
+ * Named once, here, because a read that forgets `remarks` silently turns every
+ * challan's REMARKS into null on the next save: the row is replaced from what was
+ * read, so a missing column is not a missing display value, it is data loss.
+ */
+export const BILL_LINE_ITEM_COLUMNS = "sr_no, description, hsn_code, uom, quantity, rate, amount, remarks";
+
+/** The insert payload for one line item, as the table stores it. */
+export interface BillLineItemRow {
+  bill_id: string;
+  sr_no: number | null;
+  description: string;
+  hsn_code: string | null;
+  uom: string | null;
+  quantity: number | null;
+  rate: number | null;
+  amount: number | null;
+  remarks: string | null;
+}
+
+/**
+ * Map one computed line item onto its row.
+ *
+ * `remarks` is written for both document types: `computeBillValues` already strips it
+ * from an invoice line, so an invoice stores null here without this function having
+ * to know which document it is writing. A blank remark is stored as null rather than
+ * as an empty string, so "no remark" has exactly one representation in the table.
+ */
+export function lineItemInsertRow(billId: string, item: BillLineItem): BillLineItemRow {
+  const remark = typeof item.remarks === "string" ? item.remarks.trim() : "";
+  return {
+    bill_id: billId,
+    sr_no: item.srNo,
+    description: item.description,
+    hsn_code: item.hsnCode,
+    uom: item.uom,
+    quantity: item.quantity,
+    rate: item.rate,
+    amount: item.amount,
+    remarks: remark === "" ? null : item.remarks ?? null,
+  };
+}
+
+/**
+ * Map one stored row back onto the line-item shape the rest of the code uses.
+ *
+ * The inverse of `lineItemInsertRow`, and the reason the column list above must keep
+ * `remarks`: this object is what a later save writes back, so anything dropped here is
+ * dropped from the database on the next edit.
+ */
+export function lineItemFromRow(row: Record<string, unknown>): BillLineItem {
+  return {
+    srNo: row.sr_no === null || row.sr_no === undefined ? null : Number(row.sr_no),
+    description: (row.description as string | null) ?? "",
+    hsnCode: (row.hsn_code as string | null) ?? null,
+    uom: (row.uom as string | null) ?? null,
+    quantity: row.quantity === null || row.quantity === undefined ? null : Number(row.quantity),
+    rate: row.rate === null || row.rate === undefined ? null : Number(row.rate),
+    amount: row.amount === null || row.amount === undefined ? null : Number(row.amount),
+    remarks: (row.remarks as string | null) ?? null,
+  };
+}

@@ -57,6 +57,7 @@ import {
   blankCreatorLine,
   creatorTotals,
   fillTemplate,
+  generationNotice,
   isLikelyToChange,
   lineAmount,
   paymentDaysFromTerms,
@@ -465,7 +466,9 @@ function CreatorForm({
 
         if (!live) return;
         const [folderList, logoList] = await Promise.all([
-          fetchBillingFolders(),
+          /* Scoped to this section's document type: a challan must never be offered a
+             Tax Invoice billing folder, because the database will refuse to link it. */
+          fetchBillingFolders(documentType),
           fetchInvoiceLogos(),
         ]);
         if (!live) return;
@@ -733,12 +736,15 @@ function CreatorForm({
         setBillId(result.bill_id);
         setProblems([]);
         setDuplicates([]);
-        notify(
-          challan ? "Challan generated" : "Invoice generated",
-          result.jobs_error
-            ? `The ${documentNoun} was created, but its job links failed: ${result.jobs_error}`
-            : "Original, Duplicate and Triplicate."
-        );
+        /* Generated and filed are two different outcomes. The PDFs are always made
+           first, so a folder link the database refused must not be reported as a
+           plain success — the admin would go looking for a challan in a folder it
+           never reached. */
+        const notice = generationNotice(result, {
+          label: challan ? "Challan" : "Invoice",
+          noun: documentNoun,
+        });
+        notify(notice.title, notice.body);
         /* Away to the list, because the work is done and the list is where an admin
            verifies it. Staying here would show a form for a bill that can no longer be
            edited. */
@@ -793,7 +799,10 @@ function CreatorForm({
     /* `createBillingFolder` reports `ok: false` rather than throwing, because "that folder
        already exists" is an answer rather than a fault — and this form must treat it as
        one. An admin who types a name they have used before wants that folder. */
-    const result = await createBillingFolder(name);
+    /* The folder type comes from the section, not from a default: creating a
+       `billing` folder from the Challan Creator would produce a folder the challan
+       can never be filed in. */
+    const result = await createBillingFolder(name, documentType);
     const created = result.data;
     if (!result.ok || !created) {
       notify("Not created", result.error ?? "The folder could not be created.");
@@ -806,7 +815,7 @@ function CreatorForm({
     setNewFolderName("");
     setFolderPickerOpen(false);
     notify("Folder ready", `“${created.name}” created and selected.`);
-  }, [newFolderName]);
+  }, [newFolderName, documentType]);
 
   /* ── Derived, display only ───────────────────────────────── */
 

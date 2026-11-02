@@ -95,9 +95,12 @@ import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo
 import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
 import { profileForBill, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
 import {
+  BILL_LINE_ITEM_COLUMNS,
   copyBaseRecord,
   emptyBillRecord,
   findDuplicateInvoiceNos,
+  lineItemFromRow,
+  lineItemInsertRow,
   validateForFinalize,
   wordsAfterCopy,
   type DuplicateMatch,
@@ -482,16 +485,7 @@ Deno.serve(async (req) => {
     }
     if (lineItems.length > 0) {
       const { error: insError } = await admin.from(LINE_ITEMS).insert(
-        lineItems.map((item) => ({
-          bill_id: draftId,
-          sr_no: item.srNo,
-          description: item.description,
-          hsn_code: item.hsnCode,
-          uom: item.uom,
-          quantity: item.quantity,
-          rate: item.rate,
-          amount: item.amount,
-        }))
+        lineItems.map((item) => lineItemInsertRow(draftId, item))
       );
       if (insError) {
         console.error("create-bill: line items insert failed:", insError.message);
@@ -883,22 +877,14 @@ async function readBill(
 
   const { data: lines, error: lineError } = await admin
     .from(LINE_ITEMS)
-    .select("sr_no, description, hsn_code, uom, quantity, rate, amount")
+    .select(BILL_LINE_ITEM_COLUMNS)
     .eq("bill_id", billId)
     .order("sr_no", { ascending: true });
   if (lineError) return { row: null, lineItems: [], error: lineError.message };
 
   return {
     row: data as Record<string, unknown>,
-    lineItems: (lines ?? []).map((row: Record<string, unknown>) => ({
-      srNo: row.sr_no === null ? null : Number(row.sr_no),
-      description: (row.description as string | null) ?? "",
-      hsnCode: (row.hsn_code as string | null) ?? null,
-      uom: (row.uom as string | null) ?? null,
-      quantity: row.quantity === null ? null : Number(row.quantity),
-      rate: row.rate === null ? null : Number(row.rate),
-      amount: row.amount === null ? null : Number(row.amount),
-    })),
+    lineItems: (lines ?? []).map((row: Record<string, unknown>) => lineItemFromRow(row)),
     error: null,
   };
 }
@@ -1110,16 +1096,7 @@ async function createDraft(
   const row = bill as Record<string, unknown>;
   if (lineItems.length > 0) {
     const { error: lineError } = await admin.from(LINE_ITEMS).insert(
-      lineItems.map((item) => ({
-        bill_id: String(row.id),
-        sr_no: item.srNo,
-        description: item.description,
-        hsn_code: item.hsnCode,
-        uom: item.uom,
-        quantity: item.quantity,
-        rate: item.rate,
-        amount: item.amount,
-      }))
+      lineItems.map((item) => lineItemInsertRow(String(row.id), item))
     );
     if (lineError) {
       /* The bill is real but incomplete, so it is REMOVED rather than left as a

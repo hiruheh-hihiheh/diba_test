@@ -1104,3 +1104,59 @@ export function seedEmpty(keyPrefix: string): CreatorSeed {
     reverseChargeGst: null,
   };
 }
+
+/* ──────────────────────────────────────────────
+   After a generate request
+   ────────────────────────────────────────────── */
+
+/**
+ * The finalize outcome, as far as the admin needs to be told about it.
+ *
+ * Structural rather than a `CreatorFinalizeResult`: this lives in the form module so
+ * both apps and their self-tests can use it without importing the network layer, and
+ * it only ever reads these two fields.
+ */
+export interface GenerationOutcome {
+  /** False only when a folder was chosen and the server refused to link it. */
+  folder_linked: boolean;
+  jobs_error: string | null;
+}
+
+/**
+ * What to say after a generate request.
+ *
+ * A generated document and a filed one are different successes. The server renders and
+ * stores all three PDFs BEFORE it tries the folder and job links, and reports those two
+ * separately. Reporting that as a plain success would tell an admin a challan is in its
+ * folder when the database never linked it, and they would only find out later — so a
+ * failed link is a warning, and the wording says the PDFs are correct rather than
+ * implying generation failed. Both failures at once are named together, because fixing
+ * only one and generating again is wasted work.
+ */
+export function generationNotice(
+  outcome: GenerationOutcome,
+  words: { label: string; noun: string }
+): { tone: "success" | "warning"; title: string; body: string } {
+  const folderFailed = outcome.folder_linked === false;
+  const jobsError = outcome.jobs_error?.trim() ?? "";
+  const generated = `${words.label} generated`;
+
+  if (!folderFailed && jobsError === "") {
+    return { tone: "success", title: generated, body: "Original, Duplicate and Triplicate." };
+  }
+  if (folderFailed && jobsError !== "") {
+    return {
+      tone: "warning",
+      title: generated,
+      body: `It could not be added to the selected billing folder, and its job links failed: ${jobsError}. The PDFs are correct — open the ${words.noun} to file it in a folder and link its jobs.`,
+    };
+  }
+  if (folderFailed) {
+    return {
+      tone: "warning",
+      title: generated,
+      body: `It could not be added to the selected billing folder. The PDFs are correct — open the ${words.noun} and link it to the folder again.`,
+    };
+  }
+  return { tone: "warning", title: generated, body: `Its job links failed: ${jobsError}` };
+}

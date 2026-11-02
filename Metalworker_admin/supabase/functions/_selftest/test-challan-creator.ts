@@ -35,11 +35,14 @@ import {
 } from "../process-bill-upload/_shared/billDocument.ts";
 import { computeBillValues, type BillPatch } from "../process-bill-upload/_shared/billEdit.ts";
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
-import { COPY_LABEL } from "../process-bill-upload/_shared/parseBill.ts";
+import { COPY_LABEL, type BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import {
+  BILL_LINE_ITEM_COLUMNS,
   copyBaseRecord,
   emptyBillRecord,
   findDuplicateInvoiceNos,
+  lineItemFromRow,
+  lineItemInsertRow,
   validateForFinalize,
 } from "../process-bill-upload/_shared/billCreator.ts";
 import { NO_PROFILE } from "../process-bill-upload/_shared/businessProfile.ts";
@@ -536,6 +539,130 @@ section("I. copies never change document type");
   /* `computeTotals` is untouched: a challan simply has no amounts to total. */
   const totals = computeTotals({ lineItems: billItems, cgstRate: null, sgstRate: null, igstRate: null, roundOff: null });
   check(totals.totalQuantity === 137.5 && totals.amountBeforeTax === 0, "the canonical totals agree with the form");
+}
+
+/* ──────────────────────────────────────────────
+   J. Remarks survive the database row
+   ────────────────────────────────────────────── */
+
+section("J. remarks are written to, and read back from, bill_line_items");
+
+{
+  const remarkItem: BillLineItem = {
+    srNo: 1,
+    description: "MS PLATE",
+    hsnCode: "7208",
+    uom: "KG",
+    quantity: 10,
+    rate: null,
+    amount: null,
+    remarks: "  COLOUR: BLACK  ",
+  };
+
+  const row = lineItemInsertRow("bill-1", remarkItem);
+  check(row.remarks === "  COLOUR: BLACK  ", "an insert carries the remark verbatim");
+  check(row.bill_id === "bill-1" && row.sr_no === 1, "with the row's own identifiers");
+  check(row.rate === null && row.amount === null, "and no money on a challan line");
+
+  const back = lineItemFromRow({ ...row } as unknown as Record<string, unknown>);
+  check(back.remarks === row.remarks, "the stored row reads back with the same remark");
+  check(back.description === "MS PLATE" && back.quantity === 10, "and the rest of the line survives the round trip");
+
+  const again = lineItemInsertRow("bill-1", back);
+  check(again.remarks === row.remarks, "so a save made after a read does not lose it");
+
+  check(lineItemInsertRow("bill-1", { ...remarkItem, remarks: "   " }).remarks === null, "a blank remark is stored as null");
+  check(lineItemInsertRow("bill-1", { ...remarkItem, remarks: undefined }).remarks === null, "and so is a line that never had one");
+  check(lineItemFromRow({ ...row, remarks: null } as unknown as Record<string, unknown>).remarks === null, "a null column reads back as null");
+  check(BILL_LINE_ITEM_COLUMNS.includes("remarks"), "the shared column list includes remarks");
+
+  /* The two writes in create-bill and its one read must go through these helpers. A
+     second hand-written mapping is exactly how one path forgets the column again, so
+     the count is asserted as well as the read. */
+  const server = readFileSync(resolve(REPO, "Metalworker_admin/supabase/functions/create-bill/index.ts"), "utf8");
+  const insertCalls = server.match(/lineItemInsertRow\(/g)?.length ?? 0;
+  check(insertCalls === 2, "both writes (first insert and re-insert) use the shared row mapper", `found ${insertCalls}`);
+  check(server.includes(".select(BILL_LINE_ITEM_COLUMNS)"), "readBill selects the shared column list");
+  check(
+    /\.map\(\(row: Record<string, unknown>\) => lineItemFromRow\(row\)\)/.test(server),
+    "and maps stored rows back through the shared reader"
+  );
+
+  /* Copy Existing Challan: the form's remark reaches the copied line item. */
+  const copy = copyBaseRecord(challanRecord(), "delivery_challan");
+  const patch = adminForm.buildPatch({
+    values: {},
+    lines: [
+      { key: "a", srNo: "1", description: "MS PLATE", hsnCode: "7208", uom: "KG", quantity: "5", rate: "", amount: "", remarks: "RUSH ORDER" },
+    ],
+    documentType: "delivery_challan",
+  }) as BillPatch;
+  const made = computeBillValues(copy, billItems, patch);
+  check(made.lineItems[0]?.remarks === "RUSH ORDER", "a copied challan keeps the remark the form carried");
+  check(made.lineItems[0]?.rate === null, "and still carries no money");
+}
+
+/* ──────────────────────────────────────────────
+   K. Folder type and failure feedback
+   ────────────────────────────────────────────── */
+
+section("K. folders are scoped by type, and a refused link is not a success");
+
+{
+  /* The screens are React components and cannot be imported under plain Node, so their
+     calls are asserted as code shape. The decision they delegate to — which folder kind
+     a document type means — is asserted on the service that owns it. */
+  const screens: [string, string][] = [
+    ["desktop", readFileSync(resolve(REPO, "Metalworker_desktop/src/pages/CreateBill.tsx"), "utf8")],
+    ["mobile", readFileSync(resolve(REPO, "Metalworker_admin/src/components/bills/CreateBillScreen.tsx"), "utf8")],
+  ];
+  for (const [name, source] of screens) {
+    check(/fetchBillingFolders\(documentType\)/.test(source), `${name}: billing folders are read for this section's type`);
+    check(/createBillingFolder\(name, documentType\)/.test(source), `${name}: a new folder is created for this section's type`);
+    check(/generationNotice\(result,/.test(source), `${name}: the finalize result becomes a generation notice`);
+  }
+
+  for (const [name, path] of [
+    ["desktop", "Metalworker_desktop/src/services/billingFolders.ts"],
+    ["mobile", "Metalworker_admin/src/services/billingFolders.ts"],
+  ] as const) {
+    const service = readFileSync(resolve(REPO, path), "utf8");
+    check(
+      /documentType === "delivery_challan" \? CHALLAN_BILLING_FOLDER_KIND : BILLING_FOLDER_KIND/.test(service),
+      `${name}: a challan resolves to challan_billing and an invoice to billing`
+    );
+  }
+  const folderTypes = readFileSync(resolve(REPO, "Metalworker_desktop/src/types/folder.ts"), "utf8");
+  check(/CHALLAN_BILLING_FOLDER_KIND[^=]*=\s*"challan_billing"/.test(folderTypes), "challan folders are typed challan_billing");
+  check(/BILLING_FOLDER_KIND[^=]*=\s*"billing"/.test(folderTypes), "invoice folders are typed billing, unchanged");
+
+  const words = { label: "Challan", noun: "challan" };
+  const filed = adminForm.generationNotice({ folder_linked: true, jobs_error: null }, words);
+  check(filed.tone === "success", "a fully filed challan is a plain success");
+  check(/Original, Duplicate and Triplicate/.test(filed.body), "and still names the three copies");
+
+  const folderOnly = adminForm.generationNotice({ folder_linked: false, jobs_error: null }, words);
+  check(folderOnly.tone === "warning", "a folder that refused the link is NOT reported as success");
+  check(/billing folder/.test(folderOnly.body), "the message says the folder link is the problem");
+  check(/PDFs are correct/.test(folderOnly.body), "and that the document itself was generated");
+
+  const jobsOnly = adminForm.generationNotice({ folder_linked: true, jobs_error: "job 12 is closed" }, words);
+  check(jobsOnly.tone === "warning" && /job 12 is closed/.test(jobsOnly.body), "the existing job-link warning is preserved");
+
+  const both = adminForm.generationNotice({ folder_linked: false, jobs_error: "job 12 is closed" }, words);
+  check(/billing folder/.test(both.body) && /job 12 is closed/.test(both.body), "both failures are named together");
+  check(!/generation failed/i.test(both.body), "without claiming the PDFs were not made");
+
+  const invoice = { label: "Invoice", noun: "bill" };
+  check(
+    JSON.stringify(adminForm.generationNotice({ folder_linked: false, jobs_error: null }, invoice)) ===
+      JSON.stringify(desktopForm.generationNotice({ folder_linked: false, jobs_error: null }, invoice)),
+    "both client copies say the same thing"
+  );
+  check(
+    adminForm.generationNotice({ folder_linked: true, jobs_error: null }, invoice).tone === "success",
+    "a Tax Invoice whose folder linked is still a plain success"
+  );
 }
 
 console.log(
