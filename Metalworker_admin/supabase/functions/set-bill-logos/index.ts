@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
   }
 
   /* ---- read the request ---------------------------------------------------- */
-  let body: { bill_ids?: unknown; logo_id?: unknown; limit?: unknown };
+  let body: { bill_ids?: unknown; logo_id?: unknown; limit?: unknown; exclude_ids?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -371,8 +371,16 @@ Deno.serve(async (req) => {
      `list_bills_needing_logo_render` filters its result set with the caller's own
      `auth.uid()`, so under the service role it would not refuse loudly — it would
      return zero rows, and every bill would silently stay out of date. */
+  /* Excluded IDs let one processing run skip bills it has already attempted and
+     failed, so later pending bills are still reached instead of re-reading the
+     same failures. They are still retryable by a later call that omits them. */
+  const excludeIds = Array.isArray(body.exclude_ids)
+    ? body.exclude_ids.filter((v): v is string => typeof v === "string" && UUID_RE.test(v))
+    : [];
+
   const { data: queue, error: queueError } = await authClient.rpc("list_bills_needing_logo_render", {
     p_limit: limit,
+    p_exclude: excludeIds.length > 0 ? excludeIds : null,
   });
   if (queueError) {
     console.error("set-bill-logos: work queue failed:", queueError.message, queueError.code);

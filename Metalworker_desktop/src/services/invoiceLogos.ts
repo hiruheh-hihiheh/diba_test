@@ -799,7 +799,7 @@ export async function applyLogoToBills(
   let carryIds: string[] | undefined = ids;
   let carryLogoId: string | null | undefined = logoId;
 
-  const MAX_LOGO_BATCHES = 10000;
+  const MAX_LOGO_BATCHES = 50;
   let batchCount = 0;
   const seenFailureIds = new Set<string>();
   let remaining = false;
@@ -817,6 +817,7 @@ export async function applyLogoToBills(
       body.logo_id = carryLogoId;
     }
     body.limit = 40;
+    if (seenFailureIds.size > 0) body.exclude_ids = [...seenFailureIds];
 
     const { data, error } = await supabase.functions.invoke<{
       ok?: boolean;
@@ -939,16 +940,21 @@ export async function applyLogoToBills(
  */
 export async function drainPendingLogoRenders(
   onProgress?: (progress: { reprinted: number; remaining: boolean }) => void
-): Promise<{ reprinted: number; failures: BillLogoApplyResult["failures"] }> {
+): Promise<{ reprinted: number; failures: BillLogoApplyResult["failures"]; more_work: boolean; queue_failed: boolean }> {
   let reprinted = 0;
   const failures: BillLogoApplyResult["failures"] = [];
+  let remaining = false;
+  let queueFailed = false;
 
-  const MAX_LOGO_BATCHES = 10000;
+  const MAX_LOGO_BATCHES = 50;
   let batchCount = 0;
   const seenFailureIds = new Set<string>();
 
   for (;;) {
-    if (batchCount >= MAX_LOGO_BATCHES) break;
+    if (batchCount >= MAX_LOGO_BATCHES) {
+      remaining = true;
+      break;
+    }
     batchCount++;
 
     const { data, error } = await supabase.functions.invoke<{
@@ -957,9 +963,13 @@ export async function drainPendingLogoRenders(
       reprinted?: number;
       more_work?: boolean;
       failures?: BillLogoApplyResult["failures"];
-    }>("set-bill-logos", { body: { limit: 40 } });
+    }>("set-bill-logos", { body: { limit: 40, exclude_ids: [...seenFailureIds] } });
 
-    if (error || !data?.ok) break;
+    if (error || !data?.ok) {
+      queueFailed = true;
+      break;
+    }
+    remaining = !!data.more_work;
     const batchReprinted = data.reprinted ?? 0;
     reprinted += batchReprinted;
     let newFailure = false;
@@ -978,7 +988,7 @@ export async function drainPendingLogoRenders(
     }
   }
 
-  return { reprinted, failures };
+  return { reprinted, failures, more_work: remaining, queue_failed: !!queueFailed };
 }
 
 /**
@@ -1110,7 +1120,10 @@ export async function fetchAssignableBills(
     .order("created_at", { ascending: false })
     .order("id", { ascending: true });
 
-  if (needle) {
+  const range = dateRangeForNeedle(needle);
+  if (range) {
+    q = q.gte("invoice_date", range.from).lte("invoice_date", range.to);
+  } else if (needle) {
     q = q.or(
       [
         `invoice_no.ilike.%${needle}%`,
@@ -1118,11 +1131,6 @@ export async function fetchAssignableBills(
         `order_no.ilike.%${needle}%`,
       ].join(",")
     );
-  }
-
-  const range = dateRangeForNeedle(needle);
-  if (range) {
-    q = q.gte("invoice_date", range.from).lte("invoice_date", range.to);
   }
 
   const { data, error, count } = await q.range(from, from + pageSize - 1);
@@ -1146,7 +1154,7 @@ function dateRangeForNeedle(needle: string): { from: string; to: string } | null
     if (isValidDate(iso)) return { from: iso, to: iso };
   }
 
-  const dayFirst = n.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
+  const dayFirst = n.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
   if (dayFirst) {
     const [, d, m, y] = dayFirst;
     const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
@@ -1159,7 +1167,7 @@ function dateRangeForNeedle(needle: string): { from: string; to: string } | null
     return monthRange(Number(y), Number(m));
   }
 
-  const monthFirst = n.match(/^(\d{1,2})[\/.\-](\d{4})$/);
+  const monthFirst = n.match(/^(\d{1,2})[/.-](\d{4})$/);
   if (monthFirst) {
     const [, m, y] = monthFirst;
     return monthRange(Number(y), Number(m));

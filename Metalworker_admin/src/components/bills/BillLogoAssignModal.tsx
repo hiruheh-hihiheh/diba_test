@@ -310,16 +310,23 @@ function AssignBody({
       setPicked(new Set());
       setSelectAllMatching(false);
 
-      if (result.failures.length > 0) {
+      const partial = result.failures.length > 0 || result.more_work === true || !!result.error;
+      if (partial) {
         setReport({
           failures: result.failures.map((f) => ({
             invoice_no: f.invoice_no,
             reason: logoReprintFailureReason(f.reason),
           })),
-          warning: result.error,
+          warning:
+            result.error ??
+            (result.more_work
+              ? "The logo was saved, but PDF regeneration is still pending. Use Retry PDF Generation to continue."
+              : undefined),
         });
         notify(
-          `Assigned to ${result.assigned} bills, but ${result.failures.length} could not be re-printed.`
+          result.failures.length > 0
+            ? `Assigned to ${result.assigned} bills, but ${result.failures.length} could not be re-printed.`
+            : `Assigned to ${result.assigned} bills, but PDF regeneration is still pending.`
         );
         /* Some bills DID change, so the caller's counts are now wrong even though
            the operation was not clean. The report stays on screen — the caller does

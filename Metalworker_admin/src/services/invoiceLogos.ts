@@ -834,7 +834,7 @@ export async function applyLogoToBills(
      loop would never finish. Stop when a batch makes no progress (no re-print and
      no new failure) or when a safety cap is reached; `remaining` then stays true
      so the caller knows work is still outstanding and can retry. */
-  const MAX_LOGO_BATCHES = 10000;
+  const MAX_LOGO_BATCHES = 50;
   let batchCount = 0;
   const seenFailureIds = new Set<string>();
   let remaining = false;
@@ -852,6 +852,7 @@ export async function applyLogoToBills(
       body.logo_id = carryLogoId;
     }
     body.limit = 40;
+    if (seenFailureIds.size > 0) body.exclude_ids = [...seenFailureIds];
 
     const { data, error } = await supabase.functions.invoke<{
       ok?: boolean;
@@ -977,14 +978,15 @@ export async function applyLogoToBills(
  */
 export async function drainPendingLogoRenders(
   onProgress?: (progress: { reprinted: number; remaining: boolean }) => void
-): Promise<{ reprinted: number; failures: BillLogoApplyResult["failures"] }> {
+): Promise<{ reprinted: number; failures: BillLogoApplyResult["failures"]; more_work: boolean; queue_failed: boolean }> {
   let reprinted = 0;
   const failures: BillLogoApplyResult["failures"] = [];
 
-  const MAX_LOGO_BATCHES = 10000;
+  const MAX_LOGO_BATCHES = 50;
   let batchCount = 0;
   const seenFailureIds = new Set<string>();
   let remaining = false;
+  let queueFailed = false;
 
   for (;;) {
     if (batchCount >= MAX_LOGO_BATCHES) {
@@ -999,9 +1001,12 @@ export async function drainPendingLogoRenders(
       reprinted?: number;
       more_work?: boolean;
       failures?: BillLogoApplyResult["failures"];
-    }>("set-bill-logos", { body: { limit: 40 } });
+    }>("set-bill-logos", { body: { limit: 40, exclude_ids: [...seenFailureIds] } });
 
-    if (error || !data?.ok) break;
+    if (error || !data?.ok) {
+      queueFailed = true;
+      break;
+    }
     const batchReprinted = data.reprinted ?? 0;
     reprinted += batchReprinted;
     let newFailure = false;
@@ -1022,7 +1027,7 @@ export async function drainPendingLogoRenders(
     }
   }
 
-  return { reprinted, failures };
+  return { reprinted, failures, more_work: remaining, queue_failed: !!queueFailed };
 }
 
 /**
@@ -1154,7 +1159,14 @@ export async function fetchAssignableBills(
     .order("created_at", { ascending: false })
     .order("id", { ascending: true });
 
-  if (needle) {
+  /* Date search: `invoice_date` is a real `date` column, so text operators such as
+     `ilike` cannot be applied to it. Parse the (already-sanitised) needle into a
+     bounded range instead, and let an unrecognised value fall through to the text
+     search below rather than breaking it. */
+  const range = dateRangeForNeedle(needle);
+  if (range) {
+    q = q.gte("invoice_date", range.from).lte("invoice_date", range.to);
+  } else if (needle) {
     q = q.or(
       [
         `invoice_no.ilike.%${needle}%`,
@@ -1162,15 +1174,6 @@ export async function fetchAssignableBills(
         `order_no.ilike.%${needle}%`,
       ].join(",")
     );
-  }
-
-  /* Date search: `invoice_date` is a real `date` column, so text operators such as
-     `ilike` cannot be applied to it. Parse the (already-sanitised) needle into a
-     bounded range instead, and let an unrecognised value fall through to the text
-     search above rather than breaking it. */
-  const range = dateRangeForNeedle(needle);
-  if (range) {
-    q = q.gte("invoice_date", range.from).lte("invoice_date", range.to);
   }
 
   const { data, error, count } = await q.range(from, from + pageSize - 1);
@@ -1203,7 +1206,7 @@ function dateRangeForNeedle(needle: string): { from: string; to: string } | null
     if (isValidDate(iso)) return { from: iso, to: iso };
   }
 
-  const dayFirst = n.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
+  const dayFirst = n.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
   if (dayFirst) {
     const [, d, m, y] = dayFirst;
     const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
@@ -1216,7 +1219,7 @@ function dateRangeForNeedle(needle: string): { from: string; to: string } | null
     return monthRange(Number(y), Number(m));
   }
 
-  const monthFirst = n.match(/^(\d{1,2})[\/.\-](\d{4})$/);
+  const monthFirst = n.match(/^(\d{1,2})[/.-](\d{4})$/);
   if (monthFirst) {
     const [, m, y] = monthFirst;
     return monthRange(Number(y), Number(m));
