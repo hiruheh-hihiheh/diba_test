@@ -71,7 +71,10 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
  * what `Bill` describes.
  */
 const BILL_WITH_UPLOAD =
-  "*, bill_uploads!inner(id, original_filename, base_name, created_at, status)";
+  // Named by foreign key: 0025 added `bills_upload_document_type_fkey` beside the
+  // original `bills_bill_upload_id_fkey`, and with two relationships to the same
+  // table PostgREST refuses an unqualified `bill_uploads` embed as ambiguous.
+  "*, bill_uploads!bills_upload_document_type_fkey!inner(id, original_filename, base_name, created_at, status)";
 
 /** The upload columns embedded by `BILL_WITH_UPLOAD`. */
 type EmbeddedUpload = Pick<

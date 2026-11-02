@@ -133,7 +133,8 @@ function supabaseStore(admin: Client): RegenerationStore {
     async countStandaloneBills(createdBefore) {
       const { count, error } = await admin
         .from("bills")
-        .select("id, bill_uploads!inner(creation_source)", { count: "exact", head: true })
+        // FK-qualified: two foreign keys link bills to bill_uploads since 0025.
+        .select("id, bill_uploads!bills_upload_document_type_fkey!inner(creation_source)", { count: "exact", head: true })
         .eq("bill_uploads.creation_source", "manual")
         .eq("status", "finalized")
         .lte("created_at", createdBefore);
@@ -143,7 +144,7 @@ function supabaseStore(admin: Client): RegenerationStore {
     async nextStandaloneBill(afterId, createdBefore) {
       let q = admin
         .from("bills")
-        .select("*, bill_uploads!inner(creation_source)")
+        .select("*, bill_uploads!bills_upload_document_type_fkey!inner(creation_source)")
         .eq("bill_uploads.creation_source", "manual")
         .eq("status", "finalized")
         .lte("created_at", createdBefore)

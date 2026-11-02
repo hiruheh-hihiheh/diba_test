@@ -426,6 +426,20 @@ section("E. client services and shared modules");
     check(/challan_billing|CHALLAN_BILLING_FOLDER_KIND/.test(folders) && /folderKindFor\(documentType\)/.test(folders), `${app}: billing folders are kept per section`);
   }
 
+  /* Since 0025 two foreign keys join bills to bill_uploads, and PostgREST refuses an
+     unqualified embed between them as ambiguous — which stopped both bill screens
+     from loading. Every bills -> bill_uploads embed must name its foreign key. */
+  for (const p of [
+    "Metalworker_admin/src/services/bills.ts",
+    "Metalworker_desktop/src/services/bills.ts",
+    "Metalworker_admin/supabase/functions/regenerate-bill-pdfs/index.ts",
+  ]) {
+    const src = read(p);
+    const embeds = src.match(/bill_uploads!?[A-Za-z_]*!?(?:inner)?\(/g) ?? [];
+    const unqualified = embeds.filter((e) => !e.startsWith("bill_uploads!bills_upload_document_type_fkey"));
+    check(embeds.length > 0 && unqualified.length === 0, `${p}: every bill_uploads embed names bills_upload_document_type_fkey`, unqualified.join(" "));
+  }
+
   const sql = read("Metalworker_admin/supabase/migrations/0025_bill_document_types.sql");
   check(/FOREIGN KEY \(bill_upload_id, document_type\)\s+REFERENCES public\.bill_uploads \(id, document_type\)/.test(sql), "the database ties every bill's type to its upload's (composite foreign key)");
   check(/DEFAULT 'tax_invoice'/.test(sql) && !/UPDATE public\.(bills|bill_uploads)\s+SET/i.test(sql), "existing rows become Tax Invoices by default; no row is rewritten and no PDF path changes");
