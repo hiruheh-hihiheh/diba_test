@@ -258,8 +258,10 @@ async function importGroup(
       document_type: documentType,
       source_group_id: sourceGroupId,
     });
-  } catch {
-    throw new ImportFailure(500, "save_failed", "Could not start the bill upload.");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    ports.log?.("bill_uploads insert error", detail);
+    throw new ImportFailure(500, "save_failed", `Could not start the bill upload.${detail ? ` (${detail})` : ""}`);
   }
   const mine = { uploadId, paths: [] as string[] };
   created.push(mine);
@@ -287,8 +289,10 @@ async function importGroup(
   try {
     billIds = await ports.insertBills(billRows);
     if (billIds.length !== parsed.length) throw new Error("bill count mismatch");
-  } catch {
-    throw new ImportFailure(500, "save_failed", "The bill records could not be saved.");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    ports.log?.("bills insert error", detail);
+    throw new ImportFailure(500, "save_failed", `The bill records could not be saved.${detail ? ` (${detail})` : ""}`);
   }
 
   for (const [i, p] of parsed.entries()) {
@@ -296,8 +300,10 @@ async function importGroup(
     if (lines.length === 0) continue;
     try {
       await ports.insertLineItems(lines);
-    } catch {
-      throw new ImportFailure(500, "save_failed", "The bill line items could not be saved.");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      ports.log?.("bill_line_items insert error", detail);
+      throw new ImportFailure(500, "save_failed", `The bill line items could not be saved.${detail ? ` (${detail})` : ""}`);
     }
   }
 
@@ -323,8 +329,10 @@ async function importGroup(
     }
     try {
       await ports.updateBillPaths(billId, paths);
-    } catch {
-      throw new ImportFailure(500, "save_failed", "The bill documents could not be linked to the bill.");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      ports.log?.("bill path update error", detail);
+      throw new ImportFailure(500, "save_failed", `The bill documents could not be linked to the bill.${detail ? ` (${detail})` : ""}`);
     }
     bills.push({ id: billId, sheet_name: p.sheetName, invoice_no: p.original.invoiceNo, job_kind: p.original.jobKind, paths });
   }
@@ -357,8 +365,10 @@ async function importGroup(
       duplicate_pdf_path: written.includes("duplicate") ? aggregatePaths.duplicate : null,
       triplicate_pdf_path: written.includes("triplicate") ? aggregatePaths.triplicate : null,
     });
-  } catch {
-    throw new ImportFailure(500, "save_failed", "The bill upload could not be finalized.");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    ports.log?.("bill_uploads finalize error", detail);
+    throw new ImportFailure(500, "save_failed", `The bill upload could not be finalized.${detail ? ` (${detail})` : ""}`);
   }
 
   return {

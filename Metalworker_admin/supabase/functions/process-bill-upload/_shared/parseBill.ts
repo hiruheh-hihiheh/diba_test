@@ -61,6 +61,52 @@ export function serialToDate(serial: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Turn a cell value into an ISO `YYYY-MM-DD` date, or null.
+ *
+ * Excel stores dates as serial numbers, which `serialToDate` handles. A workbook
+ * that was typed or exported by hand can also carry the date as text, and a text
+ * value such as "15/08/2026" is not a valid `date` for Postgres, so it has to be
+ * normalised here rather than passed through. Returning null for an unrecognised
+ * value keeps the import from failing on a single odd cell; the date is simply
+ * left blank, matching what the Tax Invoice parser already does.
+ */
+export function parseDate(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const iso = serialToDate(value);
+    return iso === "" ? null : iso;
+  }
+  const text = String(value).trim();
+  if (text === "") return null;
+  // A numeric string is an Excel serial that survived as text.
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    const iso = serialToDate(Number(text));
+    return iso === "" ? null : iso;
+  }
+  // Already ISO.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  // Day-first (Indian) formats: 15/08/2026, 15-08-2026, 15.08.2026
+  let m = text.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
+  if (m) {
+    const d = m[1].padStart(2, "0");
+    const mo = m[2].padStart(2, "0");
+    const y = m[3];
+    const date = new Date(`${y}-${mo}-${d}T00:00:00Z`);
+    if (!Number.isNaN(date.getTime())) return `${y}-${mo}-${d}`;
+  }
+  // Year-first formats: 2026/08/15, 2026-08-15
+  m = text.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/);
+  if (m) {
+    const y = m[1];
+    const mo = m[2].padStart(2, "0");
+    const d = m[3].padStart(2, "0");
+    const date = new Date(`${y}-${mo}-${d}T00:00:00Z`);
+    if (!Number.isNaN(date.getTime())) return `${y}-${mo}-${d}`;
+  }
+  return null;
+}
+
 /* ──────────────────────────────────────────────
    Model
    ────────────────────────────────────────────── */
@@ -779,7 +825,8 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
     const cells = r.rightOf(row, marker.col);
     if (cells.length === 0) return null;
     const serial = r.num(row, cells[0].col);
-    return serial !== null ? serialToDate(serial) : null;
+    // Normalise serial or hand-typed text to ISO, or null. See parseDate.
+    return parseDate(serial !== null ? serial : cells.length > 0 ? cells[0].text : null);
   };
 
   /* ---- the reference block, in the order the source wrote it --------------

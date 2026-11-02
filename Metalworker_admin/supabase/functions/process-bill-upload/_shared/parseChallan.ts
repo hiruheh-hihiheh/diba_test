@@ -31,6 +31,7 @@ import {
   CopyReader,
   findCopyBlocks,
   norm,
+  parseDate,
   serialToDate,
   squash,
   synthesizeCopy,
@@ -166,8 +167,11 @@ function parseChallanCopy(sheet: Sheet, block: Block): BillCopy {
     if (!marker) return null;
     const cells = r.rightOf(row, marker.col);
     if (cells.length === 0) return null;
-    const serial = r.num(row, cells[0].col);
-    return serial !== null ? serialToDate(serial) || null : norm(cells[0].text) || null;
+    // Normalise whatever the cell holds (Excel serial or hand-typed text) into an
+    // ISO date, or null when it cannot be read as one. Returning raw text here
+    // would put a value such as "15/08/2026" into a `date` column and fail the
+    // whole upload.
+    return parseDate(r.num(row, cells[0].col) ?? cells[0].text);
   };
   const hasDateCell = (row: number): boolean => r.row(row).some((c) => /^date\s*:?$/i.test(c.text));
 
