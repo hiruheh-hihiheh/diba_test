@@ -30,6 +30,8 @@ import {
 import type { Bill, BillLineItem } from "../../types/bill";
 import { BillCopyActions } from "./BillCopyActions";
 import { BillLogoControl } from "./BillLogoControl";
+import { useBillDocumentType } from "../../context/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO } from "../../services/billDocumentTypes";
 import { Button } from "../ui/Button";
 import { notify } from "../../utils/notify";
 
@@ -114,6 +116,8 @@ export function BillDetailModal({
    */
   onChanged?: () => void;
 }) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
@@ -143,7 +147,7 @@ export function BillDetailModal({
 
     (async () => {
       try {
-        const [b, l] = await Promise.all([fetchBill(billId), fetchBillLineItems(billId)]);
+        const [b, l] = await Promise.all([fetchBill(billId, documentType), fetchBillLineItems(billId)]);
         if (cancelled) return;
         setBill(b);
         setLines(l);
@@ -159,14 +163,14 @@ export function BillDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [billId]);
+  }, [billId, documentType]);
 
   async function retry() {
     if (!billId) return;
     setLoading(true);
     setError(null);
     try {
-      const [b, l] = await Promise.all([fetchBill(billId), fetchBillLineItems(billId)]);
+      const [b, l] = await Promise.all([fetchBill(billId, documentType), fetchBillLineItems(billId)]);
       setBill(b);
       setLines(l);
     } catch (err) {
@@ -228,8 +232,9 @@ export function BillDetailModal({
 
           {bill && !loading && (
             <ScrollView style={{ flex: 1 }} nestedScrollEnabled>
-              {/* ── Tax summary ─────────────────────────────────── */}
-              <Text style={styles.sectionTitle}>Amounts</Text>
+              {/* ── Tax summary (a Delivery Challan has none) ────── */}
+              {info.hasMoney && <Text style={styles.sectionTitle}>Amounts</Text>}
+              {info.hasMoney && (
               <View style={styles.figureGrid}>
                 <Figure label="Before tax" value={bill.amount_before_tax} styles={styles} theme={theme} />
                 <Figure label="CGST" value={bill.cgst} styles={styles} theme={theme} />
@@ -243,11 +248,12 @@ export function BillDetailModal({
                   value={bill.total_quantity}
                   format={formatQuantity} styles={styles} theme={theme} />
               </View>
+              )}
 
               {/* ── Identity ────────────────────────────────────── */}
               <View style={styles.fieldGrid}>
-                <Field label="Invoice no" value={bill.invoice_no} styles={styles} />
-                <Field label="Invoice date" value={formatBillDate(bill.invoice_date)} styles={styles} />
+                <Field label={info.numberLabel} value={bill.invoice_no} styles={styles} />
+                <Field label={info.dateLabel} value={formatBillDate(bill.invoice_date)} styles={styles} />
                 <Field label="Quantity" value={formatQuantity(bill.total_quantity)} styles={styles} />
                 <Field label="Job type" value={formatJobKind(bill.job_kind)} styles={styles} />
                 <Field label="Seller" value={bill.seller_name} styles={styles} />
@@ -264,14 +270,16 @@ export function BillDetailModal({
                   <Field label={bill.order_no_label || "Order no"} value={bill.order_no} styles={styles} />
                 ) : null}
                 <Field label="Order date" value={formatBillDate(bill.order_date)} styles={styles} />
-                <Field label="Our challan" value={bill.our_challan_no} styles={styles} />
-                <Field label="Our challan date" value={formatBillDate(bill.our_challan_date)} styles={styles} />
+                {info.hasMoney && <Field label="Our challan" value={bill.our_challan_no} styles={styles} />}
+                {info.hasMoney && (
+                  <Field label="Our challan date" value={formatBillDate(bill.our_challan_date)} styles={styles} />
+                )}
                 <Field label="Your challan" value={bill.your_challan_no} styles={styles} />
                 <Field label="Your challan date" value={formatBillDate(bill.your_challan_date)} styles={styles} />
-                <Field label="E-way bill" value={bill.eway_bill_no} styles={styles} />
+                {info.hasMoney && <Field label="E-way bill" value={bill.eway_bill_no} styles={styles} />}
                 <Field label="Vehicle" value={bill.vehicle_number} styles={styles} />
                 <Field label="Transporter mode" value={bill.transporter_mode} styles={styles} />
-                <Field label="Place of supply" value={bill.place_of_supply} styles={styles} />
+                {info.hasMoney && <Field label="Place of supply" value={bill.place_of_supply} styles={styles} />}
               </View>
 
               {bill.amount_in_words ? (
@@ -286,7 +294,7 @@ export function BillDetailModal({
               {/* ── Line items ──────────────────────────────────── */}
               <Text style={styles.sectionTitle}>Line items ({lines.length})</Text>
               {lines.length === 0 ? (
-                <Text style={styles.muted}>This invoice has no line items.</Text>
+                <Text style={styles.muted}>This {info.word} has no line items.</Text>
               ) : (
                 <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled>
                   <View>
@@ -297,12 +305,18 @@ export function BillDetailModal({
                       <Text style={[styles.th, { width: 70, textAlign: "right" }]}>
                         Qty
                       </Text>
-                      <Text style={[styles.th, { width: 88, textAlign: "right" }]}>
-                        Rate
-                      </Text>
-                      <Text style={[styles.th, { width: 96, textAlign: "right" }]}>
-                        Amount
-                      </Text>
+                      {info.hasMoney ? (
+                        <>
+                          <Text style={[styles.th, { width: 88, textAlign: "right" }]}>
+                            Rate
+                          </Text>
+                          <Text style={[styles.th, { width: 96, textAlign: "right" }]}>
+                            Amount
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={[styles.th, { width: 160 }]}>Remarks</Text>
+                      )}
                     </View>
                     {lines.map((line, index) => (
                       <View key={line.id} style={styles.tr}>
@@ -319,12 +333,18 @@ export function BillDetailModal({
                           {formatQuantity(line.quantity)}
                           {line.uom ? ` ${line.uom}` : ""}
                         </Text>
-                        <Text style={[styles.tdRight, { width: 88 }]}>
-                          {formatMoney(line.rate)}
-                        </Text>
-                        <Text style={[styles.tdBold, { width: 96 }]}>
-                          {formatMoney(line.amount)}
-                        </Text>
+                        {info.hasMoney ? (
+                          <>
+                            <Text style={[styles.tdRight, { width: 88 }]}>
+                              {formatMoney(line.rate)}
+                            </Text>
+                            <Text style={[styles.tdBold, { width: 96 }]}>
+                              {formatMoney(line.amount)}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text style={[styles.td, { width: 160 }]}>{line.remarks || "—"}</Text>
+                        )}
                       </View>
                     ))}
                   </View>
@@ -332,7 +352,7 @@ export function BillDetailModal({
               )}
 
               {/* ── Bank / seller / terms ───────────────────────── */}
-              {bankLines.length > 0 || bill.seller_address || bill.terms ? (
+              {info.hasMoney && (bankLines.length > 0 || bill.seller_address || bill.terms) ? (
                 <View style={styles.stackSection}>
                   {bankLines.length > 0 ? (
                     <View>
@@ -377,7 +397,7 @@ export function BillDetailModal({
                      change, and this modal's own data is now out of date. Re-reading
                      the row is one request on a screen they are looking at, and it is
                      what makes the logo line here and on the list agree. */
-                  void fetchBill(bill.id).then((fresh) => {
+                  void fetchBill(bill.id, documentType).then((fresh) => {
                     if (bill.id === billId) setBill(fresh);
                   });
                   onChanged?.();

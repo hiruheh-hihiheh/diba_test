@@ -14,6 +14,8 @@ import { ErrorState } from "../ui/LoadingState";
 import { BillCopyActions } from "./BillCopyActions";
 import { BillLogoControl } from "./BillLogoControl";
 import { bankLinesOf, fetchBill, fetchBillLineItems, formatMoney, formatBillDate, formatQuantity, formatJobKind } from "../../services/bills";
+import { useBillDocumentType } from "../../contexts/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO } from "../../services/billDocumentTypes";
 import type { Bill, BillLineItem } from "../../types/bill";
 
 /** A labelled value that hides itself entirely when there is nothing to show. */
@@ -75,6 +77,8 @@ export function BillDetailModal({
    */
   onChanged?: () => void;
 }) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const [bill, setBill] = useState<Bill | null>(null);
   const [lines, setLines] = useState<BillLineItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -101,7 +105,7 @@ export function BillDetailModal({
 
     (async () => {
       try {
-        const [b, l] = await Promise.all([fetchBill(billId), fetchBillLineItems(billId)]);
+        const [b, l] = await Promise.all([fetchBill(billId, documentType), fetchBillLineItems(billId)]);
         if (cancelled) return;
         setBill(b);
         setLines(l);
@@ -117,7 +121,7 @@ export function BillDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [billId]);
+  }, [billId, documentType]);
 
   return (
     <Modal
@@ -177,13 +181,14 @@ export function BillDetailModal({
         <ErrorState
           title="Could not load this bill"
           message={error}
-          onRetry={() => billId && fetchBill(billId).then((b) => { setBill(b); setError(null); }).catch(() => undefined)}
+          onRetry={() => billId && fetchBill(billId, documentType).then((b) => { setBill(b); setError(null); }).catch(() => undefined)}
         />
       )}
 
       {bill && !loading && (
         <div className="space-y-6">
-          {/* ── Tax summary ─────────────────────────────────── */}
+          {/* ── Tax summary (a Delivery Challan has none) ────── */}
+          {info.hasMoney && (
           <section>
             <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-2">
               Amounts
@@ -199,11 +204,12 @@ export function BillDetailModal({
               <Figure label="Quantity" value={bill.total_quantity} format={formatQuantity} />
             </div>
           </section>
+          )}
 
           {/* ── Identity ────────────────────────────────────── */}
           <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-            <Field label="Invoice no" value={bill.invoice_no} />
-            <Field label="Invoice date" value={formatBillDate(bill.invoice_date)} />
+            <Field label={info.numberLabel} value={bill.invoice_no} />
+            <Field label={info.dateLabel} value={formatBillDate(bill.invoice_date)} />
             <Field label="Quantity" value={formatQuantity(bill.total_quantity)} />
             <Field label="Job type" value={formatJobKind(bill.job_kind)} />
             <Field label="Seller" value={bill.seller_name} />
@@ -214,14 +220,14 @@ export function BillDetailModal({
               <Field label={bill.order_no_label || "Order no"} value={bill.order_no} />
             )}
             <Field label="Order date" value={formatBillDate(bill.order_date)} />
-            <Field label="Our challan" value={bill.our_challan_no} />
-            <Field label="Our challan date" value={formatBillDate(bill.our_challan_date)} />
+            {info.hasMoney && <Field label="Our challan" value={bill.our_challan_no} />}
+            {info.hasMoney && <Field label="Our challan date" value={formatBillDate(bill.our_challan_date)} />}
             <Field label="Your challan" value={bill.your_challan_no} />
             <Field label="Your challan date" value={formatBillDate(bill.your_challan_date)} />
-            <Field label="E-way bill" value={bill.eway_bill_no} />
+            {info.hasMoney && <Field label="E-way bill" value={bill.eway_bill_no} />}
             <Field label="Vehicle" value={bill.vehicle_number} />
             <Field label="Transporter mode" value={bill.transporter_mode} />
-            <Field label="Place of supply" value={bill.place_of_supply} />
+            {info.hasMoney && <Field label="Place of supply" value={bill.place_of_supply} />}
           </section>
 
           {bill.amount_in_words && (
@@ -241,7 +247,7 @@ export function BillDetailModal({
               Line items ({lines.length})
             </h3>
             {lines.length === 0 ? (
-              <p className="text-sm text-text-muted">This invoice has no line items.</p>
+              <p className="text-sm text-text-muted">This {info.word} has no line items.</p>
             ) : (
               <div className="overflow-x-auto scrollbar-thin border border-border rounded-xl">
                 <table className="data-table w-full min-w-[34rem] text-sm">
@@ -251,8 +257,14 @@ export function BillDetailModal({
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Description</th>
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">HSN</th>
                       <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Qty</th>
-                      <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Rate</th>
-                      <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Amount</th>
+                      {info.hasMoney ? (
+                        <>
+                          <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Rate</th>
+                          <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Amount</th>
+                        </>
+                      ) : (
+                        <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-2">Remarks</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -267,12 +279,18 @@ export function BillDetailModal({
                           {formatQuantity(line.quantity)}
                           {line.uom ? ` ${line.uom}` : ""}
                         </td>
-                        <td className="px-3 py-2 text-text text-right tabular-nums whitespace-nowrap">
-                          {formatMoney(line.rate)}
-                        </td>
-                        <td className="px-3 py-2 text-text font-semibold text-right tabular-nums whitespace-nowrap">
-                          {formatMoney(line.amount)}
-                        </td>
+                        {info.hasMoney ? (
+                          <>
+                            <td className="px-3 py-2 text-text text-right tabular-nums whitespace-nowrap">
+                              {formatMoney(line.rate)}
+                            </td>
+                            <td className="px-3 py-2 text-text font-semibold text-right tabular-nums whitespace-nowrap">
+                              {formatMoney(line.amount)}
+                            </td>
+                          </>
+                        ) : (
+                          <td className="px-3 py-2 text-text">{line.remarks || "—"}</td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -282,7 +300,7 @@ export function BillDetailModal({
           </section>
 
           {/* ── Bank / seller / terms ───────────────────────── */}
-          {(bill.bank_details || bill.seller_address || bill.terms) && (
+          {info.hasMoney && (bill.bank_details || bill.seller_address || bill.terms) && (
             <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {bankLinesOf(bill.bank_details).length > 0 && (
                 <div>
@@ -333,7 +351,7 @@ export function BillDetailModal({
                    print DOES change, and this modal's own data is now out of date.
                    Re-reading the row is one request on a screen they are looking
                    at, and it is what makes the logo column above and here agree. */
-                void fetchBill(bill.id).then((fresh) => {
+                void fetchBill(bill.id, documentType).then((fresh) => {
                   if (bill.id === billId) setBill(fresh);
                 });
                 onChanged?.();

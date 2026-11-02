@@ -63,6 +63,8 @@ export interface RegenerationView {
   lease_active: boolean;
   /** The job's own selection, frozen when it started. Null only for pre-scope jobs. */
   scope: {
+    /** Tax Bills or Challan Bills. Absent on a job from before document types: Tax Bills. */
+    document_type?: "tax_invoice" | "delivery_challan";
     workbooks_selected: number;
     all_workbooks: boolean;
     eligible_total: number;
@@ -325,6 +327,8 @@ export interface WorkbookOption {
 export interface RegenerationScope {
   upload_ids: string[];
   include_standalone: boolean;
+  /** The section the selection was made in; the server rejects workbooks of the other type. */
+  document_type: "tax_invoice" | "delivery_challan";
 }
 
 /** Rows whose filename contains `query` (case-insensitive). Display only. */
@@ -367,10 +371,22 @@ export function selectionLabel(selected: ReadonlySet<string>, options: WorkbookO
  * the start button is disabled on null, so an empty job can never be requested.
  * Ids are sent in list order and only if eligible.
  */
-export function buildScope(selected: ReadonlySet<string>, options: WorkbookOption[], includeStandalone: boolean): RegenerationScope | null {
+export function buildScope(
+  selected: ReadonlySet<string>,
+  options: WorkbookOption[],
+  includeStandalone: boolean,
+  documentType: "tax_invoice" | "delivery_challan" = "tax_invoice"
+): RegenerationScope | null {
   const ids = options.filter((o) => o.eligible && selected.has(o.upload_id)).map((o) => o.upload_id);
-  if (ids.length === 0 && !includeStandalone) return null;
-  return { upload_ids: ids, include_standalone: includeStandalone };
+  // Standalone (Bill Creator) bills exist only in Tax Bills.
+  const standalone = includeStandalone && documentType === "tax_invoice";
+  if (ids.length === 0 && !standalone) return null;
+  return { upload_ids: ids, include_standalone: standalone, document_type: documentType };
+}
+
+/** The section a job belongs to: "Tax Bills" or "Challan Bills". */
+export function scopeSection(view: RegenerationView): string {
+  return view.scope?.document_type === "delivery_challan" ? "Challan Bills" : "Tax Bills";
 }
 
 /** How a job's scope reads in the progress panel. */

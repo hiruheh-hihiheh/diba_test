@@ -30,6 +30,12 @@ import {
 } from "../../types/bill";
 import { Button } from "../ui/Button";
 import { notify } from "../../utils/notify";
+import { useBillDocumentType } from "../../context/BillDocumentTypeContext";
+import {
+  DOCUMENT_TYPE_INFO,
+  describeMixedPreview,
+  type MixedWorkbookPreview,
+} from "../../services/billDocumentTypes";
 
 /**
  * Steps shown before the file is chosen. `completed` has its own summary card.
@@ -59,6 +65,10 @@ export function BillUploadPanel({
   const [stage, setStage] = useState<BillUploadStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BillUploadResult | null>(null);
+  /** Set when the workbook holds both document types and needs a confirmation. */
+  const [mixed, setMixed] = useState<{ message: string; preview: MixedWorkbookPreview } | null>(null);
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
 
   const finished = stage === "completed" || stage === "failed";
   const busy = stage !== null && !finished;
@@ -68,6 +78,7 @@ export function BillUploadPanel({
     setStage(null);
     setError(null);
     setResult(null);
+    setMixed(null);
   }
 
   async function choose() {
@@ -93,19 +104,32 @@ export function BillUploadPanel({
     }
   }
 
-  async function start() {
+  async function start(confirmMixed = false) {
     if (!picked || busy) return;
     setError(null);
+    setMixed(null);
     setStage("reading");
     try {
-      const res = await uploadBillWorkbook(picked, { onStage: setStage });
+      const res = await uploadBillWorkbook(picked, { onStage: setStage, documentType, confirmMixed });
       setResult(res);
       onUploaded();
+      const groups = res.uploads ?? [];
       notify(
-        `${res.invoice_count} ${res.invoice_count === 1 ? "bill" : "bills"} added`,
-        `${res.base_name}_original.pdf, ${res.base_name}_duplicate.pdf and ${res.base_name}_triplicate.pdf are ready.`
+        res.mixed
+          ? `Workbook split: ${groups.map((g) => `${g.invoice_count} in ${g.section}`).join(", ")}`
+          : `${res.invoice_count} ${res.invoice_count === 1 ? "bill" : "bills"} added to ${info.section}`,
+        res.mixed
+          ? "Each document type has its own upload, bills and combined PDFs."
+          : `${res.base_name}_original.pdf, ${res.base_name}_duplicate.pdf and ${res.base_name}_triplicate.pdf are ready.`
       );
     } catch (err) {
+      // A workbook holding both document types is not an error: nothing has been
+      // imported yet, and the admin is asked to confirm the split.
+      if (err instanceof BillUploadError && err.reason === "mixed_workbook" && err.preview) {
+        setStage(null);
+        setMixed({ message: err.message, preview: err.preview });
+        return;
+      }
       setStage("failed");
       setError(
         err instanceof BillUploadError || err instanceof Error
@@ -218,6 +242,25 @@ export function BillUploadPanel({
             </View>
           )}
 
+          {mixed && (
+            <View
+              accessibilityLiveRegion="polite"
+              style={[styles.resultCard, { borderColor: theme.colors.warning, backgroundColor: theme.colors.warning + "14" }]}
+            >
+              <Text style={styles.resultTitle}>This workbook holds both document types</Text>
+              <Text style={styles.resultLine}>{describeMixedPreview(mixed.preview)}</Text>
+              {mixed.preview.groups.map((g) => (
+                <Text key={g.document_type} style={styles.resultLine} numberOfLines={2}>
+                  {g.section}: sheets {g.sheets.join(", ")}
+                </Text>
+              ))}
+              <Text style={styles.resultLine}>
+                Nothing has been imported yet. Confirm to import each type into its own section, with its own bills and
+                combined PDFs.
+              </Text>
+            </View>
+          )}
+
           {result && (
             <View
               accessibilityLiveRegion="polite"
@@ -227,14 +270,22 @@ export function BillUploadPanel({
               ]}
             >
               <Text style={styles.resultTitle}>
-                {result.invoice_count}{" "}
-                {result.invoice_count === 1 ? "bill" : "bills"} created
+                {result.mixed
+                  ? "Workbook split into both sections"
+                  : `${result.invoice_count} ${result.invoice_count === 1 ? "bill" : "bills"} created`}
               </Text>
-              {result.bills.map((b) => (
-                <Text key={b.id} style={styles.resultLine} numberOfLines={1}>
-                  Sheet {b.sheet_name}
-                </Text>
-              ))}
+              {result.mixed &&
+                (result.uploads ?? []).map((g) => (
+                  <Text key={g.upload_id} style={styles.resultLine}>
+                    {g.section}: {g.invoice_count} {g.invoice_count === 1 ? "bill" : "bills"}
+                  </Text>
+                ))}
+              {!result.mixed &&
+                result.bills.map((b) => (
+                  <Text key={b.id} style={styles.resultLine} numberOfLines={1}>
+                    Sheet {b.sheet_name}
+                  </Text>
+                ))}
             </View>
           )}
         </>
@@ -248,12 +299,21 @@ export function BillUploadPanel({
           variant="ghost"
           style={styles.actionButton}
         />
-        {picked && !result && (
+        {picked && !result && !mixed && (
           <Button
             title="Upload workbook"
             onPress={() => void start()}
             loading={busy}
             disabled={busy || stage === "failed"}
+            style={styles.actionButton}
+          />
+        )}
+        {picked && !result && mixed && (
+          <Button
+            title="Import into both sections"
+            onPress={() => void start(true)}
+            loading={busy}
+            disabled={busy}
             style={styles.actionButton}
           />
         )}

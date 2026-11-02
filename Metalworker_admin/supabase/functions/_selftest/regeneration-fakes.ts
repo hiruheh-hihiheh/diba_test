@@ -42,6 +42,7 @@ export interface FakeUpload extends UploadRow {
   status: string;
   created_at: string;
   invoice_count: number;
+  document_type: "tax_invoice" | "delivery_challan";
 }
 
 export interface FakeBill extends BillRow {
@@ -100,7 +101,13 @@ export class FakeWorld {
   addWorkbook(
     name: string,
     parsed: { sheetName: string; original: { lineItems: BillLineItem[] } & Record<string, unknown> }[],
-    opts: { snapshot?: unknown; nullOrder?: boolean; withOldAggregates?: boolean; status?: string } = {}
+    opts: {
+      snapshot?: unknown;
+      nullOrder?: boolean;
+      withOldAggregates?: boolean;
+      status?: string;
+      documentType?: "tax_invoice" | "delivery_challan";
+    } = {}
   ): { uploadId: string; billIds: string[] } {
     const uploadId = `u${String(++this.seq).padStart(3, "0")}`;
     const baseName = name.replace(/\.xlsx$/i, "").replace(/[^A-Za-z0-9_-]+/g, "_");
@@ -117,6 +124,7 @@ export class FakeWorld {
       original_filename: name,
       base_name: baseName,
       creation_source: "workbook",
+      document_type: opts.documentType ?? ((parsed[0]?.original as { documentType?: string })?.documentType === "delivery_challan" ? "delivery_challan" : "tax_invoice"),
       status: opts.status ?? "completed",
       invoice_count: parsed.length,
       created_at: new Date(this.clock - 1_000_000 + this.seq).toISOString(),
@@ -135,6 +143,7 @@ export class FakeWorld {
       original_filename: "Bill Creator",
       base_name: "manual",
       creation_source: "manual",
+      document_type: "tax_invoice",
       status: "completed",
       invoice_count: 1,
       created_at: new Date(this.clock - 500_000).toISOString(),
@@ -246,6 +255,7 @@ export class FakeWorld {
           .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
           .map((u): WorkbookUploadRow => ({
             id: u.id,
+            document_type: u.document_type,
             original_filename: u.original_filename,
             base_name: u.base_name,
             status: u.status,

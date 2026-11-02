@@ -92,8 +92,10 @@ export interface RegenerationWorkbookList {
 }
 
 /** Every workbook upload the selector can offer, with its eligibility. */
-export async function listRegenerationWorkbooks(): Promise<RegenerationWorkbookList> {
-  const data = (await invoke({ action: "list_workbooks" })) as Partial<RegenerationWorkbookList>;
+export async function listRegenerationWorkbooks(
+  documentType: "tax_invoice" | "delivery_challan" = "tax_invoice"
+): Promise<RegenerationWorkbookList> {
+  const data = (await invoke({ action: "list_workbooks", document_type: documentType })) as Partial<RegenerationWorkbookList>;
   return { workbooks: data.workbooks ?? [], standalone_count: data.standalone_count ?? 0 };
 }
 

@@ -28,8 +28,11 @@ import {
   type RegenerationScope,
   type WorkbookOption,
 } from "../../services/regenerationModel";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 
 interface Props {
+  /** The section: its selector lists only its own workbooks. */
+  documentType: BillDocumentType;
   onCancel: () => void;
   onConfirm: (scope: RegenerationScope) => void;
 }
@@ -54,7 +57,8 @@ function CheckBox({ checked }: { checked: boolean }) {
   );
 }
 
-export default function RegenerationScopeDialog({ onCancel, onConfirm }: Props) {
+export default function RegenerationScopeDialog({ documentType, onCancel, onConfirm }: Props) {
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const [options, setOptions] = useState<WorkbookOption[] | null>(null);
   const [standaloneCount, setStandaloneCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +68,7 @@ export default function RegenerationScopeDialog({ onCancel, onConfirm }: Props) 
 
   useEffect(() => {
     let alive = true;
-    listRegenerationWorkbooks()
+    listRegenerationWorkbooks(documentType)
       .then((res) => {
         if (!alive) return;
         setOptions(res.workbooks);
@@ -76,18 +80,18 @@ export default function RegenerationScopeDialog({ onCancel, onConfirm }: Props) 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [documentType]);
 
   const all = useMemo(() => options ?? [], [options]);
   const shown = useMemo(() => filterWorkbookOptions(all, query), [all, query]);
-  const scope = buildScope(selected, all, includeStandalone);
+  const scope = buildScope(selected, all, includeStandalone, documentType);
   const eligible = eligibleCount(all);
 
   return (
     <Modal
       open
       onClose={onCancel}
-      title="Regenerate PDFs"
+      title={`Regenerate ${info.section} PDFs`}
       subtitle="Choose the workbooks to rebuild from their saved bill records. No Excel file is uploaded again."
       size="lg"
       footer={
@@ -156,7 +160,7 @@ export default function RegenerationScopeDialog({ onCancel, onConfirm }: Props) 
           <ul className="max-h-[22rem] overflow-y-auto rounded-xl border border-border divide-y divide-border" aria-label="Workbooks">
             {shown.length === 0 && (
               <li className="px-4 py-6 text-center text-sm text-text-muted">
-                {all.length === 0 ? "No Excel workbooks have been uploaded." : "No workbook matches that search."}
+                {all.length === 0 ? `No ${info.section} workbooks have been uploaded.` : "No workbook matches that search."}
               </li>
             )}
             {shown.map((o) => {
@@ -192,7 +196,7 @@ export default function RegenerationScopeDialog({ onCancel, onConfirm }: Props) 
             })}
           </ul>
 
-          {standaloneCount > 0 && (
+          {info.hasStandaloneBills && standaloneCount > 0 && (
             <button
               type="button"
               role="checkbox"

@@ -42,8 +42,12 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
     crumbs: [{ label: "Inventory" }, { label: "Stock by Company" }],
   },
   "/bills": {
-    title: "Bills",
-    crumbs: [{ label: "Documents" }, { label: "Bills" }],
+    title: "Tax Bills",
+    crumbs: [{ label: "Documents" }, { label: "Tax Bills" }],
+  },
+  "/challan-bills": {
+    title: "Challan Bills",
+    crumbs: [{ label: "Documents" }, { label: "Challan Bills" }],
   },
   "/company-bills": {
     title: "Company Bills",
@@ -51,15 +55,15 @@ const routeMeta: Record<string, { title: string; crumbs: { label: string; to?: s
   },
   "/bills/create": {
     title: "Create Bill",
-    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Create" }],
+    crumbs: [{ label: "Documents" }, { label: "Tax Bills", to: "/bills" }, { label: "Create" }],
   },
   "/bills/logos": {
     title: "Logo Library",
-    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Logo Library" }],
+    crumbs: [{ label: "Documents" }, { label: "Tax Bills", to: "/bills" }, { label: "Logo Library" }],
   },
   "/bills/profile": {
     title: "Invoice Profile",
-    crumbs: [{ label: "Documents" }, { label: "Bills", to: "/bills" }, { label: "Invoice Profile" }],
+    crumbs: [{ label: "Documents" }, { label: "Tax Bills", to: "/bills" }, { label: "Invoice Profile" }],
   },
   "/group-bills": {
     title: "Group Bills",

@@ -65,6 +65,8 @@ import { BulkOperationOverlay, type BulkOperation } from "./BulkOperationOverlay
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Input } from "../ui/Input";
+import { useBillDocumentType } from "../../context/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO } from "../../services/billDocumentTypes";
 
 /** Bills per page inside an opened folder. Matches the Bills list's own page size. */
 const PAGE_SIZE = 20;
@@ -125,7 +127,8 @@ export function BillingFolderSheet({
   >(null);
 
   /** The folder list, and nothing else. No state is touched here. */
-  const readFolders = useCallback(() => fetchBillingFolders(), []);
+  const documentType = useBillDocumentType();
+  const readFolders = useCallback(() => fetchBillingFolders(documentType), [documentType]);
 
   /** Commit a read, or record why it failed. Always ends by clearing the spinner. */
   const commitFolders = useCallback((list: BillingFolder[]) => {
@@ -212,7 +215,7 @@ export function BillingFolderSheet({
     if (!name || creating) return;
     setCreating(true);
     try {
-      const res = await createBillingFolder(name);
+      const res = await createBillingFolder(name, documentType);
       if (!res.ok) {
         notify("The folder was not created", res.error ?? "Please try again.");
         return;
@@ -540,6 +543,8 @@ interface BillingFolderDetailProps {
 }
 
 function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDetailProps) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
@@ -572,10 +577,10 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
   const readFolder = useCallback(async () => {
     const [summaryResult, billPage] = await Promise.all([
       fetchFolderBillSummary(folder.id),
-      fetchBills({ folderId: folder.id, page, pageSize: PAGE_SIZE }),
+      fetchBills({ documentType, folderId: folder.id, page, pageSize: PAGE_SIZE }),
     ]);
     return { summaryResult, billPage };
-  }, [folder.id, page]);
+  }, [documentType, folder.id, page]);
 
   /**
    * Commit a read, or record why it failed. Always ends by taking the spinner down,
@@ -645,10 +650,10 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
    */
 
   useEffect(() => {
-    void fetchBillingFolders()
+    void fetchBillingFolders(documentType)
       .then((all) => setDestinations(all.filter((f) => f.id !== folder.id)))
       .catch(() => setDestinations([]));
-  }, [folder.id]);
+  }, [documentType, folder.id]);
 
   /**
    * Turn the page.
@@ -834,6 +839,16 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
               below it, so it has to be read first. */}
           <BillSummaryScopeNote summary={summary} />
 
+          {/* A Challan Bills folder has quantities only: no money figure is shown,
+              because no challan carries one. */}
+          {!info.hasMoney && (
+            <SummarySection title="Totals" styles={styles}>
+              <Figure label="Challans" value={String(summary.total_bills)} />
+              <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
+              <Figure label="Average quantity" value={formatQuantity(summary.average_quantity)} />
+            </SummarySection>
+          )}
+          {info.hasMoney && (
           <SummarySection title="Totals" styles={styles}>
             <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
             <Figure label="Before tax" value={formatMoney(summary.total_amount_before_tax)} />
@@ -844,7 +859,9 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
             <Figure label="After tax" value={formatMoney(summary.total_amount_after_tax)} />
             <Figure label="Round off" value={formatMoney(summary.total_round_off)} />
           </SummarySection>
+          )}
 
+          {info.hasMoney && (
           <SummarySection title="Average per bill" styles={styles}>
             <Figure label="Quantity" value={formatQuantity(summary.average_quantity)} />
             <Figure label="Before tax" value={formatMoney(summary.average_amount_before_tax)} />
@@ -854,7 +871,9 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
             <Figure label="GST" value={formatMoney(summary.average_gst)} />
             <Figure label="After tax" value={formatMoney(summary.average_bill_value)} />
           </SummarySection>
+          )}
 
+          {info.hasMoney && (
           <SummarySection title="Spread" styles={styles}>
             {/* No `total_bills === 0` guard is needed: a missing figure arrives as
                 `null` and `formatMoney` already renders "—", which is both the
@@ -864,6 +883,7 @@ function BillingFolderDetail({ folder, onChanged, onOpenBill }: BillingFolderDet
             <Figure label="Lowest, before tax" value={formatMoney(summary.min_amount_before_tax)} />
             <Figure label="Highest, before tax" value={formatMoney(summary.max_amount_before_tax)} />
           </SummarySection>
+          )}
 
           {/* No category is invented: these are the raw `bills.job_kind` values that
               actually exist in this folder, cleaned up for display only. */}

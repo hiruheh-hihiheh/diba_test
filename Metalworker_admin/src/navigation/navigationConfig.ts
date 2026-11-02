@@ -68,7 +68,7 @@ export const BOTTOM_TABS: BottomTab[] = [
   },
   {
     key: "bills",
-    label: "Bills",
+    label: "Tax Bills",
     icon: "receipt",
     route: "/bills",
     activeRoutes: ["/bills", "/bill-create"],
@@ -152,6 +152,13 @@ export const MORE_SHEET_SECTIONS: NavSection[] = [
     key: "documents",
     title: "Documents",
     items: [
+      {
+        key: "challan-bills",
+        label: "Challan Bills",
+        icon: "receipt",
+        description: "Delivery Challans",
+        route: "/challan-bills",
+      },
       {
         key: "group-bills",
         label: "Group Bills",
@@ -249,7 +256,8 @@ export const DRAWER_SECTIONS: NavSection[] = [
     key: "documents",
     title: "Documents",
     items: [
-      { key: "bills", label: "Bills", icon: "receipt", route: "/bills" },
+      { key: "bills", label: "Tax Bills", icon: "receipt", route: "/bills" },
+      { key: "challan-bills", label: "Challan Bills", icon: "receipt", route: "/challan-bills" },
       { key: "bill-create", label: "Create Bill", icon: "plus", route: "/bill-create" },
       { key: "group-bills", label: "Group Bills", icon: "layers", route: "/group-bills" },
       {
@@ -294,7 +302,8 @@ export const ROUTE_TITLES: Record<string, string> = {
   "/dispatch-details": "Dispatch Details",
   "/jobs-labour": "Labour Jobs",
   "/jobs-with-material": "With Material Jobs",
-  "/bills": "Bills",
+  "/bills": "Tax Bills",
+  "/challan-bills": "Challan Bills",
   "/bill-create": "Create Bill",
   "/folders": "Folders",
   "/folder-detail": "Folder Details",

@@ -28,7 +28,7 @@
 // * A page break is only ever taken between table rows, and the footer is
 //   stamped last, so there are no orphaned headings and no blank trailing sheet.page.
 
-import type { BillCopy, BillLineItem, CopyKind } from "./parseBill.ts";
+import type { BillCopy, BillLineItem, CopyKind, DocumentType } from "./parseBill.ts";
 import { COPY_LABEL } from "./parseBill.ts";
 import { formatJobKind } from "./formatJobKind.ts";
 import { PdfDocument, PdfPage, measurePdfText, wrapText } from "./pdf.ts";
@@ -751,7 +751,7 @@ function renderHeader(sheet: Sheet, bill: BillCopy, logo: HeaderLogo | null): vo
   // reference's 150.24pt row grid top.
   const headingH = 26.9;
   sheet.page.rect(L, y, CONTENT_W, headingH, { lineWidth: 1.2, stroke: true });
-  sheet.page.text("TAX INVOICE", (L + R) / 2, y + 18, {
+  sheet.page.text(bill.documentType === "delivery_challan" ? "DELIVERY CHALLAN" : "TAX INVOICE", (L + R) / 2, y + 18, {
     font: "bold",
     size: T.heading,
     align: "center",
@@ -864,14 +864,18 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   let top = sheet.y;
 
   const rows = referenceGrid(bill);
+  /* A Delivery Challan's grid is shorter (Challan No., Your Challan No., the order)
+     and its last row is the Transporter Mode rather than the Place of Supply; it
+     has no separate transport strip. A Tax Invoice takes none of these branches. */
+  const challan = bill.documentType === "delivery_challan";
   /* The grid is a FIXED 7-slot template, like the workbook it comes from: a bill
      with fewer reference rows leaves the extra slots blank rather than shortening
      the box, which is what keeps the transport, the recipient panel and the table
      below at their reference positions. A bill with more rows grows the box by
      exactly the extra rows and pushes everything below it down with it. */
   const usedSlots = rows.length + 1; // + the PLACE OF SUPPLY row
-  const slots = Math.max(PARTIES_GRID_SLOTS, usedSlots);
-  const extra = (slots - PARTIES_GRID_SLOTS) * PARTIES_ROW_H;
+  const slots = challan ? Math.max(CHALLAN_GRID_SLOTS, usedSlots) : Math.max(PARTIES_GRID_SLOTS, usedSlots);
+  const extra = Math.max(0, slots - PARTIES_GRID_SLOTS) * PARTIES_ROW_H;
   const gridH = slots * PARTIES_ROW_H;
 
   /* ---- left column: who is being billed ----------------------------------
@@ -961,19 +965,29 @@ function renderParties(sheet: Sheet, bill: BillCopy): void {
   /* PLACE OF SUPPLY follows the source rows, exactly where the reference puts it
      after "E-way Bill No.". The state code shares the row, in the date cell. */
   const posBase = top + PARTIES_GRID_BASE + rows.length * PARTIES_ROW_H;
-  sheet.page.text("PLACE OF SUPPLY", PARTIES_LABEL_X, posBase, { font: "bold", size: PARTIES_LABEL_SIZE });
-  if (bill.placeOfSupply) {
-    sheet.page.text(bill.placeOfSupply, PARTIES_VALUE_R, posBase, { size: PARTIES_VALUE_SIZE, align: "right" });
-  }
-  if (bill.stateCode !== null && bill.stateCode !== undefined) {
-    sheet.page.text(`STATE CODE: ${bill.stateCode}`, PARTIES_DATE_X, posBase, {
-      font: "bold",
-      size: PARTIES_DATE_SIZE,
-    });
+  if (challan) {
+    sheet.page.text("Transporter Mode", PARTIES_LABEL_X, posBase, { font: "bold", size: PARTIES_LABEL_SIZE });
+    if (bill.transporterMode) {
+      sheet.page.text(bill.transporterMode, PARTIES_VALUE_R, posBase, { size: PARTIES_VALUE_SIZE, align: "right" });
+    }
+    if (bill.vehicleNumber) {
+      sheet.page.text(bill.vehicleNumber, PARTIES_DATE_R, posBase, { size: PARTIES_VALUE_SIZE, align: "right" });
+    }
+  } else {
+    sheet.page.text("PLACE OF SUPPLY", PARTIES_LABEL_X, posBase, { font: "bold", size: PARTIES_LABEL_SIZE });
+    if (bill.placeOfSupply) {
+      sheet.page.text(bill.placeOfSupply, PARTIES_VALUE_R, posBase, { size: PARTIES_VALUE_SIZE, align: "right" });
+    }
+    if (bill.stateCode !== null && bill.stateCode !== undefined) {
+      sheet.page.text(`STATE CODE: ${bill.stateCode}`, PARTIES_DATE_X, posBase, {
+        font: "bold",
+        size: PARTIES_DATE_SIZE,
+      });
+    }
   }
 
   /* ---- transport, directly under the grid -------------------------------- */
-  if (bill.transporterMode !== null || bill.vehicleNumber !== null) {
+  if (!challan && (bill.transporterMode !== null || bill.vehicleNumber !== null)) {
     sheet.page.rect(PARTIES_GRID_X + 0.09, transportTop, PARTIES_GRID_W + 0.63, TRANSPORT_H, {
       lineWidth: 0.45,
       stroke: true,
@@ -1489,6 +1503,160 @@ function renderSignatures(sheet: Sheet, bill: BillCopy): void {
    Public API
    ────────────────────────────────────────────── */
 
+/* ──────────────────────────────────────────────
+   Delivery Challan: item table and closing
+   ──────────────────────────────────────────────
+   A challan's table has REMARKS where an invoice has RATE and AMOUNT, and below
+   it there is no totals band, bank block, amount in words or terms: only the
+   receipt acknowledgement, the supplier's "For ..." line and the two signatures.
+   The header, the parties panel, page breaks and the copy footer are the
+   invoice's own, so both documents share one page machinery (and the chunked
+   regeneration assembler works for both unchanged). */
+
+/** Reference-grid rows a challan reserves: three references plus Transporter Mode, and one spare. */
+const CHALLAN_GRID_SLOTS = 5;
+const CH_COL_SR = COL_SR;
+const CH_COL_DESC = 237.12;
+const CH_COL_HSN = COL_HSN;
+const CH_COL_UOM = COL_UOM;
+const CH_COL_QTY = COL_QTY;
+/** The rest of the table width, so the columns span exactly TABLE_W. */
+const CH_COL_REMARKS = TABLE_W - (CH_COL_SR + CH_COL_DESC + CH_COL_HSN + CH_COL_UOM + CH_COL_QTY);
+/** Room kept below a challan's table for the receipt line and the signature block. */
+const CHALLAN_CLOSING_RESERVE = 96;
+
+const CHALLAN_COLS: { key: "sr" | "desc" | "hsn" | "uom" | "qty" | "remarks"; w: number; title: string; align: "left" | "right" }[] = [
+  { key: "sr", w: CH_COL_SR, title: "SR.NO.", align: "left" },
+  { key: "desc", w: CH_COL_DESC, title: "DESCRIPTION", align: "left" },
+  { key: "hsn", w: CH_COL_HSN, title: "HSN CODE", align: "left" },
+  { key: "uom", w: CH_COL_UOM, title: "UOM", align: "left" },
+  { key: "qty", w: CH_COL_QTY, title: "QTY", align: "right" },
+  { key: "remarks", w: CH_COL_REMARKS, title: "REMARKS", align: "left" },
+];
+
+function challanColumnX(): Record<(typeof CHALLAN_COLS)[number]["key"], number> {
+  const out = {} as Record<(typeof CHALLAN_COLS)[number]["key"], number>;
+  let cursor = TABLE_X;
+  for (const col of CHALLAN_COLS) {
+    out[col.key] = cursor;
+    cursor += col.w;
+  }
+  return out;
+}
+
+function drawChallanHeader(page: PdfPage, y: number): void {
+  const x = challanColumnX();
+  page.rect(TABLE_X, y, TABLE_W, HEADER_H, { lineWidth: 0.7, stroke: true });
+  for (const col of CHALLAN_COLS) {
+    if (col.key !== "sr") page.line(x[col.key], y, x[col.key], y + HEADER_H, 0.5);
+  }
+  for (const col of CHALLAN_COLS) {
+    const avail = col.w - 2 * CELL_PAD;
+    const natural = measureText(col.title, "bold", T.tableHead);
+    const size = natural <= avail ? T.tableHead : Math.max(6, (T.tableHead * avail) / natural);
+    page.text(col.title, col.align === "right" ? x[col.key] + col.w - CELL_PAD : x[col.key] + CELL_PAD, y + TABLE_HEAD_BASE, {
+      font: "bold",
+      size,
+      align: col.align,
+    });
+  }
+}
+
+function challanItemLines(item: BillLineItem): { desc: string[]; remarks: string[] } {
+  return {
+    desc: wrapText(item.description, CH_COL_DESC - 2 * CELL_PAD, "regular", T.tableCell),
+    remarks: item.remarks ? wrapText(item.remarks, CH_COL_REMARKS - 2 * CELL_PAD, "regular", T.tableCell) : [],
+  };
+}
+
+function challanItemHeight(item: BillLineItem): number {
+  const { desc, remarks } = challanItemLines(item);
+  return TABLE_ROW_PAD + (Math.max(desc.length, remarks.length, 1) - 1) * TABLE_LEADING;
+}
+
+function drawChallanRow(page: PdfPage, item: BillLineItem, y: number, h: number): void {
+  const x = challanColumnX();
+  page.line(TABLE_X, y, TABLE_X, y + h, 0.5);
+  for (const col of CHALLAN_COLS) {
+    if (col.key !== "sr") page.line(x[col.key], y, x[col.key], y + h, 0.5);
+  }
+  page.line(TABLE_X, y + h, TABLE_X + TABLE_W, y + h, 0.5);
+  const base = y + TABLE_BASE;
+  const { desc, remarks } = challanItemLines(item);
+  if (item.srNo !== null) page.text(String(item.srNo), x.sr + CELL_PAD, base, { size: T.tableCell });
+  desc.forEach((line, i) => page.text(line, x.desc + CELL_PAD, base + i * TABLE_LEADING, { size: T.tableCell }));
+  if (item.hsnCode) page.text(item.hsnCode, x.hsn + CELL_PAD, base, { size: T.tableCell });
+  if (item.uom) page.text(item.uom, x.uom + CELL_PAD, base, { size: T.tableCell });
+  const q = cellQty(item.quantity);
+  if (q !== "") page.text(q, x.qty + CH_COL_QTY - CELL_PAD, base, { size: T.tableCell, align: "right" });
+  remarks.forEach((line, i) => page.text(line, x.remarks + CELL_PAD, base + i * TABLE_LEADING, { size: T.tableCell }));
+}
+
+function renderChallanTable(sheet: Sheet, bill: BillCopy): void {
+  const items: BillLineItem[] =
+    bill.lineItems.length > 0
+      ? bill.lineItems
+      : [{ srNo: null, description: "", hsnCode: null, uom: null, quantity: null, rate: null, amount: null, remarks: null }];
+  const limit = PAGE_H - SIG_RULE_FROM_BOTTOM - CHALLAN_CLOSING_RESERVE - TABLE_TQ_STRIP;
+
+  if (sheet.y + HEADER_H + challanItemHeight(items[0]) > limit) sheet.newPage();
+  drawChallanHeader(sheet.page, sheet.y);
+  sheet.y += HEADER_H;
+  for (const item of items) {
+    const h = challanItemHeight(item);
+    if (sheet.y + h > limit) {
+      sheet.newPage();
+      drawChallanHeader(sheet.page, sheet.y);
+      sheet.y += HEADER_H;
+    }
+    drawChallanRow(sheet.page, item, sheet.y, h);
+    sheet.y += h;
+  }
+
+  sheet.y += TABLE_CLOSE_GAP;
+  sheet.page.line(TABLE_X, sheet.y, TABLE_X + TABLE_W, sheet.y, 0.6);
+  const tqTop = sheet.y + (TABLE_TQ_STRIP - TABLE_CLOSE_GAP - TQ_H);
+  const qtyRight = challanColumnX().qty + CH_COL_QTY;
+  sheet.page.rect(TQ_X, tqTop, TQ_W, TQ_H, { lineWidth: 1.0, stroke: true });
+  sheet.page.line(challanColumnX().qty, tqTop, challanColumnX().qty, tqTop + TQ_H, 0.5);
+  sheet.page.line(qtyRight, tqTop, qtyRight, tqTop + TQ_H, 0.5);
+  const tqBase = tqTop + TQ_BASE;
+  const jobLabel = formatJobKind(bill.jobKind);
+  if (jobLabel) sheet.page.text(jobLabel, TQ_X + CELL_PAD + 2, tqBase, { font: "bold", size: T.totalLabel });
+  sheet.page.text("Total Quantity", challanColumnX().qty - CELL_PAD, tqBase, { font: "bold", size: T.totalLabel, align: "right" });
+  sheet.page.text(cellQty(bill.totalQuantity), qtyRight - CELL_PAD, tqBase, { font: "bold", size: T.totalLabel, align: "right" });
+  sheet.y = tqTop + TQ_H;
+}
+
+/** The receipt acknowledgement, "For <supplier>", and the two signature columns. */
+function renderChallanClosing(sheet: Sheet, bill: BillCopy): void {
+  const size = T.signature;
+  const receipt = bill.certification ?? "Received above material in good & condition";
+  const behalf = bill.onBehalfOf ?? (bill.sellerName ? `For ${bill.sellerName}` : null);
+
+  const anchorLineY = PAGE_H - SIG_RULE_FROM_BOTTOM;
+  const bandTop = Math.min(sheet.y + 12, anchorLineY - CHALLAN_CLOSING_RESERVE + 12);
+  sheet.page.text(receipt, TABLE_X + CELL_PAD, bandTop + 10, { size: T.signature + 0.6 });
+  if (behalf) {
+    sheet.page.text(behalf, TABLE_X + TABLE_W - CELL_PAD, bandTop + 10, { font: "bold", size: T.signature + 0.6, align: "right" });
+  }
+
+  const lineY = Math.max(anchorLineY, bandTop + 40);
+  const column = (x: number, lines: string[], align: "left" | "right"): void => {
+    sheet.page.line(x, lineY, x + SIG_RULE_W, lineY, 0.6);
+    let y = lineY + SIG_TEXT_OFFSET;
+    for (const line of lines) {
+      for (const wrapped of wrapText(line, SIG_RULE_W, "regular", size)) {
+        sheet.page.text(wrapped, align === "right" ? x + SIG_RULE_W : x, y, { size, align });
+        y += SIG_LEADING;
+      }
+    }
+  };
+  column(SIG_LEFT_X, [bill.receiverSignature ?? bill.signatureLines[0] ?? "(Receivers Signature)"], "left");
+  column(SIG_RIGHT_X, [bill.signatureDesignation ?? "(Proprietor)"], "right");
+  sheet.y = lineY + SIG_TEXT_OFFSET + SIG_LEADING;
+}
+
 /** `COPY_LABEL` keyed by kind, for recovering a designation back to its kind. */
 const COPY_KIND_BY_LABEL = COPY_LABEL;
 
@@ -1521,7 +1689,8 @@ export function renderBillDocument(
   logo?: PdfImage | null,
   profile?: BusinessProfile | null
 ): Uint8Array {
-  const { sheet, pageOwner } = layoutBillDocument(bills, copyLabel, logo, profile);
+  const { sheet, pageOwner, labelled } = layoutBillDocument(bills, copyLabel, logo, profile);
+  const documentType = labelled[0].documentType ?? "tax_invoice";
 
   // Stamped last, once the page count is final, so a long bill still reads
   // "Page 2 of 3" instead of a placeholder.
@@ -1529,7 +1698,7 @@ export function renderBillDocument(
   sheet.doc.getPages().forEach((page, i) => {
     // `page` here is the loop's own page, deliberately not `sheet.page`: this
     // pass has to stamp EVERY page, not the one the last bill happened to end on.
-    stampBillFooter(page, copyLabel, pageOwner[i] ?? "", i, total);
+    stampBillFooter(page, copyLabel, pageOwner[i] ?? "", i, total, documentType);
   });
 
   return sheet.doc.build();
@@ -1555,8 +1724,19 @@ export function billDocumentTitle(copyLabel: string, billCount: number, firstInv
  * assembler appends exactly these operators to each page's content once the total
  * is known, so the result is byte-identical to a single-pass render.
  */
-export function stampBillFooter(page: PdfPage, copyLabel: string, owner: string, index: number, total: number): void {
-  page.text("E & O.E", MARGIN_X, FOOTER_BASELINE, { size: T.footer, color: [0.3, 0.3, 0.3] });
+export function stampBillFooter(
+  page: PdfPage,
+  copyLabel: string,
+  owner: string,
+  index: number,
+  total: number,
+  documentType: DocumentType = "tax_invoice"
+): void {
+  // "E & O.E" (errors and omissions excepted) is an invoice convention; the
+  // Delivery Challan template has no such line.
+  if (documentType !== "delivery_challan") {
+    page.text("E & O.E", MARGIN_X, FOOTER_BASELINE, { size: T.footer, color: [0.3, 0.3, 0.3] });
+  }
   page.text(
     `${copyLabel}   |   ${owner}   |   Page ${index + 1} of ${total}`,
     MARGIN_X + CONTENT_W,
@@ -1573,9 +1753,15 @@ export function stampBillFooter(page: PdfPage, copyLabel: string, owner: string,
  * newline, so a page's body bytes followed by these bytes are exactly the bytes of
  * the same page with the footer drawn onto it.
  */
-export function billFooterContent(copyLabel: string, owner: string, index: number, total: number): Uint8Array {
+export function billFooterContent(
+  copyLabel: string,
+  owner: string,
+  index: number,
+  total: number,
+  documentType: DocumentType = "tax_invoice"
+): Uint8Array {
   const page = new PdfPage();
-  stampBillFooter(page, copyLabel, owner, index, total);
+  stampBillFooter(page, copyLabel, owner, index, total, documentType);
   return page.encode();
 }
 
@@ -1684,11 +1870,16 @@ function layoutBillDocument(
     const firstPage = sheet.doc.pageCount - 1;
     renderHeader(sheet, bill, headerLogo);
     renderParties(sheet, bill);
-    renderTable(sheet, bill);
-    renderTotals(sheet, bill);
-    renderWords(sheet, bill);
-    renderColumns(sheet, bill);
-    renderSignatures(sheet, bill);
+    if (bill.documentType === "delivery_challan") {
+      renderChallanTable(sheet, bill);
+      renderChallanClosing(sheet, bill);
+    } else {
+      renderTable(sheet, bill);
+      renderTotals(sheet, bill);
+      renderWords(sheet, bill);
+      renderColumns(sheet, bill);
+      renderSignatures(sheet, bill);
+    }
     for (let p = firstPage; p < sheet.doc.pageCount; p++) {
       pageOwner[p] = bill.invoiceNo ?? "Bill";
     }

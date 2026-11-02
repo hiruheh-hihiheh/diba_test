@@ -67,6 +67,8 @@ import BulkOperationOverlay, {
   type BulkOperation,
 } from "../components/bills/BulkOperationOverlay";
 import { usePageMeta } from "../hooks/usePageMeta";
+import { BillDocumentTypeContext } from "../contexts/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
@@ -146,7 +148,15 @@ const CREATE_BILL_CHOICES: {
   },
 ];
 
-export default function BillsPage() {
+/**
+ * The bill workspace, for one document type.
+ *
+ * Mounted twice: at /bills as Tax Bills and at /challan-bills as Challan Bills.
+ * Every query and every write below is confined to `documentType`, so neither
+ * section can list, edit, delete or regenerate the other's bills.
+ */
+export default function BillsPage({ documentType = "tax_invoice" }: { documentType?: BillDocumentType }) {
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const toast = useToast();
   const confirm = useConfirm();
   const selection = useSelection();
@@ -249,6 +259,7 @@ export default function BillsPage() {
       try {
         const [pageData, uploadList, facetList] = await Promise.all([
           fetchBills({
+            documentType,
             search,
             uploadId: uploadFilter || null,
             from: from || null,
@@ -257,10 +268,10 @@ export default function BillsPage() {
             page,
             pageSize,
           }),
-          fetchBillUploads(),
+          fetchBillUploads(documentType),
           // The facet strip is cheap and independent of the page, so it rides
           // along rather than becoming a second load path that can disagree.
-          fetchBillJobFacets(),
+          fetchBillJobFacets(documentType),
         ]);
         setBills(pageData.rows);
         setTotal(pageData.total);
@@ -277,7 +288,7 @@ export default function BillsPage() {
         setLoadedOnce(true);
       }
     },
-    [search, uploadFilter, from, to, jobKindValuesForGroup, page, pageSize]
+    [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, page, pageSize]
   );
 
   /* Regeneration is driven by the server's job; the hook only mirrors it, so a
@@ -299,12 +310,12 @@ export default function BillsPage() {
 
   usePageMeta(
     {
-      title: "Bills",
-      crumbs: [{ label: "Documents" }, { label: "Bills" }],
+      title: info.section,
+      crumbs: [{ label: "Documents" }, { label: info.section }],
       subtitle: `${total.toLocaleString()} ${total === 1 ? "bill" : "bills"}`,
       selfTitles: true,
     },
-    [total]
+    [total, info.section]
   );
 
   const visibleIds = useMemo(() => bills.map((b) => b.id), [bills]);
@@ -490,6 +501,7 @@ export default function BillsPage() {
     setSelectingAll(true);
     try {
       const ids = await fetchBillIds({
+        documentType,
         search: search.trim() || undefined,
         uploadId: uploadFilter || null,
         from: from || null,
@@ -670,7 +682,7 @@ export default function BillsPage() {
     const ids = [...selection.selected];
 
     try {
-      const documents = await fetchBillDocumentsByIds(ids);
+      const documents = await fetchBillDocumentsByIds(ids, documentType);
       if (documents.length === 0) {
         toast.error({
           title: "Nothing to download",
@@ -793,7 +805,7 @@ export default function BillsPage() {
 
     setDeleting(bill.id);
     try {
-      const res = await deleteBill(bill.id);
+      const res = await deleteBill(bill.id, documentType);
       if (!res.ok) {
         toast.error({
           title: "The bill was not deleted",
@@ -843,7 +855,7 @@ export default function BillsPage() {
     const labels = new Map(onThisPage);
     if (missing.length > 0) {
       try {
-        for (const row of await fetchBillLabels(missing)) labels.set(row.id, row.label);
+        for (const row of await fetchBillLabels(missing, documentType)) labels.set(row.id, row.label);
       } catch {
         /* Fall through: the delete proceeds and reports ids for anything unnamed. A
            missing label is cosmetic; a missing delete would not be. */
@@ -900,8 +912,10 @@ export default function BillsPage() {
       /* Progress is real: deleteBill is a multi-statement cascade and these run
          one at a time, so done counts invoices genuinely finished. Nothing here
          is a timer, which is why the bar can read 18 / 37 and be right. */
-      const result = await deleteBillsInBulk(targets, (progress: BulkProgress) =>
-        setBulk((prev) => (prev ? { ...prev, progress } : prev))
+      const result = await deleteBillsInBulk(
+        targets,
+        (progress: BulkProgress) => setBulk((prev) => (prev ? { ...prev, progress } : prev)),
+        documentType
       );
 
       /* Only bills that really went are dropped from the selection, so anything
@@ -969,6 +983,7 @@ export default function BillsPage() {
   const filtered = !!search.trim() || hasFilters;
 
   return (
+    <BillDocumentTypeContext.Provider value={documentType}>
     <div className="space-y-5 animate-fade-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -1028,7 +1043,9 @@ export default function BillsPage() {
           {/* A bill does not have to come from a workbook. This sits NEXT TO the upload
               button rather than replacing it, because both are how a bill starts and
               neither is more correct than the other — an admin creating one bill by hand
-              should not have to go looking somewhere else to find the button. */}
+              should not have to go looking somewhere else to find the button. Bill
+              Creator makes Tax Invoices only, so it is offered in Tax Bills only. */}
+          {info.supportsBillCreator && (
           <div className="relative">
             <button
               ref={createMenuRef}
@@ -1071,6 +1088,7 @@ export default function BillsPage() {
               ))}
             </AnchoredPopover>
           </div>
+          )}
         </div>
       </div>
 
@@ -1080,6 +1098,7 @@ export default function BillsPage() {
           with nothing selected. */}
       {regenSelectOpen && (
         <RegenerationScopeDialog
+          documentType={documentType}
           onCancel={() => setRegenSelectOpen(false)}
           onConfirm={(scope) => {
             setRegenSelectOpen(false);
@@ -1099,7 +1118,7 @@ export default function BillsPage() {
           scope="bills by invoice number, filename, sheet or GST number"
           unit="bill"
           resultCount={total}
-          placeholder="Search invoices…"
+          placeholder={`Search ${info.word}s…`}
           className="lg:max-w-2xl"
         />
 
@@ -1294,7 +1313,7 @@ export default function BillsPage() {
                         <SelectAllCheckbox ids={visibleIds} selection={selection} />
                       </th>
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
-                        Invoice no
+                        {info.numberLabel}
                       </th>
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
                         Sheet
@@ -1306,11 +1325,13 @@ export default function BillsPage() {
                         Qty
                       </th>
                       <th className="text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
-                        Invoice date
+                        {info.dateLabel}
                       </th>
-                      <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
-                        Amount
-                      </th>
+                      {info.hasMoney && (
+                        <th className="text-right text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
+                          Amount
+                        </th>
+                      )}
                       <th className="hidden xl:table-cell text-left text-[11px] font-bold text-text-muted uppercase tracking-wider px-3 py-3">
                         Copies
                       </th>
@@ -1370,7 +1391,7 @@ export default function BillsPage() {
                               onClick={() => setDetailId(bill.id)}
                               className="text-sm font-bold text-text hover:text-primary hover:underline underline-offset-2 cursor-pointer text-left"
                             >
-                              {bill.invoice_no || "No invoice number"}
+                              {bill.invoice_no || `No ${info.word} number`}
                             </button>
                             {jobKind && (
                               <p className="mt-1">
@@ -1408,9 +1429,12 @@ export default function BillsPage() {
                             </span>
                           </td>
 
-                          <td className="px-3 py-3 text-sm font-bold text-text text-right tabular-nums whitespace-nowrap">
-                            {formatMoney(bill.amount_after_tax)}
-                          </td>
+                          {/* A challan carries no amount, so it has no amount column at all. */}
+                          {info.hasMoney && (
+                            <td className="px-3 py-3 text-sm font-bold text-text text-right tabular-nums whitespace-nowrap">
+                              {formatMoney(bill.amount_after_tax)}
+                            </td>
+                          )}
 
                           <td className="hidden xl:table-cell px-3 py-3">
                             <BillCopyActions bill={bill} layout="compact" />
@@ -1646,8 +1670,10 @@ export default function BillsPage() {
       <Modal
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        title="Upload a bill workbook"
-        subtitle="One .xlsx file. Every sheet becomes one bill."
+        title={`Upload a ${info.noun} workbook`}
+        subtitle={`One .xlsx file. Every sheet becomes one bill. A workbook that also holds ${
+          DOCUMENT_TYPE_INFO[documentType === "tax_invoice" ? "delivery_challan" : "tax_invoice"].nounPlural
+        } is split into both sections after you confirm.`}
         size="lg"
       >
         <BillUploadPanel
@@ -1758,10 +1784,12 @@ export default function BillsPage() {
         <p className="text-xs text-text-muted px-1">
           The copies column shows one button per print copy —{" "}
           {BILL_COPIES.map((c) => BILL_COPY_LABEL[c]).join(", ")}. All three hold the same
-          invoices and the same amounts; open a bill to view, download or print each one.
+          {info.hasMoney ? " invoices and the same amounts" : " challans and the same quantities"}; open a bill to view,
+          download or print each one.
         </p>
       )}
     </div>
+    </BillDocumentTypeContext.Provider>
   );
 }
 

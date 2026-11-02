@@ -249,6 +249,11 @@ Deno.serve(async (req) => {
         409
       );
     }
+    /* Bill Creator makes Tax Invoices only; a Delivery Challan is never reachable
+       through it, whatever id a request names. */
+    if (read.row.document_type === "delivery_challan") {
+      return json({ ok: false, error: "That is a Delivery Challan; it cannot be edited in Bill Creator." }, 409);
+    }
     existing = read.row;
     currentItems = read.lineItems;
   } else {

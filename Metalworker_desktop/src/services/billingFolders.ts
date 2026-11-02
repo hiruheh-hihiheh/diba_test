@@ -41,7 +41,13 @@ import { supabase } from "../lib/supabase";
 import { logAudit } from "./auditLog";
 import { fetchBillingFolderBillCounts } from "./bills";
 import type { BulkProgress } from "../types/bill";
-import { BILLING_FOLDER_KIND, type AdminFolder } from "../types/folder";
+import { BILLING_FOLDER_KIND, CHALLAN_BILLING_FOLDER_KIND, type AdminFolder, type FolderKind } from "../types/folder";
+import type { BillDocumentType } from "./billDocumentTypes";
+
+/** Each section has its own folder kind; the database refuses a bill of the other type. */
+function folderKindFor(documentType: BillDocumentType): FolderKind {
+  return documentType === "delivery_challan" ? CHALLAN_BILLING_FOLDER_KIND : BILLING_FOLDER_KIND;
+}
 
 const FOLDERS = "admin_folders";
 const ITEMS = "folder_items";
@@ -91,8 +97,12 @@ export interface BillingFolder extends AdminFolder {
  * both paths agree on the number. If migration 0009 has been applied, the RPC is
  * used and this code does not run.
  */
-export async function fetchBillingFolders(): Promise<BillingFolder[]> {
-  const { data, error } = await supabase.rpc("get_billing_folder_bill_counts");
+export async function fetchBillingFolders(documentType: BillDocumentType = "tax_invoice"): Promise<BillingFolder[]> {
+  const kind = folderKindFor(documentType);
+  const { data, error } =
+    documentType === "tax_invoice"
+      ? await supabase.rpc("get_billing_folder_bill_counts")
+      : await supabase.rpc("get_billing_folder_bill_counts_by_kind", { p_folder_type: kind });
 
   if (!error) {
     const rows = Array.isArray(data) ? data : [];
@@ -107,7 +117,7 @@ export async function fetchBillingFolders(): Promise<BillingFolder[]> {
       return {
         id: typeof row.folder_id === "string" ? row.folder_id : "",
         name: typeof row.folder_name === "string" ? row.folder_name : "",
-        folder_type: BILLING_FOLDER_KIND,
+        folder_type: kind,
         billCount: toCount(row.bill_count),
         created_at: typeof row.created_at === "string" ? row.created_at : "",
         updated_at: typeof row.updated_at === "string" ? row.updated_at : "",
@@ -118,7 +128,7 @@ export async function fetchBillingFolders(): Promise<BillingFolder[]> {
   const { data: folderRows, error: folderError } = await supabase
     .from(FOLDERS)
     .select("id, name, created_at, updated_at")
-    .eq("folder_type", BILLING_FOLDER_KIND)
+    .eq("folder_type", kind)
     .order("created_at", { ascending: false });
 
   if (folderError) throw new Error(folderError.message);
@@ -147,7 +157,7 @@ export async function fetchBillingFolders(): Promise<BillingFolder[]> {
 
   return ((folderRows ?? []) as AdminFolder[]).map((f) => ({
     ...f,
-    folder_type: BILLING_FOLDER_KIND,
+    folder_type: kind,
     billCount: counts.get(f.id) ?? 0,
   }));
 }
@@ -182,7 +192,7 @@ async function assertBillingFolder(folderId: string): Promise<{ ok: true } | { o
   if (!data) return { ok: false, error: "That billing folder no longer exists." };
 
   const kind = (data as { folder_type?: unknown }).folder_type;
-  if (kind !== BILLING_FOLDER_KIND) {
+  if (kind !== BILLING_FOLDER_KIND && kind !== CHALLAN_BILLING_FOLDER_KIND) {
     return {
       ok: false,
       error: "That is not a billing folder. Create the folder from the Billing section.",
@@ -199,14 +209,15 @@ async function assertBillingFolder(folderId: string): Promise<{ ok: true } | { o
  * folder to create.
  */
 export async function createBillingFolder(
-  name: string
+  name: string,
+  documentType: BillDocumentType = "tax_invoice"
 ): Promise<{ ok: boolean; data?: BillingFolder; error?: string }> {
   const trimmed = name.trim();
   if (!trimmed) return { ok: false, error: "Give the folder a name." };
 
   const { data, error } = await supabase
     .from(FOLDERS)
-    .insert({ name: trimmed, folder_type: BILLING_FOLDER_KIND })
+    .insert({ name: trimmed, folder_type: folderKindFor(documentType) })
     .select()
     .single();
 

@@ -63,7 +63,8 @@ export default function App() {
                   <Route path="/stock-company" element={<CompanyStockPage />} />
 
                   {/* Phase 4 — Documents */}
-                  <Route path="/bills" element={<BillsPage />} />
+                  <Route path="/bills" element={<BillsPage key="tax_invoice" documentType="tax_invoice" />} />
+                  <Route path="/challan-bills" element={<BillsPage key="delivery_challan" documentType="delivery_challan" />} />
                    <Route path="/company-bills" element={<CompanyBillsPage />} />
                   {/* Creating a bill. Declared BEFORE the logos route because both are
                       nested under /bills, and an entry screen with no query string is the

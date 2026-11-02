@@ -89,7 +89,8 @@ const navSections: NavSection[] = [
   {
     title: "Documents",
     items: [
-      { label: "Bills", icon: <Receipt size={18} />, path: "/bills" },
+      { label: "Tax Bills", icon: <Receipt size={18} />, path: "/bills" },
+      { label: "Challan Bills", icon: <Receipt size={18} />, path: "/challan-bills" },
       { label: "Company Bills", icon: <FolderArchive size={18} />, path: "/company-bills" },
       // How a bill gets made, next to the list of bills that exist. Both entry modes —
       // blank, and blank with the Invoice Business Profile preloaded — and the copy flow

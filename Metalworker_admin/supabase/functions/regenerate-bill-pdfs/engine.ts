@@ -50,6 +50,7 @@ import {
   type CopyKind,
 } from "../process-bill-upload/_shared/parseBill.ts";
 import { profileForBill, type BusinessProfile } from "../process-bill-upload/_shared/businessProfile.ts";
+import type { DocumentType } from "../process-bill-upload/_shared/parseBill.ts";
 import { decideWorkbookSnapshot } from "../process-bill-upload/_shared/snapshotConsistency.ts";
 import {
   PdfPageStreamWriter,
@@ -166,6 +167,8 @@ export interface UploadRow {
   original_filename: string | null;
   base_name: string | null;
   creation_source: string;
+  /** `bill_uploads.document_type` (0025). Absent before it, when everything was a Tax Invoice. */
+  document_type?: string | null;
   original_pdf_path: string | null;
   duplicate_pdf_path: string | null;
   triplicate_pdf_path: string | null;
@@ -174,6 +177,7 @@ export interface UploadRow {
 /** The `bill_uploads` columns the workbook selector shows. */
 export interface WorkbookUploadRow {
   id: string;
+  document_type?: string | null;
   original_filename: string | null;
   base_name: string | null;
   status: string;
@@ -294,6 +298,8 @@ interface BillProgress {
 
 interface WorkbookState {
   upload_id: string;
+  /** Which renderer and which footer this workbook's aggregate uses. */
+  document_type?: DocumentType;
   name: string;
   base_name: string;
   stamp: number;
@@ -360,6 +366,8 @@ export interface Counters {
  * including one that reconnects later, shows the job's own scope.
  */
 export interface JobScope {
+  /** Tax Bills or Challan Bills. Every selected workbook is of this type. */
+  document_type?: DocumentType;
   workbook_names: string[];
   /** True when the selection was every eligible workbook at start time. */
   all_workbooks: boolean;
@@ -617,6 +625,13 @@ export async function abandonUnit(ctx: Ctx, state: JobState, crashed: boolean): 
 async function prepareWorkbook(ctx: Ctx, state: JobState): Promise<void> {
   const uploadId = state.workbooks[state.wb_index];
   const upload = await ctx.deps.store.loadUpload(uploadId);
+  if (upload && upload.creation_source === "workbook" && uploadType(upload) !== scopeType(state)) {
+    finishWorkbook(
+      state,
+      skippedWorkbook(uploadId, scopedName(state, state.wb_index), "wrong_document_type", "This workbook is not of the document type this job regenerates, so it was left unchanged.")
+    );
+    return;
+  }
   if (!upload || upload.creation_source !== "workbook") {
     finishWorkbook(state, skippedWorkbook(uploadId, scopedName(state, state.wb_index), "workbook_missing", "This workbook was deleted after regeneration started."));
     return;
@@ -662,6 +677,7 @@ async function prepareWorkbook(ctx: Ctx, state: JobState): Promise<void> {
     upload_id: uploadId,
     name,
     base_name: upload.base_name?.trim() || "workbook",
+    document_type: uploadType(upload),
     stamp: ctx.deps.now ? ctx.deps.now() : Date.now(),
     bill_ids: refs.map((r) => r.id),
     bill_index: 0,
@@ -1023,7 +1039,7 @@ async function assembleUnit(ctx: Ctx, state: JobState): Promise<void> {
     }
     if (bad.length > 0) continue; // still verify the rest, but the output is void
     contents.forEach((content, p) => {
-      writer.addPage([content, billFooterContent(label, ref.owners[p], page + p, totalPages)]);
+      writer.addPage([content, billFooterContent(label, ref.owners[p], page + p, totalPages, wb.document_type ?? "tax_invoice")]);
     });
     page += contents.length;
     if (writer.byteLength > ctx.maxBytes) throw tooLarge(wb, ctx.maxBytes);
@@ -1241,6 +1257,15 @@ function recordStandaloneOutcome(state: JobState, billId: string, invoiceNo: str
   state.standalone_after = billId;
 }
 
+function uploadType(upload: { document_type?: string | null }): DocumentType {
+  return upload.document_type === "delivery_challan" ? "delivery_challan" : "tax_invoice";
+}
+
+/** The job's document type; states from before document types were Tax Bills jobs. */
+function scopeType(state: JobState): DocumentType {
+  return state.scope?.document_type ?? "tax_invoice";
+}
+
 /** Older states had no scope and always went on to standalone bills. */
 function includesStandalone(state: JobState): boolean {
   return state.scope ? state.scope.include_standalone : true;
@@ -1324,9 +1349,15 @@ export interface WorkbookListResult {
   standalone_count: number;
 }
 
-export async function listWorkbooks(deps: RegenerationDeps): Promise<WorkbookListResult> {
-  const rows = await deps.store.listWorkbookUploads();
-  const standalone = await deps.store.countStandaloneBills(new Date(nowOf(deps)).toISOString());
+/**
+ * The selector's list for one section. A Challan Bills selector never sees a Tax
+ * Bills workbook, and the standalone (Bill Creator) bills, which are all Tax
+ * Invoices, are offered only to Tax Bills.
+ */
+export async function listWorkbooks(deps: RegenerationDeps, documentType: DocumentType = "tax_invoice"): Promise<WorkbookListResult> {
+  const rows = (await deps.store.listWorkbookUploads()).filter((r) => uploadType(r) === documentType);
+  const standalone =
+    documentType === "tax_invoice" ? await deps.store.countStandaloneBills(new Date(nowOf(deps)).toISOString()) : 0;
   return { ok: true, workbooks: rows.map(workbookOption), standalone_count: standalone };
 }
 
@@ -1341,7 +1372,17 @@ export async function listWorkbooks(deps: RegenerationDeps): Promise<WorkbookLis
 export function validateScope(raw: unknown, rows: WorkbookUploadRow[]): { ids: string[]; scope: JobScope } {
   const invalid = (message: string) => new PermanentError("invalid_scope", message);
   if (!raw || typeof raw !== "object") throw invalid("Choose which workbooks to regenerate.");
-  const { upload_ids: ids, include_standalone: standalone } = raw as { upload_ids?: unknown; include_standalone?: unknown };
+  const { upload_ids: ids, include_standalone: standalone, document_type: rawType } = raw as {
+    upload_ids?: unknown;
+    include_standalone?: unknown;
+    document_type?: unknown;
+  };
+  // Requests from before document types existed came only from the (Tax) Bills
+  // section, so an absent type means Tax Bills; anything else must be exact.
+  if (rawType !== undefined && rawType !== "tax_invoice" && rawType !== "delivery_challan") {
+    throw invalid("Unknown document type for regeneration.");
+  }
+  const documentType: DocumentType = rawType === "delivery_challan" ? "delivery_challan" : "tax_invoice";
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || id.trim() === "")) {
     throw invalid("The workbook selection must be a list of workbook ids.");
   }
@@ -1349,6 +1390,9 @@ export function validateScope(raw: unknown, rows: WorkbookUploadRow[]): { ids: s
   if (ids.length > MAX_SELECTED_WORKBOOKS) throw invalid(`At most ${MAX_SELECTED_WORKBOOKS} workbooks can be selected at once.`);
   if (new Set(ids).size !== ids.length) throw invalid("The same workbook was selected more than once.");
   if (ids.length === 0 && !standalone) throw invalid("Select at least one workbook (or standalone bills) to regenerate.");
+  if (standalone && documentType !== "tax_invoice") {
+    throw invalid("Standalone Bill Creator bills are Tax Invoices; they can only be regenerated from Tax Bills.");
+  }
 
   const byId = new Map(rows.map((r) => [r.id, workbookOption(r)]));
   const unknown = (ids as string[]).filter((id) => !byId.has(id));
@@ -1359,17 +1403,31 @@ export function validateScope(raw: unknown, rows: WorkbookUploadRow[]): { ids: s
         : `${unknown.length} selected workbooks do not exist or are not Excel workbook uploads.`
     );
   }
+  const typeOf = new Map(rows.map((r) => [r.id, uploadType(r)]));
+  const foreign = (ids as string[]).filter((id) => typeOf.get(id) !== documentType);
+  if (foreign.length > 0) {
+    const other = documentType === "tax_invoice" ? "Challan Bills" : "Tax Bills";
+    throw invalid(
+      `${foreign.length === 1 ? "1 selected workbook belongs" : `${foreign.length} selected workbooks belong`} to ${other}, not ${
+        documentType === "tax_invoice" ? "Tax Bills" : "Challan Bills"
+      }. Regenerate ${foreign.length === 1 ? "it" : "them"} from the ${other} section.`
+    );
+  }
   const ineligible = (ids as string[]).map((id) => byId.get(id) as WorkbookOption).filter((o) => !o.eligible);
   if (ineligible.length > 0) {
     throw invalid(`Not eligible for regeneration: ${ineligible.map((o) => `${o.name} (${o.ineligible_reason})`).join("; ")}`);
   }
 
   const selected = new Set(ids as string[]);
-  const eligible = rows.map((r) => byId.get(r.id) as WorkbookOption).filter((o) => o.eligible);
+  const eligible = rows
+    .filter((r) => uploadType(r) === documentType)
+    .map((r) => byId.get(r.id) as WorkbookOption)
+    .filter((o) => o.eligible);
   const ordered = eligible.filter((o) => selected.has(o.upload_id));
   return {
     ids: ordered.map((o) => o.upload_id),
     scope: {
+      document_type: documentType,
       workbook_names: ordered.map((o) => o.name),
       all_workbooks: eligible.length > 0 && ordered.length === eligible.length,
       eligible_total: eligible.length,
@@ -1628,6 +1686,7 @@ export interface RegenerationView {
   lease_active: boolean;
   /** The job's own, frozen selection. */
   scope: {
+    document_type: DocumentType;
     workbooks_selected: number;
     all_workbooks: boolean;
     eligible_total: number;
@@ -1750,6 +1809,7 @@ export function describeJob(row: JobRow, now: number): RegenerationView {
     outcome: state.outcome ?? (row.status === "abandoned" ? "cancelled" : row.status === "completed" ? outcomeOf(state) : null),
     stage: state.stage,
     scope: {
+      document_type: scopeType(state),
       workbooks_selected: state.workbooks.length,
       all_workbooks: state.scope?.all_workbooks ?? true,
       eligible_total: state.scope?.eligible_total ?? state.workbooks.length,

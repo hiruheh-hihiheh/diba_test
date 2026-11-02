@@ -44,6 +44,8 @@ import {
   previewTotals,
   updateBill,
 } from "../../services/bills";
+import { useBillDocumentType } from "../../contexts/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import {
   BILL_BANK_PARTS,
   type Bill,
@@ -70,6 +72,8 @@ interface DraftLine {
   uom: string;
   quantity: string;
   rate: string;
+  /** Delivery Challan only. */
+  remarks: string;
 }
 
 /** The whole form, as text. Nothing here is a number yet. */
@@ -177,6 +181,7 @@ function toDraft(bill: Bill, items: BillLineItem[]): Draft {
             uom: s(item.uom),
             quantity: n(item.quantity),
             rate: n(item.rate),
+            remarks: s(item.remarks),
           }))
         : [
             {
@@ -187,6 +192,7 @@ function toDraft(bill: Bill, items: BillLineItem[]): Draft {
               uom: "",
               quantity: "",
               rate: "",
+              remarks: "",
             },
           ],
   };
@@ -199,7 +205,7 @@ function toDraft(bill: Bill, items: BillLineItem[]): Draft {
  * bank part is what the invoice already prints, and keeping it in a module-level
  * variable would mean two open editors shared one another's labels.
  */
-function toPatch(d: Draft, bankLabels: Record<string, string>): BillPatch {
+function toPatch(d: Draft, bankLabels: Record<string, string>, documentType: BillDocumentType = "tax_invoice"): BillPatch {
   return {
     job_kind: d.jobKind || null,
     invoice_no: d.invoiceNo || null,
@@ -264,7 +270,9 @@ function toPatch(d: Draft, bankLabels: Record<string, string>): BillPatch {
         hsn_code: l.hsnCode.trim() || null,
         uom: l.uom.trim() || null,
         quantity: parseNumberInput(l.quantity),
-        rate: parseNumberInput(l.rate),
+        // A challan line has no rate (the server stores none) but has remarks.
+        rate: documentType === "delivery_challan" ? null : parseNumberInput(l.rate),
+        ...(documentType === "delivery_challan" ? { remarks: l.remarks.trim() || null } : {}),
       })),
   };
 }
@@ -302,6 +310,8 @@ export default function BillEditModal({
    */
   onChanged?: () => void;
 }) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -324,14 +334,14 @@ export default function BillEditModal({
    * what to render: the effect owns the "am I loading / did it fail" transitions.
    */
   const fetchDraft = useCallback(async (): Promise<Draft> => {
-    const [row, items] = await Promise.all([fetchBill(billId), fetchBillLineItems(billId)]);
+    const [row, items] = await Promise.all([fetchBill(billId, documentType), fetchBillLineItems(billId)]);
     setBill(row);
     const parts = bankPartsOf(row.bank_details);
     setBankLabels(
       Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, v.label ?? defaultBankLabel(k)]))
     );
     return toDraft(row, items);
-  }, [billId]);
+  }, [billId, documentType]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -399,6 +409,7 @@ export default function BillEditModal({
                 uom: "",
                 quantity: "",
                 rate: "",
+                remarks: "",
               },
             ],
           }
@@ -471,7 +482,7 @@ export default function BillEditModal({
     setStage("saving");
     setSaveError(null);
     try {
-      const result = await updateBill(billId, toPatch(draft, bankLabels), (next) => setStage(next));
+      const result = await updateBill(billId, toPatch(draft, bankLabels, documentType), (next) => setStage(next), documentType);
       toast.success({
         title: "Bill saved",
         description: `Invoice ${result.amount_after_tax !== null ? "" : ""}${
@@ -588,7 +599,7 @@ export default function BillEditModal({
             <Field label="Job type" hint="Printed on the invoice as the classification badge.">
               <TextInput value={draft.jobKind} onChange={(v) => set("jobKind", v)} placeholder="LABOUR JOB" />
             </Field>
-            <Field label="Invoice number" hint="Required. Also names the downloaded PDF.">
+            <Field label={`${documentType === "delivery_challan" ? "Challan" : "Invoice"} number`} hint="Required. Also names the downloaded PDF.">
               <TextInput value={draft.invoiceNo} onChange={(v) => set("invoiceNo", v)} placeholder="INV-001/2026-27" />
             </Field>
             <Field label="Invoice date">
@@ -690,7 +701,9 @@ export default function BillEditModal({
               <div>
                 <h3 className="text-sm font-bold text-text">Line items</h3>
                 <p className="text-xs text-text-muted mt-0.5 leading-snug">
-                  Each amount is quantity × rate. Rows with no description are left out.
+                  {info.hasMoney
+                    ? "Each amount is quantity × rate. Rows with no description are left out."
+                    : "A challan lists quantities and remarks, never prices. Rows with no description are left out."}
                 </p>
               </div>
               <button
@@ -712,8 +725,14 @@ export default function BillEditModal({
                     <th className="text-left font-bold px-3 py-2 w-28">HSN code</th>
                     <th className="text-left font-bold px-3 py-2 w-20">UOM</th>
                     <th className="text-right font-bold px-3 py-2 w-28">Quantity</th>
-                    <th className="text-right font-bold px-3 py-2 w-32">Rate</th>
-                    <th className="text-right font-bold px-3 py-2 w-32">Amount</th>
+                    {info.hasMoney ? (
+                      <>
+                        <th className="text-right font-bold px-3 py-2 w-32">Rate</th>
+                        <th className="text-right font-bold px-3 py-2 w-32">Amount</th>
+                      </>
+                    ) : (
+                      <th className="text-left font-bold px-3 py-2 w-48">Remarks</th>
+                    )}
                     <th className="px-3 py-2 w-28" />
                   </tr>
                 </thead>
@@ -754,17 +773,25 @@ export default function BillEditModal({
                             align="right"
                           />
                         </td>
-                        <td className="px-3 py-2">
-                          <NumberInput
-                            value={line.rate}
-                            onChange={(v) => setLine(line.key, "rate", v)}
-                            disabled={saving}
-                            align="right"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs text-text-secondary tabular-nums pt-4">
-                          {amount === null ? "—" : formatMoney(Math.round(amount * 100) / 100)}
-                        </td>
+                        {info.hasMoney ? (
+                          <>
+                            <td className="px-3 py-2">
+                              <NumberInput
+                                value={line.rate}
+                                onChange={(v) => setLine(line.key, "rate", v)}
+                                disabled={saving}
+                                align="right"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right text-xs text-text-secondary tabular-nums pt-4">
+                              {amount === null ? "—" : formatMoney(Math.round(amount * 100) / 100)}
+                            </td>
+                          </>
+                        ) : (
+                          <td className="px-3 py-2">
+                            <TextInput value={line.remarks} onChange={(v) => setLine(line.key, "remarks", v)} disabled={saving} />
+                          </td>
+                        )}
                         <td className="px-3 py-2 pt-3">
                           <div className="flex items-center justify-end gap-1">
                             <LineButton
@@ -794,7 +821,7 @@ export default function BillEditModal({
                   {draft.lines.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-4 py-6 text-center text-sm text-text-muted">
-                        No line items. Use “Add line” to put one on the invoice.
+                        No line items. Use “Add line” to put one on the {info.word}.
                       </td>
                     </tr>
                   )}
@@ -803,7 +830,9 @@ export default function BillEditModal({
             </div>
           </section>
 
-          {/* ── Tax and totals ── */}
+          {/* ── Tax and totals, bank, terms: Tax Invoices only ── */}
+          {info.hasMoney && (
+          <>
           <SectionCard
             title="Tax & totals"
             description="Rates are what the business charges and may be corrected. Every amount below them is arithmetic and is recomputed when you save."
@@ -907,9 +936,11 @@ export default function BillEditModal({
           >
             <TextArea value={draft.terms} onChange={(v) => set("terms", v)} rows={5} disabled={saving} />
           </SectionCard>
+          </>
+          )}
 
           <SectionCard title="Footer & certification" cols={2}>
-            <Field label="Certification">
+            <Field label={info.hasMoney ? "Certification" : "Receipt line"}>
               <TextArea
                 value={draft.certification}
                 onChange={(v) => set("certification", v)}

@@ -35,6 +35,10 @@ export interface BillUpload {
   invoice_count: number;
   created_by: string | null;
   created_at: string;
+  /** Tax Invoice or Delivery Challan (migration 0025). Absent on a pre-0025 row: Tax Invoice. */
+  document_type?: "tax_invoice" | "delivery_challan";
+  /** Shared by the uploads one mixed workbook was split into; null otherwise. */
+  source_group_id?: string | null;
 }
 
 /**
@@ -70,6 +74,11 @@ export interface Bill extends BillColumns {
 /** Columns that live on `bills` itself. */
 export interface BillColumns {
   id: string;
+  /**
+   * Tax Invoice or Delivery Challan (migration 0025). For a challan `invoice_no` /
+   * `invoice_date` hold the CHALLAN number and date, and every money column is null.
+   */
+  document_type?: "tax_invoice" | "delivery_challan";
   invoice_no: string | null;
   invoice_date: string | null;
 
@@ -268,6 +277,8 @@ export interface BillLineItemPatch {
   uom?: string | null;
   quantity?: number | null;
   rate?: number | null;
+  /** Delivery Challan only. */
+  remarks?: string | null;
 }
 
 /** What a successful save returns: the new document version and its three paths. */
@@ -289,6 +300,8 @@ export interface BillLineItem {
   quantity: number | null;
   rate: number | null;
   amount: number | null;
+  /** The REMARKS column of a Delivery Challan; null on an invoice line. */
+  remarks?: string | null;
 }
 
 /** Stages the upload walks through, in the order the server performs them. */
@@ -369,6 +382,17 @@ export interface BillUploadResult {
     path: string;
     filename: string;
     scope: "workbook";
+  }[];
+  /** True when the workbook held both document types and was split in two. */
+  mixed?: boolean;
+  /** Every logical upload created: one, or one per document type for a mixed workbook. */
+  uploads?: {
+    upload_id: string;
+    document_type: "tax_invoice" | "delivery_challan";
+    section: string;
+    base_name: string;
+    invoice_count: number;
+    sheets: string[];
   }[];
 }
 

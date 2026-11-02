@@ -38,7 +38,7 @@
 //                   every intra-state invoice, so a rate derived from the amount
 //                   would vanish exactly when 18% is most worth showing
 
-import type { BillCopy, BillLineItem, CopyKind, ReferenceRow } from "./parseBill.ts";
+import type { BillCopy, BillLineItem, CopyKind, DocumentType, ReferenceRow } from "./parseBill.ts";
 
 /* ──────────────────────────────────────────────
    The stored shape
@@ -58,6 +58,8 @@ export interface BillRecord {
   sheet_name: string;
   /** Which copy's document is being produced. The three copies differ ONLY here. */
   copy: CopyKind;
+  /** `bills.document_type` (migration 0025). Absent on older rows, which are all Tax Invoices. */
+  document_type?: DocumentType | string | null;
 
   job_kind: string | null;
 
@@ -357,6 +359,7 @@ export function amountInWords(value: number | null | undefined): string | null {
  * same bill printed from the workbook.
  */
 export function referenceRowsFromFields(record: BillRecord): ReferenceRow[] {
+  if (documentTypeOf(record) === "delivery_challan") return challanReferenceRows(record);
   const date = (value: string | null): string | null => {
     // A `date` column arrives as YYYY-MM-DD; anything else is kept verbatim so an
     // unparseable value is visible on the invoice rather than silently dropped.
@@ -375,6 +378,26 @@ export function referenceRowsFromFields(record: BillRecord): ReferenceRow[] {
     { label: "Your Challan No.", value: text(record.your_challan_no), date: date(record.your_challan_date), hasDateCell: true },
     { label: orderLabel, value: text(record.order_no), date: date(record.order_date), hasDateCell: true },
     { label: "Eway Bill No.", value: text(record.eway_bill_no), date: date(record.eway_bill_date), hasDateCell: true },
+  ];
+}
+
+/** A stored bill's document type; anything but an explicit challan is a Tax Invoice. */
+export function documentTypeOf(record: { document_type?: unknown }): DocumentType {
+  return record.document_type === "delivery_challan" ? "delivery_challan" : "tax_invoice";
+}
+
+/**
+ * A Delivery Challan's reference rows: its own number, the customer's challan and
+ * the order. It has no Our Challan, E-way Bill or Place of Supply rows, so none
+ * are invented on a re-print.
+ */
+function challanReferenceRows(record: BillRecord): ReferenceRow[] {
+  const date = (value: string | null): string | null => (value && value.trim() !== "" ? value.trim() : null);
+  const orderLabel = (record.order_no_label ?? "Order No.").replace(/[:.\s]+$/, "").trim();
+  return [
+    { label: "Challan No.", value: text(record.invoice_no), date: date(record.invoice_date), hasDateCell: true },
+    { label: "Your Challan No.", value: text(record.your_challan_no), date: date(record.your_challan_date), hasDateCell: true },
+    { label: orderLabel, value: text(record.order_no), date: date(record.order_date), hasDateCell: true },
   ];
 }
 
@@ -531,6 +554,7 @@ export function toBillRecord(
   const o = parsed.original;
   return {
     bill_upload_id: uploadId,
+    document_type: o.documentType ?? "tax_invoice",
     sheet_name: parsed.sheetName,
     invoice_no: o.invoiceNo,
     invoice_date: o.invoiceDate,
@@ -668,6 +692,7 @@ export function billFromRecord(
   return {
     kind: record.copy,
     label: copyLabel,
+    documentType: documentTypeOf(record),
     // Diagnostics only; there is no source row once the bill lives in the database.
     firstRow: 0,
     lastRow: 0,
@@ -710,6 +735,7 @@ export function billFromRecord(
       quantity: item.quantity,
       rate: item.rate,
       amount: item.amount,
+      ...(item.remarks !== undefined ? { remarks: item.remarks } : {}),
     })),
     totalQuantity,
     amountBeforeTax,

@@ -40,7 +40,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { renderBillDocument } from "../process-bill-upload/_shared/renderBill.ts";
-import { billFromRecord, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
+import { billFromRecord, documentTypeOf, type BillRecord } from "../process-bill-upload/_shared/billDocument.ts";
 import { safeBillToken, COPY_LABEL, COPY_ORDER, type BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import { computeBillValues, EditError, type BillPatch } from "../process-bill-upload/_shared/billEdit.ts";
 import { loadInvoiceLogoImage } from "../process-bill-upload/_shared/invoiceLogo.ts";
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "Only an active administrator can edit a bill." }, 403);
   }
 
-  let body: { bill_id?: unknown; patch?: unknown };
+  let body: { bill_id?: unknown; patch?: unknown; document_type?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -118,6 +118,14 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "No changes were supplied." }, 400);
   }
   const patch = body.patch as BillPatch;
+  /* Which section the edit comes from. A Tax Bills screen must never be able to
+     change a Delivery Challan (or the reverse), so when the client says which
+     section it is, the bill's own type has to match. Older clients send nothing
+     and only ever edited Tax Invoices. */
+  const section = body.document_type === undefined ? null : body.document_type;
+  if (section !== null && section !== "tax_invoice" && section !== "delivery_challan") {
+    return json({ ok: false, error: "Unknown document type." }, 400);
+  }
 
   /* ---- read the bill as it is now -----------------------------------------
      Needed both to merge the patch onto and, later, to restore if the documents
@@ -132,10 +140,24 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "That bill could not be read." }, 500);
   }
   if (!existing) return json({ ok: false, error: "That bill no longer exists." }, 404);
+  const billType = documentTypeOf(existing as BillRecord);
+  if ((section ?? "tax_invoice") !== billType) {
+    return json(
+      {
+        ok: false,
+        reason: "wrong_document_type",
+        error:
+          billType === "delivery_challan"
+            ? "That bill is a Delivery Challan. Edit it from the Challan Bills section."
+            : "That bill is a Tax Invoice. Edit it from the Tax Bills section.",
+      },
+      409
+    );
+  }
 
   const { data: existingLines, error: linesError } = await admin
     .from(LINE_ITEMS)
-    .select("sr_no, description, hsn_code, uom, quantity, rate, amount")
+    .select("sr_no, description, hsn_code, uom, quantity, rate, amount, remarks")
     .eq("bill_id", billId)
     .order("sr_no", { ascending: true });
   if (linesError) {
@@ -153,6 +175,7 @@ Deno.serve(async (req) => {
       quantity: r.quantity === null ? null : Number(r.quantity),
       rate: r.rate === null ? null : Number(r.rate),
       amount: r.amount === null ? null : Number(r.amount),
+      ...(billType === "delivery_challan" ? { remarks: (r.remarks as string | null) ?? null } : {}),
     };
   });
 
@@ -206,6 +229,7 @@ Deno.serve(async (req) => {
           quantity: item.quantity,
           rate: item.rate,
           amount: item.amount,
+          ...(billType === "delivery_challan" ? { remarks: item.remarks ?? null } : {}),
         }))
       );
       if (insError) {
@@ -487,6 +511,7 @@ async function restore(
         quantity: item.quantity,
         rate: item.rate,
         amount: item.amount,
+        ...(item.remarks !== undefined ? { remarks: item.remarks } : {}),
       }))
     );
     if (lineError) console.error("update-bill: RESTORE line items FAILED:", lineError.message);

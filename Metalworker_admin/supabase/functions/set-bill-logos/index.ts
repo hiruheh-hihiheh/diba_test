@@ -409,7 +409,7 @@ Deno.serve(async (req) => {
       admin.from("bills").select("*").in("id", ids),
       admin
         .from("bill_line_items")
-        .select("bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount")
+        .select("bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount, remarks")
         .in("bill_id", ids)
         .order("sr_no", { ascending: true }),
     ]);
@@ -437,6 +437,7 @@ Deno.serve(async (req) => {
         quantity: raw.quantity === null ? null : Number(raw.quantity),
         rate: raw.rate === null ? null : Number(raw.rate),
         amount: raw.amount === null ? null : Number(raw.amount),
+        remarks: (raw.remarks as string | null) ?? null,
       });
       itemsByBill.set(raw.bill_id as string, list);
     }

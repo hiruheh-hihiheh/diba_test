@@ -30,6 +30,12 @@ import {
   type BillUploadStage,
 } from "../../types/bill";
 import { useToast } from "../../hooks/useToast";
+import { useBillDocumentType } from "../../contexts/BillDocumentTypeContext";
+import {
+  DOCUMENT_TYPE_INFO,
+  describeMixedPreview,
+  type MixedWorkbookPreview,
+} from "../../services/billDocumentTypes";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -64,6 +70,10 @@ export function BillUploadPanel({
   const [stage, setStage] = useState<BillUploadStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BillUploadResult | null>(null);
+  /** Set when the workbook holds both document types and needs a confirmation. */
+  const [mixed, setMixed] = useState<{ message: string; preview: MixedWorkbookPreview } | null>(null);
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
 
   const fileName = file?.name ?? null;
   const fileSize = file?.size ?? null;
@@ -76,6 +86,7 @@ export function BillUploadPanel({
     setStage(null);
     setError(null);
     setResult(null);
+    setMixed(null);
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -83,6 +94,7 @@ export function BillUploadPanel({
     if (!picked) return;
     setError(null);
     setResult(null);
+    setMixed(null);
 
     /* Retained even when validation rejects it, so the "chosen file" card can
        name the file the user actually picked — that is the whole point of the
@@ -111,7 +123,7 @@ export function BillUploadPanel({
     }
   }, []);
 
-  async function start() {
+  async function start(confirmMixed = false) {
     if (busy) return;
     /* Explicit failure, never a silent no-op: a missing file is a bug in the
        flow or a stale click, and the user must be told which it was. */
@@ -121,16 +133,29 @@ export function BillUploadPanel({
       return;
     }
     setError(null);
+    setMixed(null);
     setStage("reading");
     try {
-      const res = await uploadBillWorkbook(file, { onStage: setStage });
+      const res = await uploadBillWorkbook(file, { onStage: setStage, documentType, confirmMixed });
       setResult(res);
       onUploaded();
+      const groups = res.uploads ?? [];
       toast.success({
-        title: `${res.invoice_count} ${res.invoice_count === 1 ? "bill" : "bills"} added`,
-        description: `${res.base_name}_original.pdf, ${res.base_name}_duplicate.pdf and ${res.base_name}_triplicate.pdf are ready.`,
+        title: res.mixed
+          ? `Workbook split: ${groups.map((g) => `${g.invoice_count} in ${g.section}`).join(", ")}`
+          : `${res.invoice_count} ${res.invoice_count === 1 ? "bill" : "bills"} added to ${info.section}`,
+        description: res.mixed
+          ? "Each document type has its own upload, bills and combined PDFs."
+          : `${res.base_name}_original.pdf, ${res.base_name}_duplicate.pdf and ${res.base_name}_triplicate.pdf are ready.`,
       });
     } catch (err) {
+      // A workbook holding both document types is not an error: nothing has been
+      // imported yet, and the admin is asked to confirm the split.
+      if (err instanceof BillUploadError && err.reason === "mixed_workbook" && err.preview) {
+        setStage(null);
+        setMixed({ message: err.message, preview: err.preview });
+        return;
+      }
       setStage("failed");
       setError(
         err instanceof BillUploadError || err instanceof Error
@@ -267,19 +292,48 @@ export function BillUploadPanel({
             </div>
           )}
 
+          {mixed && (
+            <div className="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning-muted px-4 py-3" role="status">
+              <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-text">This workbook holds both document types</p>
+                <p className="text-sm text-text-secondary mt-0.5">{describeMixedPreview(mixed.preview)}</p>
+                <ul className="text-xs text-text-muted mt-1 space-y-0.5">
+                  {mixed.preview.groups.map((g) => (
+                    <li key={g.document_type} className="break-words">
+                      {g.section}: sheets {g.sheets.join(", ")}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-text-secondary mt-1.5">
+                  Nothing has been imported yet. Confirm to import each type into its own section, with its own bills and
+                  combined PDFs.
+                </p>
+              </div>
+            </div>
+          )}
+
           {result && (
             <div className="flex items-start gap-3 rounded-xl border border-success/25 bg-success-muted px-4 py-3">
               <CheckCircle2 size={16} className="text-success shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-bold text-text">
-                  {result.invoice_count} {result.invoice_count === 1 ? "bill" : "bills"} created
+                  {result.mixed
+                    ? "Workbook split into both sections"
+                    : `${result.invoice_count} ${result.invoice_count === 1 ? "bill" : "bills"} created`}
                 </p>
                 <ul className="text-sm text-text-secondary mt-1 space-y-0.5">
-                  {result.bills.map((b) => (
-                    <li key={b.id} className="truncate">
-                      Sheet “{b.sheet_name}”
-                    </li>
-                  ))}
+                  {result.mixed
+                    ? (result.uploads ?? []).map((g) => (
+                        <li key={g.upload_id}>
+                          {g.section}: {g.invoice_count} {g.invoice_count === 1 ? "bill" : "bills"}
+                        </li>
+                      ))
+                    : result.bills.map((b) => (
+                        <li key={b.id} className="truncate">
+                          Sheet “{b.sheet_name}”
+                        </li>
+                      ))}
                 </ul>
               </div>
             </div>
@@ -296,10 +350,16 @@ export function BillUploadPanel({
         >
           {result ? "Done" : "Close"}
         </button>
-        {fileName && !result && (
+        {fileName && !result && mixed && (
+          <button type="button" onClick={() => void start(true)} disabled={busy} className="btn btn-primary">
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
+            {busy ? "Processing…" : "Import into both sections"}
+          </button>
+        )}
+        {fileName && !result && !mixed && (
           <button
             type="button"
-            onClick={start}
+            onClick={() => void start()}
             disabled={busy || stage === "failed" || !/\.xlsx$/i.test(fileName)}
             className="btn btn-primary"
           >

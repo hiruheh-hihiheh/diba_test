@@ -54,7 +54,7 @@ export function norm(s: string): string {
 }
 
 /** Excel date serial -> "YYYY-MM-DD". Excel's day 0 is 1899-12-30. */
-function serialToDate(serial: number): string {
+export function serialToDate(serial: number): string {
   const ms = Math.round((serial - 25569) * 86400 * 1000);
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return "";
@@ -73,7 +73,21 @@ export interface BillLineItem {
   quantity: number | null;
   rate: number | null;
   amount: number | null;
+  /**
+   * The REMARKS column of a Delivery Challan's item table. A Tax Invoice has no
+   * such column, so it is absent (undefined) on every invoice line.
+   */
+  remarks?: string | null;
 }
+
+/**
+ * Which kind of document a worksheet is. Decided from the document's own printed
+ * title ("TAX INVOICE" / "DELIVERY CHALLAN"), never from the file or sheet name;
+ * see `documentType.ts`. Independent of the job kind (LABOUR JOB / WITH METAL),
+ * which both document types carry.
+ */
+export type DocumentType = "tax_invoice" | "delivery_challan";
+export const DOCUMENT_TYPES: readonly DocumentType[] = ["tax_invoice", "delivery_challan"];
 
 export type CopyKind = "original" | "duplicate" | "triplicate";
 
@@ -149,6 +163,11 @@ export interface ReferenceRow {
 export interface BillCopy {
   kind: CopyKind;
   label: string;
+  /**
+   * Tax Invoice or Delivery Challan. Optional only so that models built before
+   * the challan type existed keep compiling; absent means "tax_invoice".
+   */
+  documentType?: DocumentType;
   /** 1-based row span, kept for diagnostics only. */
   firstRow: number;
   lastRow: number;
@@ -362,13 +381,13 @@ export function findCopyBlocks(sheet: Sheet): Block[] {
    In-block navigation
    ────────────────────────────────────────────── */
 
-interface Hit {
+export interface Hit {
   row: number;
   col: number;
   text: string;
 }
 
-class CopyReader {
+export class CopyReader {
   readonly sheet: Sheet;
   readonly start: number;
   readonly end: number;
@@ -1043,6 +1062,7 @@ function parseCopy(sheet: Sheet, block: Block, sheetName: string): BillCopy {
   return {
     kind: block.kind,
     label: block.label,
+    documentType: "tax_invoice",
     firstRow: first + 1,
     lastRow: last + 1,
 

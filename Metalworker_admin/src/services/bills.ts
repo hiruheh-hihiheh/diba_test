@@ -23,6 +23,12 @@ import { Platform } from "react-native";
 // Also needed INSIDE this module: by the summary mapping and the facet labels.
 import { toFiniteNumber, formatJobKind } from "./billFormat";
 import { supabase } from "./supabase";
+import {
+  DOCUMENT_TYPE_INFO,
+  type BillDocumentType,
+  type MixedWorkbookPreview,
+  type WorkbookUploadGroup,
+} from "./billDocumentTypes";
 import { logAudit } from "./auditLog";
 // Moved to a pure module so `bulkBillZip.ts` (and the bulk-ZIP self-test) can use
 // them without loading Supabase or React Native. Re-exported below.
@@ -203,11 +209,12 @@ function dedupeBillsById(rows: Bill[]): Bill[] {
  * workbook writes one of a handful of spellings), so one bounded select is enough;
  * the bound is stated rather than assumed.
  */
-export async function fetchBillJobFacets(): Promise<BillJobFacet[]> {
+export async function fetchBillJobFacets(documentType: BillDocumentType = "tax_invoice"): Promise<BillJobFacet[]> {
   const FACET_SCAN_LIMIT = 5000;
   const { data, error } = await supabase
     .from(BILLS)
     .select("job_kind")
+    .eq("document_type", documentType)
     .limit(FACET_SCAN_LIMIT);
   if (error) throw new Error(error.message);
 
@@ -228,6 +235,12 @@ export async function fetchBillJobFacets(): Promise<BillJobFacet[]> {
 }
 
 export interface BillQuery {
+  /**
+   * Tax Bills or Challan Bills. Every query is confined to ONE document type, so a
+   * section can never list, select or delete the other section's bills. Defaults
+   * to Tax Invoices, which is what the section was before Challan Bills existed.
+   */
+  documentType?: BillDocumentType;
   /** Free text: invoice no, filename, sheet name, party name or party GST. */
   search?: string;
   /** Restrict to one uploaded workbook. */
@@ -309,6 +322,8 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
     .order("invoice_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
+  q = q.eq("document_type", query.documentType ?? "tax_invoice");
+
   if (folderId) {
     /* `item_type` is part of the filter, not implied: `folder_items` is a
        polymorphic link table, so a folder that somehow held a job would otherwise
@@ -348,6 +363,7 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
     const { data: matches, error: upErr } = await supabase
       .from(UPLOADS)
       .select("id")
+      .eq("document_type", query.documentType ?? "tax_invoice")
       .ilike("original_filename", `%${needle}%`);
     if (upErr) throw new Error(upErr.message);
 
@@ -376,12 +392,11 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   };
 }
 
-export async function fetchBill(id: string): Promise<Bill> {
-  const { data, error } = await supabase
-    .from(BILLS)
-    .select(BILL_WITH_UPLOAD)
-    .eq("id", id)
-    .single();
+export async function fetchBill(id: string, documentType?: BillDocumentType): Promise<Bill> {
+  let q = supabase.from(BILLS).select(BILL_WITH_UPLOAD).eq("id", id);
+  // A section reading "its" bill by id must not be able to open the other kind.
+  if (documentType) q = q.eq("document_type", documentType);
+  const { data, error } = await q.single();
   if (error) throw new Error(error.message);
   return flattenBill(data as unknown as BillRowWithUpload);
 }
@@ -396,10 +411,11 @@ export async function fetchBillLineItems(billId: string): Promise<BillLineItem[]
   return (data ?? []) as BillLineItem[];
 }
 
-export async function fetchBillUploads(): Promise<BillUpload[]> {
+export async function fetchBillUploads(documentType: BillDocumentType = "tax_invoice"): Promise<BillUpload[]> {
   const { data, error } = await supabase
     .from(UPLOADS)
     .select("*")
+    .eq("document_type", documentType)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as BillUpload[];
@@ -418,10 +434,17 @@ export async function fetchBillUpload(id: string): Promise<BillUpload> {
 /** A request failure carrying the server's own explanation and machine reason. */
 export class BillUploadError extends Error {
   readonly reason: string | null;
-  constructor(message: string, reason: string | null = null) {
+  /**
+   * Set when the workbook holds both Tax Invoices and Delivery Challans
+   * (`reason === "mixed_workbook"`): how many sheets of each, so the admin can
+   * confirm the split before anything is imported.
+   */
+  readonly preview: MixedWorkbookPreview | null;
+  constructor(message: string, reason: string | null = null, preview: MixedWorkbookPreview | null = null) {
     super(message);
     this.name = "BillUploadError";
     this.reason = reason;
+    this.preview = preview;
   }
 }
 
@@ -509,6 +532,10 @@ async function readWorkbookBase64(picked: PickedBillWorkbook): Promise<string> {
 export interface UploadCallbacks {
   /** Called as each pipeline step starts or finishes. */
   onStage?: (stage: BillUploadStage) => void;
+  /** The section uploading. The server rejects a workbook of the other type. */
+  documentType?: BillDocumentType;
+  /** Set after the admin confirmed splitting a mixed workbook. */
+  confirmMixed?: boolean;
 }
 
 /**
@@ -541,6 +568,10 @@ interface ProcessBillUploadResponse {
     filename: string;
     scope: "workbook";
   }[];
+  /** True when the workbook was split into a Tax Bills and a Challan Bills upload. */
+  mixed?: boolean;
+  /** Every logical upload created (two for a mixed workbook). */
+  uploads?: WorkbookUploadGroup[];
 }
 
 /**
@@ -556,7 +587,7 @@ interface ProcessBillUploadResponse {
  */
 export async function uploadBillWorkbook(
   picked: PickedBillWorkbook,
-  { onStage }: UploadCallbacks = {}
+  { onStage, documentType = "tax_invoice", confirmMixed = false }: UploadCallbacks = {}
 ): Promise<BillUploadResult> {
   onStage?.("reading");
   const contentBase64 = await readWorkbookBase64(picked);
@@ -589,7 +620,7 @@ export async function uploadBillWorkbook(
     try {
       return await supabase.functions.invoke<ProcessBillUploadResponse>(
         "process-bill-upload",
-        { body: { filename: picked.name, content_base64: contentBase64 } }
+        { body: { filename: picked.name, content_base64: contentBase64, document_type: documentType, confirm_mixed: confirmMixed } }
       );
     } finally {
       stopIndicativeStages();
@@ -605,7 +636,7 @@ export async function uploadBillWorkbook(
     // the specific "sheet '292' has no TRIPLICATE" explanation survives.
     const body = await readErrorBody(error);
     if (body) {
-      throw new BillUploadError(body.error || "That workbook could not be processed.", body.reason);
+      throw new BillUploadError(body.error || "That workbook could not be processed.", body.reason, body.preview ?? null);
     }
     throw new BillUploadError(
       error.message || "The bill upload could not reach the server.",
@@ -625,6 +656,8 @@ export async function uploadBillWorkbook(
     invoice_count: data.invoice_count ?? 0,
     bills: data.bills ?? [],
     aggregate_pdfs: data.aggregate_pdfs ?? [],
+    mixed: data.mixed === true,
+    uploads: data.uploads ?? [],
   };
 }
 
@@ -638,13 +671,13 @@ export async function uploadBillWorkbook(
  */
 async function readErrorBody(
   error: { context?: unknown; message?: string }
-): Promise<{ error?: string; reason?: string } | null> {
+): Promise<{ error?: string; reason?: string; preview?: MixedWorkbookPreview } | null> {
   try {
     const ctx = error.context;
     if (ctx && typeof (ctx as Response).text === "function") {
       const text = await (ctx as Response).text();
       if (!text) return null;
-      const parsed = JSON.parse(text) as { error?: string; reason?: string };
+      const parsed = JSON.parse(text) as { error?: string; reason?: string; preview?: MixedWorkbookPreview };
       return parsed && typeof parsed === "object" ? parsed : null;
     }
   } catch {
@@ -884,7 +917,10 @@ const BULK_ZIP_COLUMNS =
  * An id that no longer exists is dropped, not fabricated: a bill deleted in another
  * session between selecting and downloading must not become a phantom entry.
  */
-export async function fetchBillDocumentsByIds(ids: readonly string[]): Promise<BulkZipBill[]> {
+export async function fetchBillDocumentsByIds(
+  ids: readonly string[],
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<BulkZipBill[]> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return [];
 
@@ -894,6 +930,7 @@ export async function fetchBillDocumentsByIds(ids: readonly string[]): Promise<B
     const { data, error } = await supabase
       .from(BILLS)
       .select(BULK_ZIP_COLUMNS)
+      .eq("document_type", documentType)
       .in("id", unique.slice(i, i + CHUNK));
     if (error) throw new Error(error.message);
     for (const row of (data ?? []) as unknown as BulkZipBill[]) byId.set(row.id, row);
@@ -1143,7 +1180,8 @@ export function previewTotals(input: {
 export async function updateBill(
   billId: string,
   patch: BillPatch,
-  onStage?: (stage: "saving" | "generating" | "done") => void
+  onStage?: (stage: "saving" | "generating" | "done") => void,
+  documentType: BillDocumentType = "tax_invoice"
 ): Promise<BillUpdateResult> {
   onStage?.("saving");
 
@@ -1157,7 +1195,7 @@ export async function updateBill(
     amount_after_tax?: number | null;
     amount_in_words?: string | null;
     pdfs?: BillUpdateResult["pdfs"];
-  }>("update-bill", { body: { bill_id: billId, patch } });
+  }>("update-bill", { body: { bill_id: billId, patch, document_type: documentType } });
 
   onStage?.("generating");
 
@@ -1218,7 +1256,7 @@ export async function updateBill(
  * Removing a bill from a folder without deleting it is a different operation
  * (`removeItemFromFolder`) and touches none of this.
  */
-export async function deleteBill(billId: string): Promise<{
+export async function deleteBill(billId: string, documentType: BillDocumentType = "tax_invoice"): Promise<{
   ok: boolean;
   error?: string;
   /** Bills from the same workbook that survived, for the confirmation message. */
@@ -1235,6 +1273,8 @@ export async function deleteBill(billId: string): Promise<{
       .from(BILLS)
       .select("invoice_no, sheet_name, bill_upload_id, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
       .eq("id", billId)
+      // Confined to the calling section: a Tax Bills delete cannot reach a challan.
+      .eq("document_type", documentType)
       .single();
     if (error) throw new Error(error.message);
     bill = data as BillToDelete;
@@ -1332,13 +1372,22 @@ export async function deleteBill(billId: string): Promise<{
 
   return { ok: true, siblingsRemaining };
 }
-export async function deleteBillUpload(uploadId: string): Promise<{ ok: boolean; error?: string }> {
+export async function deleteBillUpload(
+  uploadId: string,
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<{ ok: boolean; error?: string }> {
   let billIds: string[];
   let upload: BillUpload;
   let perBillPaths: string[];
   try {
-    billIds = await fetchBillIdsForUpload(uploadId);
     upload = await fetchBillUpload(uploadId);
+    if ((upload.document_type ?? "tax_invoice") !== documentType) {
+      return {
+        ok: false,
+        error: `That workbook belongs to ${DOCUMENT_TYPE_INFO[upload.document_type ?? "tax_invoice"].section}; delete it from there.`,
+      };
+    }
+    billIds = await fetchBillIdsForUpload(uploadId);
     // The upload row CASCADEs to `bills`, but storage objects are not in the
     // database and so do not cascade. Every bill's own three documents have to be
     // collected explicitly or they are orphaned in the bucket.
@@ -1548,8 +1597,15 @@ export async function fetchFolderBillSummary(folderId: string): Promise<FolderBi
  * `bill_count` is a count of DISTINCT bill ids, so 1 physical invoice is 1 bill and
  * never 3.
  */
-export async function fetchBillingFolderBillCounts(): Promise<BillingFolderBillCount[]> {
-  const { data, error } = await supabase.rpc("get_billing_folder_bill_counts");
+export async function fetchBillingFolderBillCounts(
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<BillingFolderBillCount[]> {
+  /* Tax Bills keeps the original RPC, so nothing changes for it; Challan Bills
+     folders are counted by the 0025 sibling that takes the folder kind. */
+  const { data, error } =
+    documentType === "tax_invoice"
+      ? await supabase.rpc("get_billing_folder_bill_counts")
+      : await supabase.rpc("get_billing_folder_bill_counts_by_kind", { p_folder_type: "challan_billing" });
   if (error) throw new Error(error.message);
 
   const rows = Array.isArray(data) ? data : [];
@@ -1652,7 +1708,10 @@ export interface BillDeleteTarget {
  * the ids are walked in chunks and de-duplicated, and a bill that has since been
  * deleted is simply absent from the answer rather than being an error.
  */
-export async function fetchBillLabels(ids: string[]): Promise<{ id: string; label: string }[]> {
+export async function fetchBillLabels(
+  ids: string[],
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<{ id: string; label: string }[]> {
   const wanted = [...new Set(ids)].filter(Boolean);
   if (wanted.length === 0) return [];
 
@@ -1664,6 +1723,7 @@ export async function fetchBillLabels(ids: string[]): Promise<{ id: string; labe
     const { data, error } = await supabase
       .from(BILLS)
       .select("id, invoice_no, sheet_name")
+      .eq("document_type", documentType)
       .in("id", chunk);
     if (error) throw new Error(error.message);
     for (const row of (data ?? []) as {
@@ -1701,7 +1761,8 @@ export async function fetchBillLabels(ids: string[]): Promise<{ id: string; labe
  */
 export async function deleteBillsInBulk(
   bills: BillDeleteTarget[],
-  onProgress?: (progress: BulkProgress) => void
+  onProgress?: (progress: BulkProgress) => void,
+  documentType: BillDocumentType = "tax_invoice"
 ): Promise<BulkDeleteResult> {
   const result: BulkDeleteResult = { deleted: 0, failed: 0, failures: [] };
 
@@ -1712,7 +1773,7 @@ export async function deleteBillsInBulk(
   for (const bill of bills) {
     const label = bill.label?.trim() || "this bill";
     try {
-      const res = await deleteBill(bill.id);
+      const res = await deleteBill(bill.id, documentType);
       if (res.ok) {
         result.deleted += 1;
       } else {

@@ -27,10 +27,13 @@ export type FolderItemType =
  * names what a caller is allowed to ask for, and keeps a billing folder out of the
  * job-folder filters in the first place.
  */
-export type FolderKind = "labour" | "with_material" | "general" | "billing";
+export type FolderKind = "labour" | "with_material" | "general" | "billing" | "challan_billing";
 
 /** The `folder_type` value that marks a folder as a Billing folder. */
 export const BILLING_FOLDER_KIND: FolderKind = "billing";
+
+/** The `folder_type` of a Challan Bills folder (migration 0025); holds Delivery Challans only. */
+export const CHALLAN_BILLING_FOLDER_KIND: FolderKind = "challan_billing";
 
 export interface AdminFolder {
   id: string;

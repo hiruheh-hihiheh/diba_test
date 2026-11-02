@@ -26,10 +26,13 @@ import {
   type WorkbookOption,
 } from "../../services/regenerationModel";
 import { Icon } from "../ui/Icon";
+import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import { SearchBar } from "../ui/SearchBar";
 
 interface Props {
   visible: boolean;
+  /** The section: its selector lists only its own workbooks. */
+  documentType: BillDocumentType;
   onCancel: () => void;
   onConfirm: (scope: RegenerationScope) => void;
 }
@@ -41,7 +44,8 @@ function formatDate(iso: string | null): string | null {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props) {
+export function RegenerationScopeDialog({ visible, documentType, onCancel, onConfirm }: Props) {
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [options, setOptions] = useState<WorkbookOption[] | null>(null);
@@ -56,7 +60,7 @@ export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props)
   useEffect(() => {
     if (!visible) return;
     let alive = true;
-    listRegenerationWorkbooks()
+    listRegenerationWorkbooks(documentType)
       .then((res) => {
         if (!alive) return;
         setOptions(res.workbooks);
@@ -68,11 +72,11 @@ export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props)
     return () => {
       alive = false;
     };
-  }, [visible]);
+  }, [visible, documentType]);
 
   const all = useMemo(() => options ?? [], [options]);
   const shown = useMemo(() => filterWorkbookOptions(all, query), [all, query]);
-  const scope = buildScope(selected, all, includeStandalone);
+  const scope = buildScope(selected, all, includeStandalone, documentType);
   const eligible = eligibleCount(all);
 
   return (
@@ -80,7 +84,7 @@ export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props)
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} accessibilityRole="button" accessibilityLabel="Cancel" />
         <View style={styles.card} accessibilityViewIsModal>
-          <Text style={styles.title}>Regenerate PDFs</Text>
+          <Text style={styles.title}>Regenerate {info.section} PDFs</Text>
           <Text style={styles.subtitle}>
             Choose the workbooks to rebuild from their saved bill records. No Excel file is uploaded again, and each
             workbook&apos;s combined PDFs are only replaced once all three new copies are verified.
@@ -140,7 +144,7 @@ export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props)
                 style={styles.list}
                 ListEmptyComponent={
                   <Text style={[styles.meta, styles.empty]}>
-                    {all.length === 0 ? "No Excel workbooks have been uploaded." : "No workbook matches that search."}
+                    {all.length === 0 ? `No ${info.section} workbooks have been uploaded.` : "No workbook matches that search."}
                   </Text>
                 }
                 renderItem={({ item }) => {
@@ -179,7 +183,7 @@ export function RegenerationScopeDialog({ visible, onCancel, onConfirm }: Props)
                 }}
               />
 
-              {standaloneCount > 0 && (
+              {info.hasStandaloneBills && standaloneCount > 0 && (
                 <Pressable
                   onPress={() => setIncludeStandalone((v) => !v)}
                   accessibilityRole="checkbox"

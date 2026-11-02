@@ -56,6 +56,8 @@ import Pagination from "../ui/Pagination";
 import SelectAllCheckbox from "../ui/SelectAllCheckbox";
 import { BillSummaryScopeNote } from "./BillSummaryScopeNote";
 import BulkOperationOverlay, { type BulkOperation } from "./BulkOperationOverlay";
+import { useBillDocumentType } from "../../contexts/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO } from "../../services/billDocumentTypes";
 
 /** Bills per page inside an opened folder. Matches the Bills list's own page size. */
 const PAGE_SIZE = 20;
@@ -106,7 +108,8 @@ export default function BillingFolderSheet({
   const [renameText, setRenameText] = useState("");
 
   /** The folder list, and nothing else. No state is touched here. */
-  const readFolders = useCallback(() => fetchBillingFolders(), []);
+  const documentType = useBillDocumentType();
+  const readFolders = useCallback(() => fetchBillingFolders(documentType), [documentType]);
 
   /** Commit a read, or record why it failed. Always clears the spinner. */
   const commitFolders = useCallback((list: BillingFolder[]) => {
@@ -188,7 +191,7 @@ export default function BillingFolderSheet({
     if (!name || creating) return;
     setCreating(true);
     try {
-      const res = await createBillingFolder(name);
+      const res = await createBillingFolder(name, documentType);
       if (!res.ok) {
         onError("The folder was not created", res.error ?? "Please try again.");
         return;
@@ -540,6 +543,8 @@ function BillingFolderDetail({
   onError,
   onNotice,
 }: BillingFolderDetailProps) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const selection = useSelection();
   const [summary, setSummary] = useState<FolderBillSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -568,10 +573,10 @@ function BillingFolderDetail({
   const readFolder = useCallback(async () => {
     const [summaryResult, billPage] = await Promise.all([
       fetchFolderBillSummary(folder.id),
-      fetchBills({ folderId: folder.id, page, pageSize: PAGE_SIZE }),
+      fetchBills({ documentType, folderId: folder.id, page, pageSize: PAGE_SIZE }),
     ]);
     return { summaryResult, billPage };
-  }, [folder.id, page]);
+  }, [documentType, folder.id, page]);
 
   /** Commit a read. Always takes the spinner down, so a failure cannot hang it. */
   const commit = useCallback(
@@ -639,10 +644,10 @@ function BillingFolderDetail({
    */
 
   useEffect(() => {
-    void fetchBillingFolders()
+    void fetchBillingFolders(documentType)
       .then((all) => setDestinations(all.filter((f) => f.id !== folder.id)))
       .catch(() => setDestinations([]));
-  }, [folder.id]);
+  }, [documentType, folder.id]);
 
   const totalPages = Math.max(1, Math.ceil(billTotal / PAGE_SIZE));
   const pageIds = bills.map((b) => b.id);
@@ -849,6 +854,16 @@ function BillingFolderDetail({
               below it, so it has to be read first. */}
           <BillSummaryScopeNote summary={summary} />
 
+          {/* A Challan Bills folder has quantities only: no challan carries money. */}
+          {!info.hasMoney && (
+            <SummarySection title="Totals">
+              <Figure label="Challans" value={String(summary.total_bills)} />
+              <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
+              <Figure label="Average quantity" value={formatQuantity(summary.average_quantity)} />
+            </SummarySection>
+          )}
+          {info.hasMoney && (
+          <>
           <SummarySection title="Totals">
             <Figure label="Total quantity" value={formatQuantity(summary.total_quantity)} />
             <Figure label="Before tax" value={formatMoney(summary.total_amount_before_tax)} />
@@ -879,6 +894,8 @@ function BillingFolderDetail({
             <Figure label="Lowest, before tax" value={formatMoney(summary.min_amount_before_tax)} />
             <Figure label="Highest, before tax" value={formatMoney(summary.max_amount_before_tax)} />
           </SummarySection>
+          </>
+          )}
 
           {/* Only real stored `job_kind` values, cleaned up for display. No category is
               invented, and nothing is folded into an "Other" the user cannot see. */}

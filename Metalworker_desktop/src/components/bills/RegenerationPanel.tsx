@@ -21,6 +21,7 @@ import {
   copyStateLabel,
   overallProgress,
   scopeLabel,
+  scopeSection,
   problemWorkbooks,
   stageLabel,
   stageProgress,
@@ -152,7 +153,7 @@ export default function RegenerationPanel({ controller }: { controller: Regenera
       {view?.scope && (
         <p className="text-xs text-text-secondary flex flex-wrap gap-x-4 gap-y-1">
           <span>
-            <strong className="text-text">Scope:</strong> {scopeLabel(view)}
+            <strong className="text-text">Scope:</strong> {scopeSection(view)} · {scopeLabel(view)}
           </span>
           {view.scope.workbooks_selected > 0 && (
             <span>

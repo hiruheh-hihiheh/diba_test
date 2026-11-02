@@ -30,6 +30,7 @@ import {
   bankLinesOf,
   computeTotals,
   defaultBankLabel,
+  documentTypeOf,
   parseBankLines,
   round2,
   round3,
@@ -148,6 +149,8 @@ export interface LineItemPatch {
   rate?: number | string | null;
   /** Accepted and recomputed from quantity x rate; see `computeTotals`. */
   amount?: number | string | null;
+  /** Delivery Challan only. Ignored on a Tax Invoice line. */
+  remarks?: string | null;
 }
 
 /* ──────────────────────────────────────────────
@@ -325,10 +328,33 @@ function cleanLineItems(value: unknown): BillLineItem[] {
       // invoice's line amounts are quantity x rate everywhere in this template and
       // two numbers that disagree are how an invoice adds up to the wrong total.
       amount: quantity !== null && rate !== null ? round2(quantity * rate) : null,
+      ...(item.remarks !== undefined ? { remarks: clean(item.remarks, LIMITS.lineDescription, "a remark") } : {}),
     });
   }
   return out;
 }
+
+/**
+ * The money-bearing columns of a bill. A Delivery Challan carries none of them,
+ * so an edit to a challan writes every one as null — whatever the patch said —
+ * and a challan can never acquire a figure through the editor.
+ */
+const MONETARY_COLUMNS = [
+  "amount_before_tax",
+  "cgst",
+  "cgst_rate",
+  "sgst",
+  "sgst_rate",
+  "igst",
+  "igst_rate",
+  "total_gst",
+  "amount_after_tax",
+  "reverse_charge_gst",
+  "round_off",
+  "amount_in_words",
+  "bank_details",
+  "terms",
+] as const;
 
 /* ──────────────────────────────────────────────
    The patch, cleaned
@@ -578,7 +604,31 @@ export function computeBillValues(
   totals: ReturnType<typeof computeTotals>;
 } {
   const cleaned = applyPatch(patch);
-  const lineItems = cleaned.lineItems ?? existingLineItems;
+
+  if (documentTypeOf(existing) === "delivery_challan") {
+    const lineItems = (cleaned.lineItems ?? existingLineItems).map((item) => ({
+      ...item,
+      rate: null,
+      amount: null,
+      remarks: item.remarks ?? null,
+    }));
+    const quantities = lineItems.map((l) => l.quantity).filter((q): q is number => q !== null);
+    const totalQuantity = quantities.length > 0 ? round3(quantities.reduce((a, b) => a + b, 0)) : null;
+    const values: Record<string, unknown> = { ...cleaned.values, total_quantity: totalQuantity };
+    for (const column of MONETARY_COLUMNS) values[column] = null;
+    return {
+      values,
+      lineItems,
+      totals: { totalQuantity, amountBeforeTax: 0, cgst: 0, sgst: 0, igst: 0, totalGst: 0, amountAfterTax: 0 } as ReturnType<typeof computeTotals>,
+    };
+  }
+
+  const lineItems = (cleaned.lineItems ?? existingLineItems).map((item) => {
+    // An invoice line has no REMARKS column; a stray key never reaches the row.
+    const { remarks: _ignored, ...rest } = item;
+    void _ignored;
+    return rest;
+  });
 
   const merged = { ...existing, ...cleaned.values } as BillRecord;
   const totals = computeTotals({

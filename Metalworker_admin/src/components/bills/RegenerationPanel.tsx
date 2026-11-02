@@ -24,6 +24,7 @@ import {
   copyStateLabel,
   overallProgress,
   scopeLabel,
+  scopeSection,
   problemWorkbooks,
   stageLabel,
   stageProgress,
@@ -164,7 +165,7 @@ export function RegenerationPanel({ controller }: Props) {
         <View style={styles.scopeRow}>
           <Text style={styles.scopeText}>
             <Text style={styles.scopeStrong}>Scope: </Text>
-            {scopeLabel(view)}
+            {scopeSection(view)} · {scopeLabel(view)}
           </Text>
           {view.scope.workbooks_selected > 0 && (
             <Text style={styles.scopeText}>

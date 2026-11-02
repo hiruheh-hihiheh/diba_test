@@ -23,6 +23,7 @@ import type { BillLineItem } from "../process-bill-upload/_shared/parseBill.ts";
 import { loadActiveBusinessProfile } from "../process-bill-upload/_shared/businessProfileDb.ts";
 import { decodePdfImage } from "../process-bill-upload/_shared/pdfImage.ts";
 import { LOGO_BUCKET } from "../process-bill-upload/_shared/invoiceLogo.ts";
+import { isDocumentType } from "../process-bill-upload/_shared/documentType.ts";
 import {
   PermanentError,
   TransientError,
@@ -118,7 +119,7 @@ function supabaseStore(admin: Client): RegenerationStore {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await admin
           .from("bill_uploads")
-          .select("id, original_filename, base_name, status, invoice_count, created_at, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
+          .select("id, document_type, original_filename, base_name, status, invoice_count, created_at, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
           .eq("creation_source", "workbook")
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
@@ -161,7 +162,7 @@ function supabaseStore(admin: Client): RegenerationStore {
     async loadUpload(id) {
       const { data, error } = await admin
         .from("bill_uploads")
-        .select("id, original_filename, base_name, creation_source, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
+        .select("id, document_type, original_filename, base_name, creation_source, original_pdf_path, duplicate_pdf_path, triplicate_pdf_path")
         .eq("id", id)
         .limit(1);
       if (error) dbFail("read workbook", error);
@@ -195,7 +196,7 @@ function supabaseStore(admin: Client): RegenerationStore {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await admin
           .from("bill_line_items")
-          .select("id, bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount")
+          .select("id, bill_id, sr_no, description, hsn_code, uom, quantity, rate, amount, remarks")
           .in("bill_id", billIds)
           .order("bill_id", { ascending: true })
           .order("sr_no", { ascending: true })
@@ -213,6 +214,7 @@ function supabaseStore(admin: Client): RegenerationStore {
             quantity: r.quantity === null ? null : Number(r.quantity),
             rate: r.rate === null ? null : Number(r.rate),
             amount: r.amount === null ? null : Number(r.amount),
+            remarks: (r.remarks as string | null) ?? null,
           });
           out.set(r.bill_id as string, list);
         }
@@ -328,7 +330,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "Admin access only." }, 403);
   }
 
-  let body: { action?: string; job_id?: string | null; scope?: unknown } = {};
+  let body: { action?: string; job_id?: string | null; scope?: unknown; document_type?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -347,7 +349,10 @@ Deno.serve(async (req) => {
   try {
     switch (action) {
       case "list_workbooks":
-        return json(await listWorkbooks(deps));
+        if (body.document_type !== undefined && !isDocumentType(body.document_type)) {
+          return json({ ok: false, error: "Unknown document type." }, 400);
+        }
+        return json(await listWorkbooks(deps, isDocumentType(body.document_type) ? body.document_type : "tax_invoice"));
       case "start":
         // The scope is validated against the database inside startJob; a missing
         // scope is refused, never treated as "all workbooks".

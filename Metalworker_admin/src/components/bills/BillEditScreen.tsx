@@ -43,6 +43,8 @@ import {
 } from "../../services/bills";
 import { BILL_BANK_PARTS, type Bill, type BillPatch } from "../../types/bill";
 import { BillLogoControl } from "./BillLogoControl";
+import { useBillDocumentType } from "../../context/BillDocumentTypeContext";
+import { DOCUMENT_TYPE_INFO } from "../../services/billDocumentTypes";
 import { notify } from "../../utils/notify";
 import { Button } from "../ui/Button";
 
@@ -54,6 +56,8 @@ interface DraftLine {
   uom: string;
   quantity: string;
   rate: string;
+  /** Delivery Challan only. */
+  remarks: string;
 }
 
 interface Draft {
@@ -142,6 +146,8 @@ export function BillEditScreen({
    */
   onChanged?: () => void;
 }) {
+  const documentType = useBillDocumentType();
+  const info = DOCUMENT_TYPE_INFO[documentType];
   const { theme } = useTheme();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
@@ -167,7 +173,7 @@ export function BillEditScreen({
    * transitions, and this only produces the draft.
    */
   const fetchDraft = useCallback(async (): Promise<Draft> => {
-    const [row, items] = await Promise.all([fetchBill(billId), fetchBillLineItems(billId)]);
+    const [row, items] = await Promise.all([fetchBill(billId, documentType), fetchBillLineItems(billId)]);
     setBill(row);
     const parts = bankPartsOf(row.bank_details);
     bankLabels.current = Object.fromEntries(
@@ -223,6 +229,7 @@ export function BillEditScreen({
               uom: s(item.uom),
               quantity: n(item.quantity),
               rate: n(item.rate),
+              remarks: s(item.remarks),
             }))
           : [
               {
@@ -233,10 +240,11 @@ export function BillEditScreen({
                 uom: "",
                 quantity: "",
                 rate: "",
+                remarks: "",
               },
             ],
     };
-  }, [billId]);
+  }, [billId, documentType]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -304,6 +312,7 @@ export function BillEditScreen({
                 uom: "",
                 quantity: "",
                 rate: "",
+                remarks: "",
               },
             ],
           }
@@ -417,7 +426,9 @@ export function BillEditScreen({
           hsn_code: l.hsnCode.trim() || null,
           uom: l.uom.trim() || null,
           quantity: parseNumber(l.quantity),
-          rate: parseNumber(l.rate),
+          // A challan line has no rate (the server stores none) but has remarks.
+          rate: info.hasMoney ? parseNumber(l.rate) : null,
+          ...(info.hasRemarks ? { remarks: l.remarks.trim() || null } : {}),
         })),
     };
   }
@@ -427,8 +438,11 @@ export function BillEditScreen({
     setStage("saving");
     setSaveError(null);
     try {
-      const result = await updateBill(billId, toPatch(draft), (next) =>
-        setStage(next === "done" ? "generating" : next)
+      const result = await updateBill(
+        billId,
+        toPatch(draft),
+        (next) => setStage(next === "done" ? "generating" : next),
+        documentType
       );
       if (!wordsManual && result.amount_in_words) {
         setDraft((p) => (p ? { ...p, amountInWords: result.amount_in_words ?? p.amountInWords, regenerateWords: false } : p));
@@ -522,7 +536,7 @@ export function BillEditScreen({
               </Text>
               <Field label="Job type" styles={styles} value={draft.jobKind} onChange={(v) => set("jobKind", v)} />
               <Field
-                label="Invoice number *"
+                label={`${documentType === "delivery_challan" ? "Challan" : "Invoice"} number *`}
                 styles={styles}
                 value={draft.invoiceNo}
                 onChange={(v) => set("invoiceNo", v)}
@@ -582,8 +596,9 @@ export function BillEditScreen({
             {/* ── Line items ── */}
             <Section title="Line items" styles={styles}>
               <Text style={styles.note}>
-                Each amount is quantity × rate. Rows with no description are left out. Use the arrows to
-                change the order the invoice prints them in.
+                {info.hasMoney
+                  ? "Each amount is quantity × rate. Rows with no description are left out. Use the arrows to change the order the invoice prints them in."
+                  : "A challan lists quantities and remarks, never prices. Rows with no description are left out. Use the arrows to change the order the challan prints them in."}
               </Text>
               {draft.lines.map((line, i) => {
                 const qty = parseNumber(line.quantity);
@@ -630,22 +645,28 @@ export function BillEditScreen({
                       <View style={styles.cell}>
                         <Field label="UOM" styles={styles} value={line.uom} onChange={(v) => setLine(line.key, "uom", v)} />
                       </View>
-                      <View style={styles.cell}>
-                        <Field
-                          label="Amount"
-                          styles={styles}
-                          value={amount === null ? "" : formatMoney(amount)}
-                          onChange={() => undefined}
-                          editable={false}
-                        />
-                      </View>
+                      {info.hasMoney && (
+                        <View style={styles.cell}>
+                          <Field
+                            label="Amount"
+                            styles={styles}
+                            value={amount === null ? "" : formatMoney(amount)}
+                            onChange={() => undefined}
+                            editable={false}
+                          />
+                        </View>
+                      )}
                     </View>
                     <View style={styles.row2}>
                       <View style={styles.cell}>
                         <Field label="Quantity" styles={styles} value={line.quantity} onChange={(v) => setLine(line.key, "quantity", v)} keyboardType="decimal-pad" />
                       </View>
                       <View style={styles.cell}>
-                        <Field label="Rate" styles={styles} value={line.rate} onChange={(v) => setLine(line.key, "rate", v)} keyboardType="decimal-pad" />
+                        {info.hasMoney ? (
+                          <Field label="Rate" styles={styles} value={line.rate} onChange={(v) => setLine(line.key, "rate", v)} keyboardType="decimal-pad" />
+                        ) : (
+                          <Field label="Remarks" styles={styles} value={line.remarks} onChange={(v) => setLine(line.key, "remarks", v)} />
+                        )}
                       </View>
                     </View>
                   </View>
@@ -654,7 +675,8 @@ export function BillEditScreen({
               <Button title="+ Add line" onPress={addLine} variant="ghost" disabled={saving} />
             </Section>
 
-            {/* ── Tax & totals ── */}
+            {/* ── Tax & totals (Tax Invoices only) ── */}
+            {info.hasMoney && (
             <Section title="Tax & totals" styles={styles}>
               <Text style={styles.note}>
                 Rates are what the business charges and may be corrected. Every amount below is
@@ -721,8 +743,10 @@ export function BillEditScreen({
                 <CalcRow label="Total after tax" value={formatMoney(totals?.amountAfterTax ?? null)} styles={styles} strong />
               </View>
             </Section>
+            )}
 
-            {/* ── Bank ── */}
+            {/* ── Bank (Tax Invoices only) ── */}
+            {info.hasMoney && (
             <Section title="Bank details" styles={styles}>
               {BILL_BANK_PARTS.map((p) => (
                 <Field
@@ -734,8 +758,10 @@ export function BillEditScreen({
                 />
               ))}
             </Section>
+            )}
 
-            {/* ── Terms ── */}
+            {/* ── Terms (Tax Invoices only) ── */}
+            {info.hasMoney && (
             <Section title="Terms & conditions" styles={styles}>
               <Text style={styles.note}>
                 One term per line. A payment window such as “40 DAYS” is emphasised on the PDF
@@ -743,10 +769,18 @@ export function BillEditScreen({
               </Text>
               <Field label="Terms" styles={styles} value={draft.terms} onChange={(v) => set("terms", v)} multiline rows={5} />
             </Section>
+            )}
 
             {/* ── Footer ── */}
             <Section title="Footer & certification" styles={styles}>
-              <Field label="Certification" styles={styles} value={draft.certification} onChange={(v) => set("certification", v)} multiline rows={2} />
+              <Field
+                label={info.hasMoney ? "Certification" : "Receipt line"}
+                styles={styles}
+                value={draft.certification}
+                onChange={(v) => set("certification", v)}
+                multiline
+                rows={2}
+              />
               <Field label="For (supplier)" styles={styles} value={draft.onBehalfOf} onChange={(v) => set("onBehalfOf", v)} />
               <Field label="Designation" styles={styles} value={draft.signatureDesignation} onChange={(v) => set("signatureDesignation", v)} />
               <Field label="Receiver's signature" styles={styles} value={draft.receiverSignature} onChange={(v) => set("receiverSignature", v)} />
