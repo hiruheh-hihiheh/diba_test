@@ -71,7 +71,7 @@ import { BillDocumentTypeContext } from "../contexts/BillDocumentTypeContext";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../hooks/useToast";
-import { nextSortMode, type BillSortMode } from "../services/billSorting";
+import { billSortHelp, nextSortMode, type BillSortMode } from "../services/billSorting";
 import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
@@ -172,10 +172,12 @@ function SortCheckbox({
   label,
   checked,
   onToggle,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
   onToggle: () => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="inline-flex items-center gap-2 text-xs text-text-muted cursor-pointer select-none">
@@ -183,7 +185,8 @@ function SortCheckbox({
         type="checkbox"
         checked={checked}
         onChange={onToggle}
-        className="w-4 h-4 rounded accent-primary cursor-pointer"
+        disabled={disabled}
+        className="w-4 h-4 rounded accent-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
       />
       <span className={checked ? "text-text font-semibold" : ""}>{label}</span>
     </label>
@@ -300,8 +303,14 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
     setPage(1);
   }, []);
 
+  /* A stale response must never paint over a newer one. Changing the sort starts a
+     second global scan while the first is still running; without this, whichever
+     answers last would win — possibly the order the user already moved away from. */
+  const requestSeq = useRef(0);
+
   const load = useCallback(
     async (silent = false) => {
+      const seq = ++requestSeq.current;
       if (silent) setRefreshing(true);
       else setLoading(true);
       try {
@@ -322,19 +331,23 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           // along rather than becoming a second load path that can disagree.
           fetchBillJobFacets(documentType),
         ]);
+        if (seq !== requestSeq.current) return;
         setBills(pageData.rows);
         setTotal(pageData.total);
         setUploads(uploadList);
         setFacets(facetList);
         setLoadError(null);
       } catch (err) {
+        if (seq !== requestSeq.current) return;
         setLoadError(
           err instanceof Error ? err.message : "The bills could not be loaded."
         );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
-        setLoadedOnce(true);
+        if (seq === requestSeq.current) {
+          setLoading(false);
+          setRefreshing(false);
+          setLoadedOnce(true);
+        }
       }
     },
     [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, sortMode, page, pageSize]
@@ -535,6 +548,15 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
 
   /** True while any bulk operation owns the screen. */
   const busy = bulk !== null;
+
+  /**
+   * True while a global sort is being calculated over the whole matching set.
+   *
+   * The rows already on screen stay visible underneath; this only says that the order
+   * is being rebuilt, and it locks the two checkboxes so a second scan cannot be
+   * stacked on top of the first.
+   */
+  const sorting = loading && loadedOnce && sortMode !== "default";
 
   /**
    * Select every bill matching the current filters, across every page.
@@ -1189,11 +1211,13 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-5"
           role="group"
           aria-label="Sort bills"
+          aria-describedby="bill-sort-help"
         >
           <span className="text-xs font-semibold text-text-muted">Sort</span>
           <SortCheckbox
             label="Sort by document number (Ascending)"
             checked={sortMode === "document_number"}
+            disabled={sorting}
             onToggle={() => {
               setSortMode((current) => nextSortMode(current, "document_number"));
               setPage(1);
@@ -1202,12 +1226,29 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           <SortCheckbox
             label="Sort by Excel upload date (Oldest to Newest)"
             checked={sortMode === "upload_date"}
+            disabled={sorting}
             onToggle={() => {
               setSortMode((current) => nextSortMode(current, "upload_date"));
               setPage(1);
             }}
           />
         </div>
+
+        <p id="bill-sort-help" className="text-[11px] leading-relaxed text-text-muted">
+          {billSortHelp(sortMode)}
+          {sortMode !== "default" && (
+            <button
+              type="button"
+              onClick={() => {
+                setSortMode("default");
+                setPage(1);
+              }}
+              className="ml-2 font-semibold text-primary hover:underline cursor-pointer"
+            >
+              Clear sorting
+            </button>
+          )}
+        </p>
 
         {/* Job-type grouping.
             One workbook legitimately contains both kinds, so this is a filter on
@@ -1322,6 +1363,17 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           )}
         </div>
       </div>
+
+      {sorting && (
+        <div
+          className="flex items-center gap-2 text-xs text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 size={13} className="animate-spin" />
+          Sorting all matching bills — this can take a moment on a large section.
+        </div>
+      )}
 
       {/* Table */}
       {loadError ? (

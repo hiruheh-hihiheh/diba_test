@@ -23,7 +23,7 @@ import { router, useFocusEffect, type Href } from "expo-router";
 
 import { AppTheme } from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { fetchBillUploads, fetchBills } from "../../services/bills";
+import { fetchBillUploadSummary, fetchBills } from "../../services/bills";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import {
   formatUploadDate,
@@ -97,11 +97,12 @@ export function BillingOverviewScreen() {
   const loadType = useCallback(async (type: BillDocumentType) => {
     setCards((prev) => ({ ...prev, [type]: { ...prev[type], loading: true, error: null } }));
     try {
-      /* The upload list answers "how many workbooks, and when was the newest one";
-         a one-row page answers "how many records" with the same count the section
-         itself trusts. The row is not used, so one is enough. */
+      /* Provenance-aware summary answers "how many Excel workbooks, and when was the
+         newest one" (manual bills excluded); a one-row page answers "how many
+         records" with the same count the section itself trusts, manual bills
+         included. The row is not used, so one is enough. */
       const [uploads, firstPage] = await Promise.all([
-        fetchBillUploads(type),
+        fetchBillUploadSummary(type),
         fetchBills({ documentType: type, page: 1, pageSize: 1 }),
       ]);
       setCards((prev) => ({
@@ -175,24 +176,40 @@ export function BillingOverviewScreen() {
 
                 {state.error ? (
                   <Text style={styles.cardError}>{state.error}</Text>
-                ) : (
-                  <View style={styles.stats}>
-                    <Stat
-                      label="Workbooks"
-                      value={state.loading ? "—" : String(state.summary.workbooks)}
-                      styles={styles}
-                    />
-                    <Stat
-                      label={content.noun}
-                      value={state.loading ? "—" : String(state.summary.bills)}
-                      styles={styles}
-                    />
-                    <Stat
-                      label="Latest upload"
-                      value={state.loading ? "—" : formatUploadDate(state.summary.latestUpload)}
-                      styles={styles}
-                    />
+                ) : state.loading ? (
+                  <View style={styles.stats} accessibilityLabel={`Counting ${info.section}`}>
+                    {[0, 1, 2].map((i) => (
+                      <View key={i} style={styles.stat}>
+                        <View style={[styles.skeletonBar, { width: "58%" }]} />
+                        <View style={[styles.skeletonBar, { width: "78%", marginTop: 6 }]} />
+                      </View>
+                    ))}
                   </View>
+                ) : (
+                  <>
+                    <View style={styles.stats}>
+                      <Stat label="Workbooks" value={String(state.summary.workbooks)} styles={styles} />
+                      <Stat label={content.noun} value={String(state.summary.bills)} styles={styles} />
+                      <Stat
+                        label="Latest upload"
+                        value={
+                          state.summary.latestUpload
+                            ? formatUploadDate(state.summary.latestUpload)
+                            : "No Excel uploads yet"
+                        }
+                        styles={styles}
+                      />
+                    </View>
+                    {state.summary.workbooks === 0 && (
+                      <Text style={styles.emptyHint}>No Excel workbooks uploaded yet.</Text>
+                    )}
+                    {state.summary.bills === 0 && (
+                      <Text style={styles.emptyHint}>
+                        This section is empty — open it to create a {info.word} or upload a
+                        workbook.
+                      </Text>
+                    )}
+                  </>
                 )}
 
                 <View style={styles.openRow}>
@@ -291,6 +308,17 @@ const createStyles = (theme: AppTheme) =>
       fontSize: theme.textSizes.sm,
       fontWeight: "800",
       marginTop: 2,
+    },
+    skeletonBar: {
+      height: 9,
+      borderRadius: 4,
+      backgroundColor: theme.colors.surfaceHover,
+      opacity: 0.7,
+    },
+    emptyHint: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      lineHeight: 16,
     },
 
     cardError: {

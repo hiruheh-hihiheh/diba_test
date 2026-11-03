@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  billSortHelp,
   compareBills,
   describeBillSort,
   naturalCompare,
@@ -25,7 +26,13 @@ import {
   sortBillRows,
   type SortableBillRow,
 } from "../../../src/services/billSorting.ts";
-import { formatUploadDate, summarizeBilling } from "../../../src/services/billingOverview.ts";
+import {
+  formatUploadDate,
+  isExcelUpload,
+  readAllPages,
+  summarizeBilling,
+  summarizeUploads,
+} from "../../../src/services/billingOverview.ts";
 
 const REPO = resolve(import.meta.dirname, "../../../..");
 
@@ -249,16 +256,13 @@ section("E. the order is over the whole set, not one page");
 section("F. tax invoices and challans are counted and sorted separately");
 
 {
-  const tax = summarizeBilling(
-    [{ created_at: "2026-10-01T00:00:00Z" }, { created_at: "2026-10-05T00:00:00Z" }],
-    7
-  );
-  const challan = summarizeBilling([{ created_at: "2026-09-01T00:00:00Z" }], 3);
+  const tax = summarizeBilling({ workbooks: 2, latestUpload: "2026-10-05T00:00:00Z" }, 7);
+  const challan = summarizeBilling({ workbooks: 1, latestUpload: "2026-09-01T00:00:00Z" }, 3);
   check(tax.workbooks === 2 && tax.bills === 7, "tax card counts only what it was given");
   check(challan.workbooks === 1 && challan.bills === 3, "challan card counts only what it was given");
   check(tax.latestUpload === "2026-10-05T00:00:00Z", "latest upload is the newest timestamp");
-  check(summarizeBilling([], 0).bills === 0, "an empty section reads zero, not blank");
-  check(summarizeBilling([{ created_at: "not a date" }, {}], -4).bills === 0, "unreadable data cannot produce a negative or NaN count");
+  check(summarizeBilling({ workbooks: 0, latestUpload: null }, 0).bills === 0, "an empty section reads zero, not blank");
+  check(summarizeBilling({ workbooks: Number.NaN, latestUpload: null }, -4).bills === 0, "unreadable data cannot produce a negative or NaN count");
   check(formatUploadDate(null) === "—", "a missing upload date is a dash");
   check(/Oct 2026/.test(formatUploadDate("2026-10-05T00:00:00Z")), "an upload date is printed readably");
 
@@ -277,8 +281,22 @@ section("F. tax invoices and challans are counted and sorted separately");
       `${name}: the scan reuses fetchBills, so every filter is the list's own`
     );
     check(
-      /fetchBillUploads\(documentType\)/.test(service),
-      `${name}: upload dates are read for this section's document type only`
+      /export async function fetchBillUploadSummary\([\s\S]{0,400}?\.eq\("document_type", documentType\)/.test(
+        service
+      ),
+      `${name}: Excel workbooks are counted for this section's document type only`
+    );
+    check(
+      /fetchUploadTimeMetadata\(documentType\)/.test(service),
+      `${name}: sorting reads upload provenance and timestamps, not the bill's own date`
+    );
+    check(
+      /creation_source !== "manual"/.test(service),
+      `${name}: manual upload rows are identified by provenance, not by filename`
+    );
+    check(
+      /\.order\("id", \{ ascending: true \}\)/.test(service),
+      `${name}: paging and scanning have a unique final ordering key`
     );
     check(
       /\.eq\("document_type", query\.documentType \?\? "tax_invoice"\)/.test(service),
@@ -351,7 +369,10 @@ section("G. the Billing overview chooses between two unchanged sections");
     ["desktop", desktopOverview],
     ["mobile", mobileOverview],
   ] as const) {
-    check(/fetchBillUploads\(type\)/.test(source), `${name} overview asks for one type's workbooks`);
+    check(
+      /fetchBillUploadSummary\(type\)/.test(source),
+      `${name} overview asks for one type's Excel workbooks`
+    );
     check(/fetchBills\(\{ documentType: type/.test(source), `${name} overview counts one type's records`);
     check(
       !/fetchBillDocumentsByIds|downloadBillCopyBytes|fetchBillLineItems/.test(source),
@@ -366,6 +387,119 @@ section("G. the Billing overview chooses between two unchanged sections");
   const adminOverview = readFile("Metalworker_admin/src/services/billingOverview.ts");
   const desktopOverviewService = readFile("Metalworker_desktop/src/services/billingOverview.ts");
   check(adminOverview === desktopOverviewService, "and so are the two overview summaries");
+}
+
+/* ──────────────────────────────────────────────
+   H. Manual bills are documents, not Excel workbooks
+   ────────────────────────────────────────────── */
+
+section("H. manual bills count as documents, never as Excel workbooks");
+
+{
+  check(isExcelUpload({ creation_source: "workbook" }), "a workbook row is an Excel upload");
+  check(isExcelUpload({}), "an absent creation_source keeps the Excel-import behaviour");
+  check(isExcelUpload({ creation_source: null }), "and so does an explicit null");
+  check(!isExcelUpload({ creation_source: "manual" }), "a manual row is not an Excel workbook");
+
+  const mixed = summarizeUploads([
+    { created_at: "2026-10-01T00:00:00Z", creation_source: "workbook" },
+    { created_at: "2026-12-31T00:00:00Z", creation_source: "manual" },
+    { created_at: "2026-10-05T00:00:00Z", creation_source: "workbook" },
+    { created_at: "2026-11-30T00:00:00Z" },
+  ]);
+  check(mixed.workbooks === 3, "manual rows are excluded from the workbook count", String(mixed.workbooks));
+  check(
+    mixed.latestUpload === "2026-11-30T00:00:00Z",
+    "and the latest date is the newest WORKBOOK, not the newer manual row",
+    String(mixed.latestUpload)
+  );
+
+  const manualOnly = summarizeUploads([
+    { created_at: "2026-12-31T00:00:00Z", creation_source: "manual" },
+  ]);
+  check(
+    manualOnly.workbooks === 0 && manualOnly.latestUpload === null,
+    "a section of only manual bills has no workbook and no upload date"
+  );
+
+  check(
+    summarizeBilling({ workbooks: 2, latestUpload: null }, 9).bills === 9,
+    "manually created bills stay in the document count"
+  );
+
+  const rows = [
+    bill("manual", "1", null as unknown as string),
+    bill("excel-new", "2", "2026-12-01T00:00:00Z"),
+    bill("excel-old", "3", "2026-10-01T00:00:00Z"),
+  ];
+  check(
+    ids(sortBillRows(rows, "upload_date")).join(",") === "excel-old,excel-new,manual",
+    "a manual bill sorts after every real Excel upload, even a newer one"
+  );
+  check(
+    /manual/i.test(billSortHelp("upload_date")) && /Excel/.test(billSortHelp("upload_date")),
+    "the helper text says manual bills have no Excel upload date"
+  );
+}
+
+/* ──────────────────────────────────────────────
+   I. Bounded paging
+   ────────────────────────────────────────────── */
+
+section("I. upload metadata is read completely, in bounded pages");
+
+{
+  const dataset = Array.from({ length: 12 }, (_, i) => ({ id: i + 1 }));
+  const pagesRead: number[] = [];
+  const rows = await readAllPages(async (page, pageSize) => {
+    pagesRead.push(page);
+    const start = (page - 1) * pageSize;
+    return { rows: dataset.slice(start, start + pageSize), total: dataset.length };
+  }, 5);
+  check(rows.length === 12, "all 12 rows arrive, not the backend's first page", String(rows.length));
+  check(new Set(rows.map((r) => r.id)).size === 12, "no row is returned twice");
+  check(
+    JSON.stringify(rows.map((r) => r.id)) === JSON.stringify(dataset.map((r) => r.id)),
+    "no row is skipped, and the order is the server's deterministic one"
+  );
+  check(pagesRead.join(",") === "1,2,3", "a partially filled last page ends the walk", pagesRead.join(","));
+
+  let calls = 0;
+  const exact = await readAllPages(async (page, pageSize) => {
+    calls++;
+    const start = (page - 1) * pageSize;
+    return { rows: dataset.slice(0, 10).slice(start, start + pageSize), total: 10 };
+  }, 5);
+  check(
+    exact.length === 10 && calls === 2,
+    "an exact multiple of the page size stops on the reported total, with no empty request",
+    `${exact.length} rows / ${calls} calls`
+  );
+
+  let emptyCalls = 0;
+  const none = await readAllPages(async () => {
+    emptyCalls++;
+    return { rows: [], total: 0 };
+  }, 5);
+  check(none.length === 0 && emptyCalls === 1, "an empty section costs one request");
+
+  let surfaced = false;
+  try {
+    await readAllPages(async () => {
+      throw new Error("network down");
+    }, 5);
+  } catch (err) {
+    surfaced = err instanceof Error && err.message === "network down";
+  }
+  check(surfaced, "a genuine error is surfaced rather than silently truncated");
+
+  let capped = false;
+  try {
+    await readAllPages(async (_page, size) => ({ rows: dataset.slice(0, size) }), 5, 3);
+  } catch {
+    capped = true;
+  }
+  check(capped, "a server that ignores paging cannot loop forever");
 }
 
 console.log(

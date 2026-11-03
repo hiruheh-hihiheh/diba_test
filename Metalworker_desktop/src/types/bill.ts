@@ -39,6 +39,12 @@ export interface BillUpload {
   document_type?: "tax_invoice" | "delivery_challan";
   /** Shared by the uploads one mixed workbook was split into; null otherwise. */
   source_group_id?: string | null;
+  /**
+   * Where this upload row came from (migration 0015). `manual` is the synthetic row
+   * `create-bill` writes for a hand-built bill, which is NOT an Excel workbook and has
+   * no Excel upload date. null/absent behaves as `workbook` (the column's default).
+   */
+  creation_source?: "workbook" | "manual" | null;
 }
 
 /**

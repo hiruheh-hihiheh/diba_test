@@ -3,21 +3,23 @@
 // The Billing entry point: one page, two cards, one click to either section.
 //
 // The two sections already exist and are untouched (`/bills` and `/challan-bills`).
-// What they lacked was a place to be chosen from: the sidebar used to list them as
-// two destinations, which made "billing" look like two unrelated features. This page
-// is only that choice, plus the three numbers that tell an admin which section they
-// are about to open.
+// What they lacked was a place to be chosen from, so this page is that choice, plus
+// the three numbers that tell an admin what is behind each card.
 //
-// The counts come from the same services the sections use — `fetchBillUploads(type)`
-// and `fetchBills({ documentType: type })` — so a card cannot invent a figure, and
-// the calls are scoped to one document type each. Nothing here reads a PDF or a
-// workbook: the cards count rows, they do not download them.
+// THE NUMBERS ARE NOT ALL "COUNT THE UPLOADS"
+//
+// A hand-built bill has a synthetic `bill_uploads` row, so counting upload rows would
+// count manual bills as Excel workbooks and let their creation time become the "latest
+// upload". `fetchBillUploadSummary` therefore counts only rows whose
+// `creation_source` is not `manual`, while the record count comes from the section's
+// own bill query and therefore still includes manual bills. Nothing here reads a PDF
+// or a workbook.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, FileSpreadsheet, Receipt } from "lucide-react";
 
-import { fetchBillUploads, fetchBills } from "../services/bills";
+import { fetchBillUploadSummary, fetchBills } from "../services/bills";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import {
   formatUploadDate,
@@ -37,7 +39,7 @@ const EMPTY: BillingSummary = { workbooks: 0, bills: 0, latestUpload: null };
 
 const CARD_CONTENT: Record<
   BillDocumentType,
-  { title: string; description: string; icon: ReactNode; noun: string }
+  { title: string; description: string; icon: ReactNode; noun: string; singular: string }
 > = {
   tax_invoice: {
     title: "Tax Invoice Billing",
@@ -45,6 +47,7 @@ const CARD_CONTENT: Record<
       "Access all your Tax Invoice Excel workbooks, uploaded bills and generated PDF copies.",
     icon: <FileSpreadsheet size={22} />,
     noun: "Invoices",
+    singular: "invoice",
   },
   delivery_challan: {
     title: "Challan Billing",
@@ -52,15 +55,25 @@ const CARD_CONTENT: Record<
       "Access all your Delivery Challan Excel workbooks, uploaded challans and generated PDF copies.",
     icon: <Receipt size={22} />,
     noun: "Challans",
+    singular: "challan",
   },
 };
 
 /** Tax first, then challans: the order the sections were introduced in. */
 const CARD_ORDER: BillDocumentType[] = ["tax_invoice", "delivery_challan"];
 
-function StatCell({ label, value }: { label: string; value: string }) {
+function StatSkeleton() {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" aria-hidden="true">
+      <div className="h-2.5 w-16 animate-pulse rounded bg-surface-hover" />
+      <div className="mt-2 h-3.5 w-12 animate-pulse rounded bg-surface-hover" />
+    </div>
+  );
+}
+
+function StatCell({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={wide ? "col-span-2 min-w-0" : "min-w-0"}>
       <dt className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-muted">{label}</dt>
       <dd className="mt-0.5 truncate text-sm font-bold text-text tabular-nums">{value}</dd>
     </div>
@@ -76,12 +89,11 @@ export default function BillingOverviewPage() {
   const loadType = useCallback(async (type: BillDocumentType) => {
     setCards((prev) => ({ ...prev, [type]: { ...prev[type], loading: true, error: null } }));
     try {
-      /* Two reads, both already part of the section: the upload list answers
-         "how many workbooks, and when was the newest one", and a one-row page answers
-         "how many records" using the same `count` the list itself trusts. `pageSize: 1`
-         is deliberate — the row is not used, and fetching 20 would not be more true. */
+      /* Workbook count and newest Excel upload come from the provenance-aware
+         summary; the record count comes from the section's own bill query, which
+         includes manual bills. `pageSize: 1` because only the `count` is used. */
       const [uploads, firstPage] = await Promise.all([
-        fetchBillUploads(type),
+        fetchBillUploadSummary(type),
         fetchBills({ documentType: type, page: 1, pageSize: 1 }),
       ]);
       setCards((prev) => ({
@@ -135,6 +147,7 @@ export default function BillingOverviewPage() {
           const info = DOCUMENT_TYPE_INFO[type];
           const content = CARD_CONTENT[type];
           const state = cards[type];
+          const emptySection = !state.loading && !state.error && state.summary.bills === 0;
 
           return (
             <Link
@@ -165,21 +178,43 @@ export default function BillingOverviewPage() {
                 <p className="rounded-lg border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger">
                   {state.error}
                 </p>
+              ) : state.loading ? (
+                <dl
+                  className="grid grid-cols-3 gap-3 border-t border-border pt-4"
+                  aria-busy="true"
+                  aria-label={`Counting ${info.section}`}
+                >
+                  <StatSkeleton />
+                  <StatSkeleton />
+                  <StatSkeleton />
+                </dl>
               ) : (
                 <dl className="grid grid-cols-3 gap-3 border-t border-border pt-4">
-                  <StatCell
-                    label="Workbooks"
-                    value={state.loading ? "—" : state.summary.workbooks.toLocaleString()}
-                  />
-                  <StatCell
-                    label={content.noun}
-                    value={state.loading ? "—" : state.summary.bills.toLocaleString()}
-                  />
+                  <StatCell label="Workbooks" value={state.summary.workbooks.toLocaleString()} />
+                  <StatCell label={content.noun} value={state.summary.bills.toLocaleString()} />
                   <StatCell
                     label="Latest upload"
-                    value={state.loading ? "—" : formatUploadDate(state.summary.latestUpload)}
+                    value={
+                      state.summary.latestUpload
+                        ? formatUploadDate(state.summary.latestUpload)
+                        : "No Excel uploads yet"
+                    }
                   />
                 </dl>
+              )}
+
+              {!state.loading && !state.error && (
+                <div className="space-y-1">
+                  {state.summary.workbooks === 0 && (
+                    <p className="text-[11px] text-text-muted">No Excel workbooks uploaded yet.</p>
+                  )}
+                  {emptySection && (
+                    <p className="text-[11px] text-text-muted">
+                      This section is empty — open it to create a {content.singular} or upload a
+                      workbook.
+                    </p>
+                  )}
+                </div>
               )}
 
               <span className="mt-auto inline-flex items-center gap-1.5 text-xs font-semibold text-primary">

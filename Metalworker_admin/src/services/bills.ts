@@ -39,6 +39,12 @@ import {
   type BillDocumentSource,
 } from "./billDocument";
 import {
+  readAllPages,
+  summarizeUploads,
+  type ExcelUploadRow,
+  type ExcelUploadSummary,
+} from "./billingOverview";
+import {
   sliceBillPage,
   sortBillRows,
   type BillSortMode,
@@ -365,11 +371,10 @@ async function fetchSortedBills(
   const documentType = query.documentType ?? "tax_invoice";
   const mode = query.sort ?? "default";
 
-  /* One request for the section's workbooks, not one per bill: this is the upload
-     date the user asked to sort by. Bounded by the number of workbooks, which is the
-     smallest of the three tables involved. */
-  const uploads = await fetchBillUploads(documentType);
-  const uploadTime = new Map(uploads.map((u) => [u.id, u.created_at ?? null]));
+  /* One paged read of the section's workbooks, not one per bill: this is the upload
+     date the user asked to sort by. A manual bill's placeholder upload maps to null,
+     so it sorts after real Excel uploads instead of pretending to have one. */
+  const uploadTimes = await fetchUploadTimeMetadata(documentType);
 
   const scanned: ScannedBill[] = [];
   let complete = false;
@@ -389,7 +394,7 @@ async function fetchSortedBills(
       scanned.push({
         ...bill,
         created_at: createdAt,
-        upload_created_at: uploadTime.get(bill.bill_upload_id) ?? null,
+        upload_created_at: uploadTimes.get(bill.bill_upload_id) ?? null,
       });
     }
     /* Two exits, both needed: a short page ends the walk even if the reported total
@@ -441,7 +446,11 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
     // Newest invoice first, then newest row, so the order is total and stable
     // (two bills sharing an invoice date must not swap places between pages).
     .order("invoice_date", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    /* A unique final key, so offset pagination is deterministic. Two bills can share
+       an invoice date and a creation timestamp; without this, the global sort's
+       multi-page read could see one of them twice and miss the other. */
+    .order("id", { ascending: true });
 
   q = q.eq("document_type", query.documentType ?? "tax_invoice");
 
@@ -532,14 +541,96 @@ export async function fetchBillLineItems(billId: string): Promise<BillLineItem[]
   return (data ?? []) as BillLineItem[];
 }
 
+/** Columns the metadata readers need. No PDF paths, no file bytes. */
+const UPLOAD_META_COLUMNS = "id, created_at, creation_source, document_type";
+
+/** A row of upload metadata, as far as the overview and the sort are concerned. */
+type UploadMetaRow = Pick<BillUpload, "id" | "created_at" | "creation_source">;
+
+/**
+ * Every upload row for one document type, read in bounded pages.
+ *
+ * The previous single query relied on the backend's default row limit: one row past
+ * it and the section's own workbook list silently lost its tail. Pages are filtered by
+ * document type and ordered deterministically (`created_at` desc, then the unique
+ * `id`), which is what lets offset paging over a static set neither duplicate nor skip
+ * a row. `select("*")` is kept because the workbook chips and the regeneration scopes
+ * read the file and PDF names from these rows.
+ */
 export async function fetchBillUploads(documentType: BillDocumentType = "tax_invoice"): Promise<BillUpload[]> {
-  const { data, error } = await supabase
-    .from(UPLOADS)
-    .select("*")
-    .eq("document_type", documentType)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as BillUpload[];
+  return readAllPages(async (page, pageSize) => {
+    const { data, error, count } = await supabase
+      .from(UPLOADS)
+      .select("*", { count: "exact" })
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(error.message);
+    return { rows: (data ?? []) as BillUpload[], total: count };
+  });
+}
+
+/**
+ * The two numbers an overview card needs: how many EXCEL workbooks this section has,
+ * and when the newest one arrived.
+ *
+ * Manual bills' synthetic upload rows are excluded by `summarizeUploads`, on
+ * `creation_source` — not on the filename, which is a label, not provenance.
+ */
+export async function fetchBillUploadSummary(
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<ExcelUploadSummary> {
+  const rows = await readAllPages<UploadMetaRow>(async (page, pageSize) => {
+    const { data, error, count } = await supabase
+      .from(UPLOADS)
+      .select(UPLOAD_META_COLUMNS, { count: "exact" })
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(error.message);
+    return { rows: (data ?? []) as UploadMetaRow[], total: count };
+  });
+
+  return summarizeUploads(rows);
+}
+
+/**
+ * When each workbook was uploaded, by upload id, for the Excel-upload-date sort.
+ *
+ * A manual bill's upload row is a placeholder carrying the bill's creation time, so it
+ * maps to `null`: the sort then places it after every real Excel upload rather than
+ * inventing an upload date for it. A missing or unreadable timestamp maps to null for
+ * the same reason.
+ */
+export async function fetchUploadTimeMetadata(
+  documentType: BillDocumentType = "tax_invoice"
+): Promise<Map<string, string | null>> {
+  const rows = await readAllPages<UploadMetaRow>(async (page, pageSize) => {
+    const { data, error, count } = await supabase
+      .from(UPLOADS)
+      .select(UPLOAD_META_COLUMNS, { count: "exact" })
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(error.message);
+    return { rows: (data ?? []) as UploadMetaRow[], total: count };
+  });
+
+  const byId = new Map<string, string | null>();
+  for (const row of rows) {
+    const manual = !isExcelUploadRow(row);
+    const parsed = row.created_at ? Date.parse(row.created_at) : Number.NaN;
+    byId.set(row.id, manual || !Number.isFinite(parsed) ? null : row.created_at);
+  }
+  return byId;
+}
+
+/** Provenance check kept local so the two readers agree with the pure summary. */
+function isExcelUploadRow(row: ExcelUploadRow): boolean {
+  return row.creation_source !== "manual";
 }
 
 export async function fetchBillUpload(id: string): Promise<BillUpload> {

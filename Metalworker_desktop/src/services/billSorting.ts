@@ -219,3 +219,20 @@ export function describeBillSort(mode: BillSortMode): string {
   if (mode === "upload_date") return "Excel upload date, oldest first";
   return "Newest first";
 }
+
+/**
+ * The helper line shown under the two checkboxes.
+ *
+ * It says out loud what the ordering does, including the part a user cannot guess: a
+ * bill created by hand has no Excel workbook behind it, so it cannot have an Excel
+ * upload date and is placed after the imported bills rather than given a fake one.
+ */
+export function billSortHelp(mode: BillSortMode): string {
+  if (mode === "document_number") {
+    return "Document numbers are compared as numbers, lowest to highest.";
+  }
+  if (mode === "upload_date") {
+    return "Oldest Excel workbook first. Manually created bills have no Excel upload date, so they appear after imported bills.";
+  }
+  return "Newest invoice date first. Tick an option to reorder the whole list.";
+}

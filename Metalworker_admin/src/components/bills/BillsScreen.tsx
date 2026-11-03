@@ -83,7 +83,7 @@ import { SkeletonCard } from "../ui/Skeleton";
 import { notify } from "../../utils/notify";
 import { BillDocumentTypeContext, useBillDocumentType } from "../../context/BillDocumentTypeContext";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
-import { nextSortMode, type BillSortMode } from "../../services/billSorting";
+import { billSortHelp, nextSortMode, type BillSortMode } from "../../services/billSorting";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -202,8 +202,14 @@ const [createOpen, setCreateOpen] = useState(false);
   const fromBound = ISO_DATE.test(from) ? from : null;
   const toBound = ISO_DATE.test(to) ? to : null;
 
+  /* A stale response must never paint over a newer one. Changing the sort starts a
+     second global scan while the first is still running; without this, whichever
+     answers last would win — possibly the order the user already moved away from. */
+  const requestSeq = useRef(0);
+
   const load = useCallback(
     async (silent = false) => {
+      const seq = ++requestSeq.current;
       if (silent) setRefreshing(true);
       else setLoading(true);
       try {
@@ -224,6 +230,7 @@ const [createOpen, setCreateOpen] = useState(false);
           // along rather than becoming a second load path that can disagree.
           fetchBillJobFacets(documentType),
         ]);
+        if (seq !== requestSeq.current) return;
         setBills(pageData.rows);
         setTotal(pageData.total);
         setUploads(
@@ -236,13 +243,16 @@ const [createOpen, setCreateOpen] = useState(false);
         setFacets(facetList);
         setLoadError(null);
       } catch (err) {
+        if (seq !== requestSeq.current) return;
         setLoadError(
           err instanceof Error ? err.message : "The bills could not be loaded."
         );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
-        setLoadedOnce(true);
+        if (seq === requestSeq.current) {
+          setLoading(false);
+          setRefreshing(false);
+          setLoadedOnce(true);
+        }
       }
     },
     [documentType, search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, sortMode, page]
@@ -295,6 +305,15 @@ const [createOpen, setCreateOpen] = useState(false);
   const allVisibleSelected = bills.length > 0 && selectedBills.length === bills.length;
   /** True while any bulk operation owns the screen. See `bulk`. */
   const busy = bulk !== null;
+
+  /**
+   * True while a global sort is being calculated over the whole matching set.
+   *
+   * The rows already on screen stay visible underneath; this only says the order is
+   * being rebuilt, and it locks the two checkboxes so a second scan cannot be stacked
+   * on top of the first.
+   */
+  const sorting = loading && loadedOnce && sortMode !== "default";
 
 
   /** True while the bulk assign/remove is running, so the bar can lock. */
@@ -898,9 +917,14 @@ const [createOpen, setCreateOpen] = useState(false);
                   setPage(1);
                 }}
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: active }}
+                accessibilityState={{ checked: active, disabled: sorting }}
                 accessibilityLabel={option.label}
-                style={({ pressed }) => [styles.sortOption, pressed && styles.pressed]}
+                disabled={sorting}
+                style={({ pressed }) => [
+                  styles.sortOption,
+                  pressed && styles.pressed,
+                  sorting && styles.disabled,
+                ]}
               >
                 <View style={[styles.sortBox, active && styles.sortBoxChecked]}>
                   {active && (
@@ -919,6 +943,21 @@ const [createOpen, setCreateOpen] = useState(false);
             );
           })}
         </View>
+
+        <Text style={styles.sortHelp}>{billSortHelp(sortMode)}</Text>
+        {sortMode !== "default" && (
+          <Pressable
+            onPress={() => {
+              setSortMode("default");
+              setPage(1);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear sorting and return to the default order"
+            style={({ pressed }) => [styles.sortClear, pressed && styles.pressed]}
+          >
+            <Text style={styles.sortClearText}>Clear sorting</Text>
+          </Pressable>
+        )}
 
         <View style={styles.actionBar}>
           {/* Both sections offer the creator, each with its own form and document type. */}
@@ -1100,6 +1139,13 @@ const [createOpen, setCreateOpen] = useState(false);
                 <Text style={styles.clearText}>Clear filters</Text>
               </Pressable>
             )}
+          </View>
+        )}
+
+        {sorting && (
+          <View style={styles.sortingRow} accessibilityLiveRegion="polite">
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.sortingText}>Sorting all matching bills…</Text>
           </View>
         )}
 
@@ -1975,6 +2021,25 @@ const createStyles = (theme: AppTheme) =>
       fontWeight: "600",
     },
     sortOptionTextActive: { color: theme.colors.text, fontWeight: "700" },
+    sortHelp: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.caption,
+      lineHeight: 16,
+      marginBottom: theme.spacing.xs,
+    },
+    sortClear: { alignSelf: "flex-start", paddingVertical: 4, marginBottom: theme.spacing.xs },
+    sortClearText: {
+      color: theme.colors.primary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+    },
+    sortingRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.sm,
+    },
+    sortingText: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs },
     actionBar: {
       flexDirection: "row",
       gap: theme.spacing.sm,
