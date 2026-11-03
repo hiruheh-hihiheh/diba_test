@@ -72,6 +72,13 @@ import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocum
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../hooks/useToast";
 import { billSortHelp, nextSortMode, type BillSortMode } from "../services/billSorting";
+import {
+  STATUS_FILTERS,
+  isDraftBill,
+  statusBadgeLabel,
+  statusFilterToStatus,
+  type StatusFilter,
+} from "../services/draftLifecycle";
 import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
@@ -227,6 +234,13 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
    */
   const [sortMode, setSortMode] = useState<BillSortMode>("default");
 
+  /**
+   * Which document status the list is narrowed to. `all` keeps both, which is the
+   * section's existing behaviour; the filter is applied in the database so the count,
+   * the page and the global sort all describe the same set.
+   */
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
   const [facets, setFacets] = useState<BillJobFacet[]>([]);
@@ -322,6 +336,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
             from: from || null,
             to: to || null,
             jobKindValues: jobKindValuesForGroup,
+            status: statusFilterToStatus(statusFilter),
             sort: sortMode,
             page,
             pageSize,
@@ -350,7 +365,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
         }
       }
     },
-    [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, sortMode, page, pageSize]
+    [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, statusFilter, sortMode, page, pageSize]
   );
 
   /* Regeneration is driven by the server's job; the hook only mirrors it, so a
@@ -1250,6 +1265,48 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           )}
         </p>
 
+        {/* Status filter. Compact, next to the other filters, because it answers a
+            different question from search: "has this been generated?" rather than
+            "which one?". Drafts are real records, so "All" still shows them. */}
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter bills by status">
+          <span className="text-xs font-semibold text-text-muted">Status</span>
+          <div className="inline-flex rounded-xl border border-border overflow-hidden">
+            {STATUS_FILTERS.map((option) => {
+              const active = statusFilter === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    setStatusFilter(option.value);
+                    setPage(1);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-text-muted hover:bg-surface-hover hover:text-text"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {statusFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("all");
+                setPage(1);
+              }}
+              className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+            >
+              Show all
+            </button>
+          )}
+        </div>
+
         {/* Job-type grouping.
             One workbook legitimately contains both kinds, so this is a filter on
             the one `job_kind` column, not a second list: no rows are duplicated
@@ -1412,20 +1469,36 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
 
           {bills.length === 0 ? (
             <EmptyState
-              icon={filtered ? <SearchX size={24} /> : <FileSpreadsheet size={24} />}
-              title={filtered ? "No bills match" : "No bills yet"}
+              icon={filtered || statusFilter !== "all" ? <SearchX size={24} /> : <FileSpreadsheet size={24} />}
+              title={
+                statusFilter === "drafts" && !filtered
+                  ? "No drafts yet"
+                  : filtered || statusFilter !== "all"
+                    ? `No ${info.word}s match`
+                    : `No ${info.word}s yet`
+              }
               description={
-                filtered
-                  ? "Nothing matches the current search and filters."
+                statusFilter === "drafts" && !filtered
+                  ? `New ${info.word}s are saved here automatically until they are generated.`
+                  : filtered || statusFilter !== "all"
+                  ? "Nothing matches the current search, status and filters."
                   : "Upload a tax-invoice workbook. Each worksheet becomes one bill, and the workbook produces an original, a duplicate and a triplicate PDF."
               }
               action={
-                filtered ? (
+                statusFilter === "drafts" && !filtered ? (
+                  <Link
+                    to={`${info.route}/create?mode=empty`}
+                    className="btn btn-primary"
+                  >
+                    {documentType === "delivery_challan" ? "Create Challan" : "Create Bill"}
+                  </Link>
+                ) : filtered || statusFilter !== "all" ? (
                   <button
                     type="button"
                     onClick={() => {
                       setSearch("");
                       clearFilters();
+                      setStatusFilter("all");
                     }}
                     className="btn btn-primary"
                   >
@@ -1542,6 +1615,15 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
                                 {bill.party_name}
                               </p>
                             )}
+                            <span
+                              className={`mt-1 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                isDraftBill(bill.status)
+                                  ? "bg-warning-muted text-warning"
+                                  : "bg-surface-hover text-text-muted"
+                              }`}
+                            >
+                              {statusBadgeLabel(bill.status)}
+                            </span>
                           </td>
 
                           <td className="px-3 py-3 text-sm text-text-muted whitespace-nowrap">
@@ -1576,7 +1658,11 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
                           )}
 
                           <td className="hidden xl:table-cell px-3 py-3">
-                            <BillCopyActions bill={bill} layout="compact" />
+                            {isDraftBill(bill.status) ? (
+                              <span className="text-[11px] text-text-muted">Not generated</span>
+                            ) : (
+                              <BillCopyActions bill={bill} layout="compact" />
+                            )}
                           </td>
 
                           {/* The logo column answers "will this print with a
@@ -1656,13 +1742,24 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
                                 icon={<Link2 size={15} />}
                                 onClick={() => setLinkJobsFor(bill)}
                               />
-                              <IconButton
-                                label={`Edit bill ${bill.invoice_no ?? bill.sheet_name}`}
-                                size="sm"
-                                tooltipPlacement="top-end"
-                                icon={<Pencil size={15} />}
-                                onClick={() => setEditId(bill.id)}
-                              />
+                              {isDraftBill(bill.status) ? (
+                                <Link
+                                  to={`${info.route}/create?draft=${bill.id}`}
+                                  aria-label={`Continue editing ${bill.invoice_no ?? bill.sheet_name}`}
+                                  title="Continue editing this draft"
+                                  className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-text-muted hover:text-primary hover:bg-surface-hover transition-colors"
+                                >
+                                  <Pencil size={15} />
+                                </Link>
+                              ) : (
+                                <IconButton
+                                  label={`Edit bill ${bill.invoice_no ?? bill.sheet_name}`}
+                                  size="sm"
+                                  tooltipPlacement="top-end"
+                                  icon={<Pencil size={15} />}
+                                  onClick={() => setEditId(bill.id)}
+                                />
+                              )}
                               <IconButton
                                 label={`Delete bill ${bill.invoice_no ?? bill.sheet_name}`}
                                 size="sm"

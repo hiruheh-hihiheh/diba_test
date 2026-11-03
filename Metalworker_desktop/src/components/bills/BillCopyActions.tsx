@@ -24,7 +24,7 @@ import IconButton from "../ui/IconButton";
 
 type BillSource = Pick<
   Bill,
-  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path" | "base_name"
+  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path" | "base_name" | "status"
 >;
 
 /**
@@ -72,6 +72,21 @@ export function BillCopyActions({
      disabled and the reason is shown, because the alternative — quietly handing
      back the workbook PDF — is exactly the behaviour this replaced. */
   const legacy = isLegacyBill(bill);
+
+  /* A draft has no documents by design, so there is nothing to view, download or print
+     yet. Saying that plainly is better than three disabled buttons whose tooltips
+     explain an absence the admin did not ask about. */
+  if (bill.status === "draft") {
+    if (layout === "compact") {
+      return <span className="text-[11px] text-text-muted">Not generated</span>;
+    }
+    return (
+      <p className="rounded-xl border border-border bg-bg-secondary px-4 py-3 text-sm text-text-muted">
+        Not generated yet. Continue editing this draft and choose Generate to produce the
+        Original, Duplicate and Triplicate PDFs.
+      </p>
+    );
+  }
 
   if (layout === "compact") {
     /* Three small icons in a row — used in the list's "Copies" column, where the

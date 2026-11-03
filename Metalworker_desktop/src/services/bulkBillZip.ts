@@ -79,7 +79,7 @@ export const BULK_ZIP_LIMITS: BulkZipLimits = {
    Planning
    ────────────────────────────────────────────── */
 
-export type BulkZipSkipReason = "legacy" | "missing-copy" | "size-limit";
+export type BulkZipSkipReason = "draft" | "legacy" | "missing-copy" | "size-limit";
 
 export interface BulkZipSkip {
   billId: string;
@@ -238,6 +238,21 @@ export function planBulkZip(
   for (const bill of uniqueBills) {
     for (const copy of ordered) {
       const invoiceNo = bill.invoice_no ?? null;
+
+      /* A draft has no documents BY DESIGN, and is not a legacy row. Skipped with its
+         own reason so a bulk selection that included one says so instead of reporting
+         "the Original copy was not generated" for a document that was never meant to
+         exist yet. */
+      if (bill.status === "draft") {
+        skipped.push({
+          billId: bill.id,
+          invoiceNo,
+          copy,
+          reason: "draft",
+          detail: "This is a draft and has not been generated yet. Continue editing it and generate it first.",
+        });
+        continue;
+      }
 
       if (isLegacyBill(bill)) {
         skipped.push({

@@ -81,6 +81,15 @@ export interface Bill extends BillColumns {
 export interface BillColumns {
   id: string;
   /**
+   * `bills.status` (migration 0015): `draft` until the three PDFs exist, then
+   * `finalized`. Distinct from `BillUpload["status"]`, which is a pipeline stage —
+   * a draft's synthetic upload row is already `completed`.
+   *
+   * Optional because a row read through a narrow select may omit it; treat absent as
+   * `finalized`, which is the column's default and every pre-0015 row's value.
+   */
+  status?: "draft" | "finalized";
+  /**
    * Tax Invoice or Delivery Challan (migration 0025). For a challan `invoice_no` /
    * `invoice_date` hold the CHALLAN number and date, and every money column is null.
    */
@@ -223,6 +232,7 @@ export const BILL_BANK_PARTS: readonly { key: string; label: string }[] = [
  * would alter the printed invoice for no reason anyone asked for.
  */
 export interface BillPatch {
+  /** Never accepted by the editor; listed only so a caller cannot send it by accident. */
   job_kind?: string | null;
 
   invoice_no?: string | null;

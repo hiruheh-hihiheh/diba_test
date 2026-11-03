@@ -62,6 +62,13 @@ import { RegenerationScopeDialog } from "./RegenerationScopeDialog";
 import { BillingFolderSheet } from "./BillingFolderSheet";
 import { BulkOperationOverlay, type BulkOperation } from "./BulkOperationOverlay";
 import { BillCopyActions } from "./BillCopyActions";
+import {
+  STATUS_FILTERS,
+  isDraftBill,
+  statusBadgeLabel,
+  statusFilterToStatus,
+  type StatusFilter,
+} from "../../services/draftLifecycle";
 import { BillDetailModal } from "./BillDetailModal";
 import { BillEditScreen } from "./BillEditScreen";
 import { BillFolderPickerModal } from "./BillFolderPickerModal";
@@ -127,6 +134,8 @@ export function BillsScreen({ documentType }: { documentType: BillDocumentType }
    * cut, so switching one on resets to page 1 rather than re-ordering 20 rows.
    */
   const [sortMode, setSortMode] = useState<BillSortMode>("default");
+  /** `all` | `generated` | `drafts`. Applied in the database, before pagination. */
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const [uploadOpen, setUploadOpen] = useState(false);
 const [createOpen, setCreateOpen] = useState(false);
@@ -221,6 +230,7 @@ const [createOpen, setCreateOpen] = useState(false);
             from: fromBound,
             to: toBound,
             jobKindValues: jobKindValuesForGroup,
+            status: statusFilterToStatus(statusFilter),
             sort: sortMode,
             page,
             pageSize: DEFAULT_PAGE_SIZE,
@@ -255,7 +265,7 @@ const [createOpen, setCreateOpen] = useState(false);
         }
       }
     },
-    [documentType, search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, sortMode, page]
+    [documentType, search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, statusFilter, sortMode, page]
   );
 
   /* Regeneration is driven by the server's job; the hook only mirrors it, so a
@@ -390,6 +400,7 @@ const [createOpen, setCreateOpen] = useState(false);
         from: from || null,
         to: to || null,
         jobKindValues: jobKindValuesForGroup,
+        status: statusFilterToStatus(statusFilter),
       });
       setAllMatchingIds(ids);
       setSelected(ids);
@@ -1149,6 +1160,35 @@ const [createOpen, setCreateOpen] = useState(false);
           </View>
         )}
 
+        {/* Status filter. Always visible: "has this been generated?" is a question an
+            admin asks on every visit, not one hidden behind "Filters". */}
+        <View style={styles.statusRow} accessibilityRole="tablist">
+          {STATUS_FILTERS.map((option) => {
+            const active = statusFilter === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                onPress={() => {
+                  setStatusFilter(option.value);
+                  setPage(1);
+                }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={`Show ${option.label.toLowerCase()}`}
+                style={({ pressed }) => [
+                  styles.statusChip,
+                  active && styles.statusChipActive,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         {/* List */}
         {loading && !loadedOnce ? (
           <View style={styles.skeletons}>
@@ -1165,20 +1205,38 @@ const [createOpen, setCreateOpen] = useState(false);
           />
         ) : bills.length === 0 ? (
           <EmptyState
-            icon={filtered ? "search" : "receipt"}
-            title={filtered ? "No bills match" : "No bills yet"}
+            icon={filtered || statusFilter !== "all" ? "search" : "receipt"}
+            title={
+              statusFilter === "drafts" && !filtered
+                ? "No drafts yet"
+                : filtered || statusFilter !== "all"
+                  ? `No ${info.word}s match`
+                  : `No ${info.word}s yet`
+            }
             message={
-              filtered
-                ? "Nothing matches the current search and filters."
+              statusFilter === "drafts" && !filtered
+                ? `New ${info.word}s are saved here automatically until they are generated.`
+                : filtered || statusFilter !== "all"
+                ? "Nothing matches the current search, status and filters."
                 : "Upload a tax-invoice workbook. Each worksheet becomes one bill, and the workbook produces an original, a duplicate and a triplicate PDF."
             }
             action={
-              filtered ? (
+              statusFilter === "drafts" && !filtered ? (
+                <Button
+                  title={documentType === "delivery_challan" ? "Create Challan" : "Create Bill"}
+                  onPress={() =>
+                    router.push(
+                      (`/bill-create?documentType=${documentType}&mode=empty` as Href)
+                    )
+                  }
+                />
+              ) : filtered || statusFilter !== "all" ? (
                 <Button
                   title="Clear search and filters"
                   onPress={() => {
                     setSearch("");
                     clearFilters();
+                    setStatusFilter("all");
                   }}
                 />
               ) : (
@@ -1362,13 +1420,32 @@ const [createOpen, setCreateOpen] = useState(false);
                         <Text style={styles.billFile} numberOfLines={1}>
                           {bill.original_filename} · Sheet {bill.sheet_name}
                         </Text>
+                        <Text
+                          style={[
+                            styles.statusBadge,
+                            isDraftBill(bill.status)
+                              ? styles.statusBadgeDraft
+                              : styles.statusBadgeDone,
+                          ]}
+                        >
+                          {statusBadgeLabel(bill.status)}
+                        </Text>
                       </Pressable>
                     </View>
 
-                    <View style={styles.accessoryRow}>
-                      <Text style={styles.accessoryLabel}>PRINT</Text>
-                      <BillCopyActions bill={bill} layout="compact" />
-                    </View>
+                    {isDraftBill(bill.status) ? (
+                      <View style={styles.accessoryRow}>
+                        <Text style={styles.accessoryLabel}>NOT GENERATED</Text>
+                        <Text style={styles.draftNote}>
+                          Continue editing to finish it. PDFs appear once it is generated.
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.accessoryRow}>
+                        <Text style={styles.accessoryLabel}>PRINT</Text>
+                        <BillCopyActions bill={bill} layout="compact" />
+                      </View>
+                    )}
 
                     {/* The logo line answers "will this print with a letterhead?"
                         at a glance, which is the question an admin has when
@@ -1406,13 +1483,27 @@ const [createOpen, setCreateOpen] = useState(false);
                         onPress={() => openPicker([bill.id])}
                         accessibilityLabel={`Add bill ${title} to a folder`}
                       />
-                      <CardAction
-                        icon="pencil"
-                        label="Edit"
-                        disabled={rowBusy}
-                        onPress={() => setEditId(bill.id)}
-                        accessibilityLabel={`Edit bill ${title}`}
-                      />
+                      {isDraftBill(bill.status) ? (
+                        <CardAction
+                          icon="pencil"
+                          label="Continue"
+                          disabled={rowBusy}
+                          onPress={() =>
+                            router.push(
+                              (`/bill-create?draft=${bill.id}&documentType=${documentType}` as Href)
+                            )
+                          }
+                          accessibilityLabel={`Continue editing ${title}`}
+                        />
+                      ) : (
+                        <CardAction
+                          icon="pencil"
+                          label="Edit"
+                          disabled={rowBusy}
+                          onPress={() => setEditId(bill.id)}
+                          accessibilityLabel={`Edit bill ${title}`}
+                        />
+                      )}
                       <IconButton
                         icon="trash"
                         accessibilityLabel={`Delete bill ${title}`}
@@ -2040,6 +2131,49 @@ const createStyles = (theme: AppTheme) =>
       marginBottom: theme.spacing.sm,
     },
     sortingText: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs },
+    statusRow: {
+      flexDirection: "row",
+      gap: theme.spacing.xs,
+      marginBottom: theme.spacing.sm,
+    },
+    statusChip: {
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 6,
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    statusChipActive: {
+      borderColor: theme.colors.primary,
+      backgroundColor: theme.colors.primaryMuted,
+    },
+    statusChipText: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+    },
+    statusChipTextActive: { color: theme.colors.primary },
+    statusBadge: {
+      alignSelf: "flex-start",
+      marginTop: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      overflow: "hidden",
+      fontSize: 10,
+      fontWeight: "800",
+      letterSpacing: 0.4,
+    },
+    statusBadgeDraft: {
+      color: theme.colors.warning,
+      backgroundColor: theme.colors.warningMuted,
+    },
+    statusBadgeDone: {
+      color: theme.colors.textMuted,
+      backgroundColor: theme.colors.surfaceHover,
+    },
+    draftNote: { color: theme.colors.textMuted, fontSize: theme.textSizes.xs, flex: 1 },
     actionBar: {
       flexDirection: "row",
       gap: theme.spacing.sm,

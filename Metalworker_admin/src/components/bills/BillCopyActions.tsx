@@ -25,7 +25,7 @@ import { notify } from "../../utils/notify";
 
 type BillSource = Pick<
   Bill,
-  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path" | "base_name"
+  "original_pdf_path" | "duplicate_pdf_path" | "triplicate_pdf_path" | "base_name" | "status"
 >;
 
 /** Text glyphs instead of an icon font: no new dependency, and they scale. */
@@ -75,6 +75,16 @@ export function BillCopyActions({
      disabled and the reason is shown, because the alternative — quietly handing
      back the workbook PDF — is exactly the behaviour this replaced. */
   const legacy = isLegacyBill(bill);
+
+  /* A draft has no documents by design. Saying so once is clearer than three disabled
+     buttons that have to explain an absence the admin did not ask about. */
+  if (bill.status === "draft") {
+    return (
+      <Text style={styles.compactTextDisabled}>
+        Not generated yet — continue editing this draft to produce its PDFs.
+      </Text>
+    );
+  }
 
   if (layout === "compact") {
     /* Three small buttons in a row — used in the list's "Copies" column, where

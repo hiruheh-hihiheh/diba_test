@@ -212,6 +212,11 @@ export function BillDetailModal({
                   .join(" · ")
               : "Loading the invoice…"}
           </Text>
+          {bill?.status === "draft" && (
+            <Text style={styles.subtitle}>
+              Draft — not generated. PDFs appear after you generate it.
+            </Text>
+          )}
 
           {loading && (
             <View
@@ -426,8 +431,9 @@ export function BillDetailModal({
             )}
             {bill && !loading && (
               <Button
-                title="Edit bill"
+                title={bill.status === "draft" ? "Generate first" : "Edit bill"}
                 onPress={() => onEdit(bill)}
+                disabled={bill.status === "draft"}
                 style={styles.actionButton}
               />
             )}

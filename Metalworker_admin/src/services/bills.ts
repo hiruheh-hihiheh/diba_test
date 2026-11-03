@@ -296,6 +296,14 @@ export interface BillQuery {
    * return it on.
    */
   sort?: BillSortMode;
+  /**
+   * Restrict to drafts or generated documents (`bills.status`).
+   *
+   * Applied in the database, before pagination and before the global sort's scan, so
+   * the count, the page and the order all describe the same filtered set. `null` is
+   * "All" — every bill of this document type, drafts included.
+   */
+  status?: "draft" | "finalized" | null;
   page?: number;
   pageSize?: number;
 }
@@ -454,6 +462,10 @@ export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
 
   q = q.eq("document_type", query.documentType ?? "tax_invoice");
 
+  /* Status BEFORE pagination, and via the same `fetchBills` the sort scan calls, so a
+     Drafts view cannot order rows it would not have listed. */
+  if (query.status) q = q.eq("status", query.status);
+
   if (folderId) {
     /* `item_type` is part of the filter, not implied: `folder_items` is a
        polymorphic link table, so a folder that somehow held a job would otherwise
@@ -539,6 +551,27 @@ export async function fetchBillLineItems(billId: string): Promise<BillLineItem[]
     .order("sr_no", { ascending: true, nullsFirst: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as BillLineItem[];
+}
+
+/**
+ * The billing folder a bill sits in, or null.
+ *
+ * Lives on `folder_items`, not on the bill, so resuming a draft needs this one extra
+ * read to put the stored folder back on the form. Read-only and single-row; a failure
+ * is reported as "no folder" rather than failing the resume, because a draft whose
+ * folder cannot be read is still a draft the admin can edit and generate.
+ */
+export async function fetchBillFolderId(billId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from(FOLDER_ITEMS)
+    .select("folder_id")
+    .eq("item_type", "bill")
+    .eq("item_id", billId)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  const value = (data as { folder_id?: unknown } | null)?.folder_id;
+  return typeof value === "string" ? value : null;
 }
 
 /** Columns the metadata readers need. No PDF paths, no file bytes. */

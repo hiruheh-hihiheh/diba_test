@@ -24,6 +24,12 @@ export interface BillDocumentSource {
   original_pdf_path: string | null;
   duplicate_pdf_path: string | null;
   triplicate_pdf_path: string | null;
+  /**
+   * `bills.status`. A DRAFT has no PDFs by design, which is not the same as a row
+   * written before per-bill documents existed. Without this, every saved draft would
+   * be announced as a legacy document whose documents are missing.
+   */
+  status?: "draft" | "finalized" | null;
   invoice_no?: string | null;
   sheet_name?: string | null;
   base_name?: string | null;
@@ -74,6 +80,9 @@ export function billCopyPath(source: BillDocumentSource, copy: BillCopy): string
  * 301" is the bug being fixed, not a degraded version of it.
  */
 export function isLegacyBill(source: BillDocumentSource): boolean {
+  /* Status first. A draft is not a document yet, so its absent paths are the expected
+     state rather than evidence of an older row. */
+  if (source.status === "draft") return false;
   return !source.original_pdf_path && !source.duplicate_pdf_path && !source.triplicate_pdf_path;
 }
 

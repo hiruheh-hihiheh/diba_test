@@ -33,7 +33,7 @@
 // a link rather than a feature.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowDown,
@@ -77,7 +77,19 @@ import {
 import { fetchInvoiceLogos } from "../services/invoiceLogos";
 import { fetchInvoiceBusinessProfile } from "../services/invoiceBusinessProfile";
 import { getBillConnections, unlinkJobsFromBill } from "../services/billJobConnections";
-import { fetchBill, fetchBillLineItems, fetchBills } from "../services/bills";
+import { fetchBill, fetchBillFolderId, fetchBillLineItems, fetchBills } from "../services/bills";
+import {
+  completeDraftSession,
+  draftKeyForSession,
+  draftSessionFromSearch,
+  newDraftKey,
+} from "../services/draftLifecycle";
+import {
+  createSaveQueue,
+  type SaveOutcome,
+  type SaveQueue,
+  type SaveQueueState,
+} from "../services/saveQueue";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import { formatBillDate, formatMoney } from "../services/billFormat";
 import {
@@ -88,6 +100,7 @@ import {
   saveCreatorDraft,
   type CreatorDraftRef,
   type CreatorDuplicate,
+  type CreatorSaveResult,
 } from "../services/billCreator";
 import {
   BANK_FIELD_ORDER_LABEL,
@@ -116,7 +129,7 @@ import type { BillJobConnection } from "../types/billJobConnections";
    The form's three modes
    ────────────────────────────────────────────── */
 
-type Mode = "empty" | "profile" | "copy";
+type Mode = "empty" | "profile" | "copy" | "resume";
 
 /**
  * Read the mode out of the query string.
@@ -132,6 +145,13 @@ type Mode = "empty" | "profile" | "copy";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function readMode(params: URLSearchParams): { mode: Mode | null; sourceBillId: string | null } {
+  /* Resuming a saved draft. The bill id IS the identity here: there is nothing to
+     create, so there is no idempotency key, and every save updates that row. Checked
+     before `copy` so an old hand-edited URL cannot turn a resume into a new copy. */
+  const draft = (params.get("draft") ?? "").trim();
+  if (draft !== "" && UUID_RE.test(draft)) {
+    return { mode: "resume", sourceBillId: draft };
+  }
   const copy = (params.get("copy") ?? "").trim();
   // `copy=pick` is the picker sentinel, not a bill id.
   if (copy !== "" && copy !== "pick" && UUID_RE.test(copy)) {
@@ -144,35 +164,6 @@ function readMode(params: URLSearchParams): { mode: Mode | null; sourceBillId: s
 
 /** How long typing settles before the draft is saved. */
 const AUTOSAVE_MS = 1200;
-
-/**
- * A per-form idempotency token, kept in sessionStorage rather than generated afresh.
- *
- * Generated once per form and reused for every save, so a save the server completed but
- * whose response was lost does not become a second bill: the retry carries the same key
- * and the server's unique index turns it into an update. sessionStorage rather than
- * memory so that "save draft, refresh, keep typing" is one bill — which is the whole
- * resumability claim.
- */
-function draftKeyFor(mode: Mode, sourceBillId: string | null, documentType: BillDocumentType): string {
-  /* The type is part of the key. A challan draft and an invoice draft are different
-     documents, and reusing one form's idempotency token for the other would make the
-     server treat the second as a retry of the first. */
-  const storageKey = `bill-creator:${documentType}:${mode}:${sourceBillId ?? ""}`;
-  try {
-    const existing = window.sessionStorage.getItem(storageKey);
-    if (existing) return existing;
-    const fresh = globalThis.crypto.randomUUID();
-    window.sessionStorage.setItem(storageKey, fresh);
-    return fresh;
-  } catch {
-    /* Private mode, a locked-down webview, no sessionStorage. The server tolerates a
-       missing key — it only loses the idempotency guarantee for this form, which is a
-       worse outcome than a retried save creating a second DRAFT that the admin can see
-       and delete. */
-    return globalThis.crypto.randomUUID();
-  }
-}
 
 /* ──────────────────────────────────────────────
    A highlighted field on a copy
@@ -236,9 +227,31 @@ function ReviewField({
 export default function CreateBillPage({ documentType = "tax_invoice" }: { documentType?: BillDocumentType }) {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { mode, sourceBillId } = useMemo(() => readMode(params), [params]);
   const info = DOCUMENT_TYPE_INFO[documentType];
   const challan = documentType === "delivery_challan";
+
+  /**
+   * This creation intent's id.
+   *
+   * Minted once when the route is first opened, then written into the URL so a refresh
+   * resumes the SAME intent. Two separate "Create Bill" clicks mount this page twice
+   * and therefore get two ids, which is what stops the second from reusing the first's
+   * idempotency key. A resumed draft does not need one. The initial value is read from
+   * the URL so a refresh reuses the stored key instead of minting a new one.
+   */
+  const [sessionId] = useState(
+    () => draftSessionFromSearch(location.search) ?? newDraftKey()
+  );
+
+  useEffect(() => {
+    if (mode === null || mode === "resume") return;
+    if (draftSessionFromSearch(location.search)) return;
+    const next = new URLSearchParams(location.search);
+    next.set("session", sessionId);
+    setParams(next, { replace: true });
+  }, [mode, location.search, sessionId, setParams]);
 
   /* `copy=pick` is not a mode — it means the picker is open. It lives in the URL so that a
      refresh reopens the dialog rather than silently becoming a blank new bill, which is
@@ -273,9 +286,10 @@ export default function CreateBillPage({ documentType = "tax_invoice" }: { docum
        leak from a half-typed copy into the next new bill. */
     return (
       <CreatorForm
-        key={`${documentType}:${mode}:${sourceBillId ?? ""}`}
+        key={`${documentType}:${mode}:${sourceBillId ?? ""}:${sessionId}`}
         mode={mode}
         sourceBillId={sourceBillId}
+        sessionId={sessionId}
         documentType={documentType}
       />
     );
@@ -371,10 +385,12 @@ export default function CreateBillPage({ documentType = "tax_invoice" }: { docum
 function CreatorForm({
   mode,
   sourceBillId,
+  sessionId,
   documentType,
 }: {
-  mode: "empty" | "profile" | "copy";
+  mode: "empty" | "profile" | "copy" | "resume";
   sourceBillId: string | null;
+  sessionId: string;
   documentType: BillDocumentType;
 }) {
   const navigate = useNavigate();
@@ -425,7 +441,6 @@ function CreatorForm({
   /* ── Chrome ──────────────────────────────────────────────── */
 
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [problems, setProblems] = useState<{ field: string; message: string }[]>([]);
   /* The server's own duplicate list, kept as its type rather than narrowed. Its shape is
      the one thing this form must not paraphrase: it is shown to somebody deciding whether
@@ -448,9 +463,19 @@ function CreatorForm({
   const [profileCompanyName, setProfileCompanyName] = useState<string | null>(null);
 
   const isCopy = mode === "copy";
+  const isResume = mode === "resume";
+  /* No key when resuming: the bill id is the identity, and sending a fresh token would
+     ask the server to create a second row beside the draft being edited. */
   const draftKey = useMemo(
-    () => draftKeyFor(mode, sourceBillId, documentType),
-    [mode, sourceBillId, documentType]
+    () =>
+      isResume
+        ? ""
+        : draftKeyForSession(
+            sessionId,
+            documentType,
+            typeof window === "undefined" ? null : window.sessionStorage
+          ),
+    [isResume, sessionId, documentType]
   );
   const documentNoun = challan ? "challan" : "bill";
 
@@ -541,6 +566,61 @@ function CreatorForm({
              `setConnections([])` are still the initial values, so saying them again here
              would be the reset this file was written to avoid. */
           setLogoId(bill.logo_id ?? null);
+        } else if (mode === "resume" && sourceBillId) {
+          /* Continue editing. Everything the draft already stores is read back: the
+             fields, the line items, the logo, the folder and the linked jobs. Nothing
+             is created, so a resume can never add a row, and the server's save is an
+             update to this same bill id. */
+          if (!UUID_RE.test(sourceBillId)) {
+            setLoadError("The draft reference is invalid. Return to the list and open it again.");
+            setLoading(false);
+            return;
+          }
+          const [bill, items, profile, folder, links] = await Promise.all([
+            fetchBill(sourceBillId, documentType),
+            fetchBillLineItems(sourceBillId),
+            fetchInvoiceBusinessProfile(),
+            fetchBillFolderId(sourceBillId),
+            getBillConnections(sourceBillId).catch(() => [] as BillJobConnection[]),
+          ]);
+          if (!live) return;
+
+          if ((bill.document_type ?? "tax_invoice") !== documentType) {
+            setLoadError(
+              challan
+                ? "That is a Tax Invoice draft. Open it from Tax Invoice Billing instead."
+                : "That is a Delivery Challan draft. Open it from Challan Billing instead."
+            );
+            setLoading(false);
+            return;
+          }
+          /* The database's status is authoritative. A finalized document is edited
+             through the bill editor, never through the draft-save path. */
+          if ((bill.status ?? "finalized") !== "draft") {
+            setLoadError(
+              "This document has already been generated. Open it from the list to view or edit it."
+            );
+            setLoading(false);
+            return;
+          }
+
+          if (profile?.payment_days !== undefined && profile.payment_days !== null) {
+            setProfilePaymentDays(Number(profile.payment_days));
+          }
+          setProfileCompanyName(profile?.company_name ?? null);
+
+          applySeed(
+            seedFromRecord(
+              bill as unknown as Record<string, unknown>,
+              items as unknown as Record<string, unknown>[],
+              "draft"
+            )
+          );
+          setBillId(bill.id);
+          setLogoId(bill.logo_id ?? null);
+          setFolderId(folder);
+          setConnections(links);
+          setJobIds(links.map((link) => link.job_id));
         } else {
           const profile =
             mode === "profile" ? await fetchInvoiceBusinessProfile() : null;
@@ -720,6 +800,15 @@ function CreatorForm({
     }
   }, [wordsTouched]);
 
+  /* The queue is created once and reads the CURRENT save through this ref. Capturing
+     `save` directly would freeze the first render's form values, which is the bug the
+     queue exists to prevent. */
+  const lastSaveError = useRef("The draft could not be saved.");
+  const queueRef = useRef<SaveQueue | null>(null);
+  const saveRef = useRef<(options?: { silent?: boolean }) => Promise<CreatorSaveResult | null>>(
+    async () => null
+  );
+
   const save = useCallback(
     async (options: { silent?: boolean } = {}) => {
       if (loading) return null;
@@ -728,13 +817,17 @@ function CreatorForm({
         const result = await saveCreatorDraft(buildRequest());
         setBillId(result.bill_id);
         applyServerTotals(result);
-        setSavedAt(result.saved_at ?? new Date().toISOString());
         setSaveState("saved");
+        /* A write that came through `save` is exactly as saved as one the queue made;
+           saying so keeps "Unsaved changes" from sticking after an explicit Save. */
+        queueRef.current?.markSaved(result.saved_at ?? null);
         setProblems([]);
         if (!options.silent) toast.success("Draft saved.");
         return result;
       } catch (err) {
         setSaveState("error");
+        lastSaveError.current =
+          err instanceof Error ? err.message : "The draft could not be saved.";
         if (err instanceof CreatorError) {
           setProblems(err.problems.map((p) => ({ field: p.field, message: p.message })));
           /* Not toasted. A validation failure is shown on the field it belongs to, and a
@@ -749,13 +842,44 @@ function CreatorForm({
     },
     [loading, buildRequest, applyServerTotals, toast]
   );
+  /* Written in an effect, not during render: a ref updated in the render path is exactly
+     what the hooks linting forbids, and the queue only reads it when a save actually runs. */
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+
+  const [queueState, setQueueState] = useState<SaveQueueState>({
+    status: "idle",
+    dirtyVersion: 0,
+    savedVersion: 0,
+    savedAt: null,
+    error: null,
+  });
+  /* Created in an effect, never during render: the queue's save callback closes over a
+     ref, and building it in the render path would read that ref while rendering. */
+  useEffect(() => {
+    const created = createSaveQueue({
+      debounceMs: AUTOSAVE_MS,
+      save: async (): Promise<SaveOutcome> => {
+        const result = await saveRef.current({ silent: true });
+        return result
+          ? { ok: true, savedAt: result.saved_at ?? null }
+          : { ok: false, error: lastSaveError.current };
+      },
+      onState: setQueueState,
+    });
+    queueRef.current = created;
+    return () => {
+      queueRef.current = null;
+      created.dispose();
+    };
+  }, []);
 
   /* ── Autosave ────────────────────────────────────────────── */
 
-  /* Refs rather than a `useEffect` dependency on the whole form: autosave must fire once
-     per settled burst of typing, and depending on `values` would restart the timer on
-     every keystroke, which is the same as never saving. */
-  const dirty = useRef(false);
+  /* The queue owns the debounce and the ordering. This effect only says "a new version
+     exists"; the queue schedules the write, never runs two at once, and saves the newest
+     values when the reader has typed during a request. */
   const skipFirst = useRef(true);
 
   useEffect(() => {
@@ -764,16 +888,53 @@ function CreatorForm({
       skipFirst.current = false;
       return;
     }
-    dirty.current = true;
+    queueRef.current?.change();
   }, [values, lines, bank, amountInWords, roundOff, reverseChargeGst, loading]);
 
+  /* Browser-level protection for refresh, tab close and an accidental navigation that
+     leaves the page. It is registered for the life of the form and asks only while the
+     queue still holds an unsaved version; a fully saved draft closes without a prompt. */
   useEffect(() => {
-    if (loading || !dirty.current) return;
-    const timer = setTimeout(() => {
-      void save({ silent: true });
-    }, AUTOSAVE_MS);
-    return () => clearTimeout(timer);
-  }, [values, lines, bank, amountInWords, roundOff, reverseChargeGst, loading, save]);
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!queueRef.current?.isDirty()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
+  /* ── Leaving with unsaved work ───────────────────────────── */
+
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitBusy, setExitBusy] = useState(false);
+
+  const leave = useCallback(() => {
+    queueRef.current?.markSaved();
+    navigate(info.route);
+  }, [navigate, info.route]);
+
+  const requestExit = useCallback(() => {
+    if (queueRef.current?.isDirty() || queueRef.current?.state().status === "error") {
+      setExitOpen(true);
+      return;
+    }
+    leave();
+  }, [leave]);
+
+  const saveAndExit = useCallback(async () => {
+    setExitBusy(true);
+    const saved = (await queueRef.current?.flush()) === true;
+    setExitBusy(false);
+    if (!saved) {
+      /* Stay here. Navigating away from a failed save is the exact outcome the exit
+         prompt exists to prevent. */
+      toast.error("The latest changes could not be saved, so you are still here. Retry, or leave the draft as last saved.");
+      return;
+    }
+    setExitOpen(false);
+    leave();
+  }, [toast, leave]);
 
   /* ── Preview ─────────────────────────────────────────────── */
 
@@ -827,6 +988,15 @@ function CreatorForm({
         const said = `${notice.title}. ${notice.body}`;
         if (notice.tone === "warning") toast.warning(said);
         else toast.success(said);
+        /* Only now, with the server having confirmed the generated bill, is the
+           creation session retired. A failed finalize leaves the key in place, so the
+           admin's retry still updates this draft instead of starting another. */
+        completeDraftSession(
+          sessionId,
+          documentType,
+          typeof window === "undefined" ? null : window.sessionStorage
+        );
+        queueRef.current?.markSaved();
         /* Away to the section's own list, because the work is done and the list is where
            an admin verifies it. Staying here would show a form for a document that can
            no longer be edited. */
@@ -848,7 +1018,7 @@ function CreatorForm({
         setBusy(null);
       }
     },
-    [buildRequest, toast, navigate, challan, documentNoun, info.route]
+    [buildRequest, toast, navigate, challan, documentNoun, info.route, sessionId, documentType]
   );
 
   /* ── Jobs ────────────────────────────────────────────────── */
@@ -945,19 +1115,33 @@ function CreatorForm({
         {/* One line telling the admin what this document is and what state it is in. */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <h2 className="text-lg font-bold text-text">
-            {isCopy
-              ? `New ${documentNoun} from a previous ${documentNoun}`
-              : `New ${documentNoun}`}
+            {isResume
+              ? `Continue ${documentNoun} draft`
+              : isCopy
+                ? `New ${documentNoun} from a previous ${documentNoun}`
+                : `New ${documentNoun}`}
           </h2>
           <span className="px-2 py-0.5 rounded-md bg-warning-muted text-warning text-[11px] font-bold uppercase tracking-wider">
             Draft — not generated
           </span>
           <span className="text-xs text-text-muted" aria-live="polite">
-            {saveState === "saving" && "Saving…"}
-            {saveState === "saved" && savedAt && `Saved ${new Date(savedAt).toLocaleTimeString()}`}
-            {saveState === "error" && "Not saved — see the message on the field."}
-            {saveState === "idle" && "Changes save themselves."}
+            {queueState.status === "saving" && "Saving…"}
+            {queueState.status === "pending" && "Unsaved changes"}
+            {queueState.status === "saved" &&
+              queueState.savedAt &&
+              `Saved at ${new Date(queueState.savedAt).toLocaleTimeString()}`}
+            {queueState.status === "idle" && "Changes save automatically"}
+            {queueState.status === "error" && "Couldn't save"}
           </span>
+          {queueState.status === "error" && (
+            <button
+              type="button"
+              onClick={() => void queueRef.current?.flush()}
+              className="text-xs font-bold text-danger hover:underline cursor-pointer"
+            >
+              Retry
+            </button>
+          )}
         </div>
 
         {isCopy && (
@@ -1622,6 +1806,13 @@ function CreatorForm({
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <FooterButton
+              onClick={requestExit}
+              disabled={busy !== null}
+              icon={busy === null ? <ArrowLeft size={16} /> : <Loader2 size={16} className="animate-spin" />}
+            >
+              Save &amp; exit
+            </FooterButton>
+            <FooterButton
               onClick={() => void save()}
               disabled={busy !== null}
               icon={saveState === "saving" ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -1761,6 +1952,58 @@ function CreatorForm({
             Generating anyway creates a second {documentNoun} with the same number. Neither is
             overwritten and neither is marked as the wrong one — which is why this is your
             choice and not a default.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Leaving with unsaved work. Save & Exit is the primary action and the only one
+          that navigates after a confirmed write; a failure keeps the form open. */}
+      <Modal
+        open={exitOpen}
+        onClose={() => setExitOpen(false)}
+        title="Leave this draft?"
+        subtitle="The draft is saved automatically until you generate it."
+        size="sm"
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              disabled={exitBusy}
+              onClick={() => setExitOpen(false)}
+              className="px-4 py-2.5 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
+            >
+              Stay editing
+            </button>
+            <button
+              type="button"
+              disabled={exitBusy}
+              onClick={() => {
+                setExitOpen(false);
+                leave();
+              }}
+              className="px-4 py-2.5 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
+            >
+              Leave draft
+            </button>
+            <button
+              type="button"
+              disabled={exitBusy}
+              onClick={() => void saveAndExit()}
+              className="btn btn-primary disabled:opacity-50"
+            >
+              {exitBusy ? "Saving…" : "Save & exit"}
+            </button>
+          </div>
+        }
+      >
+        <div className="px-6 py-4 space-y-2 text-sm text-text-secondary">
+          <p>
+            <strong className="text-text">Save &amp; exit</strong> writes the latest changes and
+            leaves only after the server confirms them.
+          </p>
+          <p>
+            <strong className="text-text">Leave draft</strong> goes back now. Anything typed since
+            the last successful save will not be kept.
           </p>
         </div>
       </Modal>

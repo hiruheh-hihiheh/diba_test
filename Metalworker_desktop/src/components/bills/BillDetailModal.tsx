@@ -161,7 +161,13 @@ export function BillDetailModal({
               <button
                 type="button"
                 onClick={() => onEdit(bill)}
-                className="btn btn-primary"
+                disabled={bill.status === "draft"}
+                title={
+                  bill.status === "draft"
+                    ? "This is a draft. Continue editing it from the Billing list, then generate it before using the bill editor."
+                    : undefined
+                }
+                className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Pencil size={15} /> Edit bill
               </button>

@@ -105,6 +105,7 @@ import {
   wordsAfterCopy,
   type DuplicateMatch,
 } from "../process-bill-upload/_shared/billCreator.ts";
+import { classifyDraftRecovery, finalizedDraftMessage } from "./draftRecovery.ts";
 
 const BUCKET = "bills";
 const TABLE = "bills";
@@ -292,7 +293,7 @@ Deno.serve(async (req) => {
          and routing that through here would give a second, differently-audited path to
          the same edit. */
       return json(
-        { ok: false, error: `This ${documentNoun} has already been generated. Edit it from the ${documentNoun} instead.` },
+        { ok: false, error: finalizedDraftMessage(), reason: "already_finalized" },
         409
       );
     }
@@ -332,12 +333,32 @@ Deno.serve(async (req) => {
       if (made.code === "23505" && made.existingId) {
         /* The idempotency index fired: this form already has a bill. Carrying on and
            saving onto it is the correct behaviour - the response was lost, not the
-           work - and it means a retried autosave is one bill rather than two. */
+           work - and it means a retried autosave is one bill rather than two.
+
+           BUT ONLY IF THAT BILL IS STILL A DRAFT OF THIS USER'S, OF THIS TYPE. A key is
+           client-supplied, and the row it names can be a finalized document - the
+           form generated it, then a queued autosave arrived late - or another admin's
+           draft. Either one must be refused before a single column is written, and the
+           decision is made from the STORED row, never from anything the client sent. */
         const read = await readBill(admin, made.existingId);
-        if (read.row) {
-          existing = read.row;
-          currentItems = read.lineItems;
+        if (read.error) {
+          console.error("create-bill: draft recovery read failed:", read.error);
+          return json({ ok: false, error: "The draft could not be read." }, 500);
         }
+        const decision = classifyDraftRecovery(read.row, {
+          userId: user.id,
+          documentType,
+          key: creatorKey,
+          noun: documentNoun,
+        });
+        if (decision.action === "refuse") {
+          return json(
+            { ok: false, error: decision.message, reason: decision.reason },
+            decision.status
+          );
+        }
+        existing = read.row;
+        currentItems = read.lineItems;
       } else {
         console.error("create-bill: draft creation failed:", made.error);
         return json({ ok: false, error: made.userMessage ?? "The bill could not be started." }, made.status ?? 500);
@@ -919,6 +940,8 @@ async function createDraft(
   /** Which input an `EditError` blamed. A column name, NOT a status code. */
   field?: string | null;
   existingId?: string;
+  /** The row the key already belongs to, so the caller can vet it before reuse. */
+  existingRow?: Record<string, unknown>;
 }> {
   /* Compute the figures first, so the draft holds a consistent total from the moment it
      exists. The creator shows a running total and the row has to agree with it.
@@ -1079,11 +1102,18 @@ async function createDraft(
       /* The idempotency index fired: this form already has a bill. Not an error. */
       const { data: existing } = await admin
         .from(TABLE)
-        .select("id")
+        .select("id, status, document_type, created_by, creator_draft_key")
         .eq("creator_draft_key", options.key)
         .maybeSingle();
       if (existing) {
-        return { error: "", userMessage: "", status: 200, code: "23505", existingId: String(existing.id) };
+        return {
+          error: "",
+          userMessage: "",
+          status: 200,
+          code: "23505",
+          existingId: String(existing.id),
+          existingRow: existing as Record<string, unknown>,
+        };
       }
     }
     return {

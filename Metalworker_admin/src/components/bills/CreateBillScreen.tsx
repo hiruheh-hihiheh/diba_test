@@ -36,7 +36,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -75,11 +77,23 @@ import {
   previewCreatorDraft,
   saveCreatorDraft,
   type CreatorDuplicate,
+  type CreatorSaveResult,
 } from "../../services/billCreator";
 import { showCreatorPreview } from "../../services/creatorPreview";
 import { getBillConnections, unlinkJobsFromBill } from "../../services/billJobConnections";
 import { createBillingFolder, fetchBillingFolders, type BillingFolder } from "../../services/billingFolders";
-import { fetchBill, fetchBillLineItems, fetchBills } from "../../services/bills";
+import { fetchBill, fetchBillFolderId, fetchBillLineItems, fetchBills } from "../../services/bills";
+import {
+  completeDraftSession,
+  draftKeyForSession,
+  newDraftKey,
+} from "../../services/draftLifecycle";
+import {
+  createSaveQueue,
+  type SaveOutcome,
+  type SaveQueue,
+  type SaveQueueState,
+} from "../../services/saveQueue";
 import { formatBillDate, formatMoney } from "../../services/billFormat";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
 import { fetchInvoiceLogos } from "../../services/invoiceLogos";
@@ -96,12 +110,17 @@ import { LinkBillToJobsSheet } from "./LinkBillToJobsSheet";
 /** Long enough to coalesce a typist into one write, short enough to survive a refresh. */
 const AUTOSAVE_MS = 1200;
 
-export type CreatorMode = "empty" | "profile" | "copy";
+export type CreatorMode = "empty" | "profile" | "copy" | "resume";
 
 export interface CreateBillScreenProps {
   mode: CreatorMode | null;
   /** The bill being copied, when `mode` is `"copy"`. */
   sourceBillId: string | null;
+  /**
+   * This creation intent's id, minted by the route and carried in the URL so a refresh
+   * reuses the same idempotency key while a fresh navigation gets a new one.
+   */
+  sessionId?: string;
   /**
    * Which document this form makes. The same screen serves both sections, with a
    * challan-specific field set, validation and storage type; a missing value means a
@@ -122,6 +141,7 @@ type Styles = ReturnType<typeof createStyles>;
 
 export function CreateBillScreen(props: CreateBillScreenProps) {
   const { mode, sourceBillId, documentType = "tax_invoice" } = props;
+  const sessionId = props.sessionId ?? newDraftKey();
   const gate = useAdminGate();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -150,6 +170,7 @@ export function CreateBillScreen(props: CreateBillScreenProps) {
       isAdmin={gate.status === "ok"}
       onExit={props.onExit}
       onBackToEntry={props.onBackToEntry}
+      sessionId={sessionId}
     />
   );
 }
@@ -289,6 +310,7 @@ function EntryScreen({
 function CreatorForm({
   mode,
   sourceBillId,
+  sessionId,
   documentType,
   styles,
   isAdmin,
@@ -297,6 +319,7 @@ function CreatorForm({
 }: {
   mode: CreatorMode;
   sourceBillId: string | null;
+  sessionId: string;
   documentType: BillDocumentType;
   styles: Styles;
   isAdmin: boolean;
@@ -304,6 +327,7 @@ function CreatorForm({
   onBackToEntry: () => void;
 }) {
   const isCopy = mode === "copy";
+  const isResume = mode === "resume";
   const info = DOCUMENT_TYPE_INFO[documentType];
   const challan = documentType === "delivery_challan";
   const documentNoun = challan ? "challan" : "bill";
@@ -346,8 +370,6 @@ function CreatorForm({
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [problems, setProblems] = useState<{ field: string; message: string }[]>([]);
   const [duplicates, setDuplicates] = useState<CreatorDuplicate[]>([]);
   const [busy, setBusy] = useState<null | "preview" | "finalize">(null);
@@ -364,12 +386,16 @@ function CreatorForm({
   const [profilePaymentDays, setProfilePaymentDays] = useState<number | null>(null);
   const [profileCompanyName, setProfileCompanyName] = useState<string | null>(null);
 
-  /* The type is part of the key, so a challan form and an invoice form never share an
-     idempotency token — sharing one would make the server treat the second document as
-     a retry of the first. */
+  /* A resumed draft is identified by its bill id, so it sends no creation key at all —
+     sending one would ask the server to create a second bill beside the row being
+     edited. A new draft's key belongs to this session, never to the mode or source, so
+     a second "Create Bill" click cannot reuse the first form's token. */
   const draftKey = useMemo(
-    () => draftKeyFor(mode, sourceBillId, documentType),
-    [mode, sourceBillId, documentType]
+    () =>
+      isResume
+        ? ""
+        : draftKeyForSession(sessionId, documentType, globalThis.sessionStorage ?? null),
+    [isResume, sessionId, documentType]
   );
 
   /* ── Loading the form's starting state ───────────────────── */
@@ -446,6 +472,54 @@ function CreatorForm({
           /* NO job links are inherited, and that is a decision rather than an oversight:
              the jobs the source was for are a different job, and silently attaching a new
              invoice to them is how a labour job gets billed twice. */
+        } else if (mode === "resume" && sourceBillId) {
+          /* Continue editing. The draft is read as data — fields, lines, logo, folder and
+             linked jobs — and every save updates THIS row. No second bill is created. */
+          const [bill, items, profile, folder, links] = await Promise.all([
+            fetchBill(sourceBillId, documentType),
+            fetchBillLineItems(sourceBillId),
+            fetchInvoiceBusinessProfile(),
+            fetchBillFolderId(sourceBillId),
+            getBillConnections(sourceBillId).catch(() => [] as BillJobConnection[]),
+          ]);
+          if (!live) return;
+
+          if ((bill.document_type ?? "tax_invoice") !== documentType) {
+            setLoadError(
+              challan
+                ? "That is a Tax Invoice draft. Open it from Tax Invoice Billing instead."
+                : "That is a Delivery Challan draft. Open it from Challan Billing instead."
+            );
+            setLoading(false);
+            return;
+          }
+          /* The stored status decides, not the client. A finalized document is edited
+             through the bill editor and never through this draft-save path. */
+          if ((bill.status ?? "finalized") !== "draft") {
+            setLoadError(
+              "This document has already been generated. Open it from the list to view or edit it."
+            );
+            setLoading(false);
+            return;
+          }
+
+          if (profile?.payment_days !== undefined && profile.payment_days !== null) {
+            setProfilePaymentDays(Number(profile.payment_days));
+          }
+          setProfileCompanyName(profile?.company_name ?? null);
+
+          applySeed(
+            seedFromRecord(
+              bill as unknown as Record<string, unknown>,
+              items as unknown as Record<string, unknown>[],
+              "draft"
+            )
+          );
+          setBillId(bill.id);
+          setLogoId(bill.logo_id ?? null);
+          setFolderId(folder);
+          setConnections(links);
+          setJobIds(links.map((link) => link.job_id));
         } else {
           const profile = mode === "profile" ? await fetchInvoiceBusinessProfile() : null;
           if (!live) return;
@@ -633,21 +707,29 @@ function CreatorForm({
     [wordsTouched]
   );
 
+  const lastSaveError = useRef("The draft could not be saved.");
+  const queueRef = useRef<SaveQueue | null>(null);
+  const saveRef = useRef<(options?: { silent?: boolean }) => Promise<CreatorSaveResult | null>>(
+    async () => null
+  );
+
   const save = useCallback(
     async (options: { silent?: boolean } = {}) => {
       if (loading) return null;
-      setSaveState("saving");
       try {
         const result = await saveCreatorDraft(buildRequest());
         setBillId(result.bill_id);
         applyServerTotals(result);
-        setSavedAt(result.saved_at ?? new Date().toISOString());
-        setSaveState("saved");
+        /* Keep the queue honest after an explicit save or a preview's save: those are
+           real writes, and leaving the version dirty would show "Unsaved changes" over
+           values that are already stored. */
+        queueRef.current?.markSaved(result.saved_at ?? null);
         setProblems([]);
         if (!options.silent) notify("Draft saved");
         return result;
       } catch (err) {
-        setSaveState("error");
+        lastSaveError.current =
+          err instanceof Error ? err.message : "The draft could not be saved.";
         if (err instanceof CreatorError) {
           setProblems(err.problems.map((p) => ({ field: p.field, message: p.message })));
           /* Not toasted. A validation failure is shown on the field it belongs to, and a
@@ -665,13 +747,43 @@ function CreatorForm({
     },
     [loading, buildRequest, applyServerTotals]
   );
+  /* Written in an effect, not during render: a ref updated in the render path is exactly
+     what the hooks linting forbids, and the queue only reads it when a save actually runs. */
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+
+  const [queueState, setQueueState] = useState<SaveQueueState>({
+    status: "idle",
+    dirtyVersion: 0,
+    savedVersion: 0,
+    savedAt: null,
+    error: null,
+  });
+  /* Created in an effect, never during render: the queue's save callback closes over a
+     ref, and building it in the render path would read that ref while rendering. */
+  useEffect(() => {
+    const created = createSaveQueue({
+      debounceMs: AUTOSAVE_MS,
+      save: async (): Promise<SaveOutcome> => {
+        const result = await saveRef.current({ silent: true });
+        return result
+          ? { ok: true, savedAt: result.saved_at ?? null }
+          : { ok: false, error: lastSaveError.current };
+      },
+      onState: setQueueState,
+    });
+    queueRef.current = created;
+    return () => {
+      queueRef.current = null;
+      created.dispose();
+    };
+  }, []);
 
   /* ── Autosave ────────────────────────────────────────────── */
 
-  /* Refs rather than an effect dependency on the whole form: autosave must fire once per
-     settled burst of typing, and depending on `values` would restart the timer on every
-     keystroke, which is the same as never saving. */
-  const dirty = useRef(false);
+  /* The queue owns the debounce and the ordering: one write at a time, and always the
+     newest values. This effect only reports that a new version exists. */
   const skipFirst = useRef(true);
 
   useEffect(() => {
@@ -680,16 +792,55 @@ function CreatorForm({
       skipFirst.current = false;
       return;
     }
-    dirty.current = true;
+    queueRef.current?.change();
   }, [values, lines, bank, amountInWords, roundOff, reverseChargeGst, loading]);
 
+  /* ── Leaving with unsaved work ───────────────────────────── */
+
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitBusy, setExitBusy] = useState(false);
+
+  const leave = useCallback(() => {
+    queueRef.current?.markSaved();
+    onExit();
+  }, [onExit]);
+
+  const requestExit = useCallback(() => {
+    if (queueRef.current?.isDirty() || queueRef.current?.state().status === "error") {
+      setExitOpen(true);
+      return;
+    }
+    leave();
+  }, [leave]);
+
+  const saveAndExit = useCallback(async () => {
+    setExitBusy(true);
+    const saved = (await queueRef.current?.flush()) === true;
+    setExitBusy(false);
+    if (!saved) {
+      /* Do not navigate away from a failed save. The draft is still open, the values are
+         still in memory, and Retry is one tap away. */
+      notify("Not saved", "The latest changes could not be saved, so you are still here.");
+      return;
+    }
+    setExitOpen(false);
+    leave();
+  }, [leave]);
+
+  /* Android's hardware back is an exit path like any other, so it goes through the same
+     prompt instead of bypassing it. Returning true tells the OS the press was handled. */
   useEffect(() => {
-    if (loading || !dirty.current) return;
-    const timer = setTimeout(() => {
-      void save({ silent: true });
-    }, AUTOSAVE_MS);
-    return () => clearTimeout(timer);
-  }, [values, lines, bank, amountInWords, roundOff, reverseChargeGst, loading, save]);
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (busy !== null) return true;
+      if (queueRef.current?.isDirty() || queueRef.current?.state().status === "error") {
+        setExitOpen(true);
+        return true;
+      }
+      onExit();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [busy, onExit]);
 
   /* ── Preview ─────────────────────────────────────────────── */
 
@@ -745,6 +896,10 @@ function CreatorForm({
           noun: documentNoun,
         });
         notify(notice.title, notice.body);
+        /* Retire the creation session only after the server confirms the generated bill.
+           A failed finalize leaves the key alone so a retry updates this draft. */
+        completeDraftSession(sessionId, documentType, globalThis.sessionStorage ?? null);
+        queueRef.current?.markSaved();
         /* Away to the list, because the work is done and the list is where an admin
            verifies it. Staying here would show a form for a bill that can no longer be
            edited. */
@@ -769,7 +924,7 @@ function CreatorForm({
         setBusy(null);
       }
     },
-    [buildRequest, onExit, challan, documentNoun]
+    [buildRequest, onExit, challan, documentNoun, sessionId, documentType]
   );
 
   /* ── Jobs ────────────────────────────────────────────────── */
@@ -850,7 +1005,7 @@ function CreatorForm({
     return (
       <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
         <ScrollView contentContainerStyle={styles.entryBody}>
-          <Pressable onPress={onBackToEntry} hitSlop={10} accessibilityRole="button">
+          <Pressable onPress={requestExit} hitSlop={10} accessibilityRole="button">
             <Text style={styles.back}>‹ Back</Text>
           </Pressable>
           <View style={styles.errorBox}>
@@ -878,7 +1033,7 @@ function CreatorForm({
           </Pressable>
 
           <Text style={styles.pageTitle}>
-            {isCopy ? `Create from Previous ${info.noun}` : `Create ${info.noun}`}
+            {isResume ? `Continue ${info.noun} Draft` : isCopy ? `Create from Previous ${info.noun}` : `Create ${info.noun}`}
           </Text>
           <Text style={styles.pageSub}>
             {isCopy
@@ -1673,14 +1828,31 @@ function CreatorForm({
                 : formatMoney(serverTotals?.amount_after_tax ?? lineTotals.amountBeforeTax)}
             </Text>
             <Text style={styles.footerSaved}>
-              {saveState === "saving"
+              {queueState.status === "saving"
                 ? "Saving…"
-                : savedAt
-                  ? `Saved ${formatBillDate(savedAt)}`
-                  : "Not saved yet"}
+                : queueState.status === "pending"
+                  ? "Unsaved changes"
+                  : queueState.status === "error"
+                    ? "Couldn't save"
+                    : queueState.status === "saved" && queueState.savedAt
+                      ? `Saved at ${new Date(queueState.savedAt).toLocaleTimeString()}`
+                      : "Changes save automatically"}
             </Text>
           </View>
+          {queueState.status === "error" && (
+            <Pressable
+              onPress={() => void queueRef.current?.flush()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry saving the draft"
+              style={({ pressed }) => [styles.retrySave, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.retrySaveText}>{"Couldn't save — Retry"}</Text>
+            </Pressable>
+          )}
           <View style={styles.row}>
+            <SmallBtn styles={styles} disabled={busy !== null} onPress={requestExit}>
+              Save &amp; exit
+            </SmallBtn>
             <SmallBtn
               styles={styles}
               disabled={busy !== null || !isAdmin}
@@ -1745,6 +1917,56 @@ function CreatorForm({
           onCreate={() => void createFolder()}
         />
       )}
+
+      {/* Leaving with unsaved work. Save & Exit is the primary action and the only one
+          that leaves after a confirmed write; a failure keeps this screen open. */}
+      <Modal
+        visible={exitOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setExitOpen(false)}
+      >
+        <View style={styles.exitBackdrop}>
+          <View style={styles.exitCard} accessibilityViewIsModal>
+            <Text style={styles.exitTitle}>Leave this draft?</Text>
+            <Text style={styles.note}>
+              The draft saves automatically until you generate it. Save &amp; exit writes the
+              latest changes first; Leave draft discards anything since the last save.
+            </Text>
+            <Pressable
+              onPress={() => void saveAndExit()}
+              disabled={exitBusy}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                exitBusy && styles.btnOff,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={styles.primaryBtnText}>{exitBusy ? "Saving…" : "Save & exit"}</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setExitOpen(false)}
+              disabled={exitBusy}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.ghostBtn, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.ghostBtnText}>Stay editing</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setExitOpen(false);
+                leave();
+              }}
+              disabled={exitBusy}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.ghostBtn, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.ghostBtnText}>Leave draft</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1990,39 +2212,6 @@ function FolderSheet({
   );
 }
 
-/**
- * A stable idempotency token for one bill being drafted.
- *
- * The server treats a repeated `creator_draft_key` as the same draft rather than a second
- * one, which is what makes a retried autosave safe. It is kept in `sessionStorage` where
- * that exists — the web build of this app included — so a refresh reuses the token, and
- * falls back to a fresh one where storage is unavailable. On a native device the in-memory
- * copy is enough: the process is not going to be killed and silently restarted between
- * two keystrokes, and if it is, the admin is looking at a new draft, not a corrupted one.
- */
-function draftKeyFor(
-  mode: CreatorMode,
-  sourceBillId: string | null,
-  documentType: BillDocumentType
-): string {
-  const storageKey = `bill-creator:${documentType}:${mode}:${sourceBillId ?? ""}`;
-  try {
-    const existing = globalThis.sessionStorage?.getItem(storageKey);
-    if (existing) return existing;
-    const fresh = newKey();
-    globalThis.sessionStorage?.setItem(storageKey, fresh);
-    return fresh;
-  } catch {
-    return newKey();
-  }
-}
-
-function newKey(): string {
-  const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
-  if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
-  return `k-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-}
-
 /** A server-named column, spelled the way the section header above it is. */
 function fieldLabel(field: string, challan = false): string {
   const known: Record<string, string> = {
@@ -2247,6 +2436,38 @@ function createStyles(theme: AppTheme) {
     },
     footerTotal: { color: c.text, fontSize: theme.textSizes.md, fontWeight: "800" },
     footerSaved: { color: c.textMuted, fontSize: theme.textSizes.xs },
+    retrySave: {
+      alignSelf: "flex-start",
+      paddingVertical: 4,
+      marginBottom: 4,
+    },
+    retrySaveText: {
+      color: c.danger,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+    },
+    exitBackdrop: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: theme.spacing.lg,
+    },
+    exitCard: {
+      width: "100%",
+      maxWidth: 420,
+      backgroundColor: c.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: theme.spacing.lg,
+      gap: theme.spacing.sm,
+    },
+    exitTitle: {
+      color: c.text,
+      fontSize: theme.textSizes.md,
+      fontWeight: "800",
+    },
     footerNote: { color: c.textMuted, fontSize: 10 },
     /* RN's own name for it is `absoluteFill`; the web-flavoured `absoluteFillObject` is
        not on the types in SDK 57. */
