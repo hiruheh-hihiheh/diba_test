@@ -38,6 +38,11 @@ import {
   isLegacyBill,
   type BillDocumentSource,
 } from "./billDocument";
+import {
+  sliceBillPage,
+  sortBillRows,
+  type BillSortMode,
+} from "./billSorting";
 import type { BulkZipBill } from "./bulkBillZip";
 import type {
   Bill,
@@ -275,6 +280,16 @@ export interface BillQuery {
    * BILLING folder before this is used (see `fetchBillingFolders`).
    */
   folderId?: string | null;
+  /**
+   * How to order the matching bills. Defaults to the list's existing newest-first
+   * order.
+   *
+   * `document_number` and `upload_date` are ordered over the WHOLE filtered set and
+   * only then paginated — see `fetchSortedBills`. Sorting the returned page instead
+   * would put the smallest invoice number on whatever page the database happened to
+   * return it on.
+   */
+  sort?: BillSortMode;
   page?: number;
   pageSize?: number;
 }
@@ -306,9 +321,112 @@ async function fetchBillIdsForUpload(uploadId: string): Promise<string[]> {
   return (data ?? []).map((r) => r.id as string);
 }
 
+/**
+ * A scanned bill plus the one field that lives on its workbook.
+ *
+ * `bill_uploads.created_at` is the user's "Excel upload date"; the bill row has its
+ * own `created_at` and they are not the same thing. Kept as a separate field so the
+ * comparator can never accidentally read the wrong one.
+ */
+type ScannedBill = Bill & { upload_created_at: string | null; created_at: string | null };
+
+/** Rows read per scan request. `fetchBills` caps a page at 500, so this is its max. */
+const SORT_SCAN_CHUNK = 500;
+
+/**
+ * How many matching bills can be ordered in one view.
+ *
+ * The cap is the difference between a feature and an outage: an unbounded scan behind
+ * a checkbox would read a whole table on every tick. A set past this size is refused
+ * with a sentence the user can act on (narrow the filters) rather than being silently
+ * ordered out of position.
+ */
+const SORT_SCAN_LIMIT = 10_000;
+
+/**
+ * Sort the WHOLE matching set, then cut the page from it.
+ *
+ * The list paginates in the database, so ordering only the rows it returned is wrong
+ * the moment there are two pages: with 1,000 bills the smallest document number can
+ * be on page 40 and would stay there. The matching rows are therefore read first, in
+ * bounded chunks, and only then sliced.
+ *
+ * The chunks are read through `fetchBills` itself, with the default order and
+ * `sort: "default"`, so search, workbook, date, job-type, folder and document-type
+ * filtering are EXACTLY the ones the list uses — a second hand-written filter chain
+ * is how a sort ends up showing bills the list would not. What it reads is bill rows:
+ * no PDFs, no workbook bytes and no line items.
+ */
+async function fetchSortedBills(
+  query: BillQuery,
+  page: number,
+  pageSize: number
+): Promise<BillPage> {
+  const documentType = query.documentType ?? "tax_invoice";
+  const mode = query.sort ?? "default";
+
+  /* One request for the section's workbooks, not one per bill: this is the upload
+     date the user asked to sort by. Bounded by the number of workbooks, which is the
+     smallest of the three tables involved. */
+  const uploads = await fetchBillUploads(documentType);
+  const uploadTime = new Map(uploads.map((u) => [u.id, u.created_at ?? null]));
+
+  const scanned: ScannedBill[] = [];
+  let complete = false;
+
+  for (let chunkPage = 1; ; chunkPage++) {
+    const chunk = await fetchBills({
+      ...query,
+      sort: "default",
+      page: chunkPage,
+      pageSize: SORT_SCAN_CHUNK,
+    });
+    for (const bill of chunk.rows) {
+      /* `select("*")` returns `bills.created_at`, but the shared `Bill` type does not
+         declare it because no screen displays it. Reading it here keeps the tie-breaker
+         honest without widening a type every write also uses. */
+      const createdAt = (bill as Bill & { created_at?: string | null }).created_at ?? null;
+      scanned.push({
+        ...bill,
+        created_at: createdAt,
+        upload_created_at: uploadTime.get(bill.bill_upload_id) ?? null,
+      });
+    }
+    /* Two exits, both needed: a short page ends the walk even if the reported total
+       is stale, and reaching the total ends it without a wasted extra request. */
+    if (chunk.rows.length < SORT_SCAN_CHUNK || scanned.length >= chunk.total) {
+      complete = true;
+      break;
+    }
+    if (scanned.length >= SORT_SCAN_LIMIT) break;
+  }
+
+  if (!complete) {
+    throw new Error(
+      `There are more than ${SORT_SCAN_LIMIT.toLocaleString()} bills matching these filters, which is too many to sort in one view. Narrow the search or filters and try again.`
+    );
+  }
+
+  const ordered = sortBillRows(scanned, mode);
+  return {
+    rows: sliceBillPage(ordered, page, pageSize),
+    /* The number of bills actually ordered. The database's reported count and this
+       can disagree by a concurrent delete; the list's total must describe the list
+       that was built, or its last page would be empty. */
+    total: ordered.length,
+    page,
+    pageSize,
+  };
+}
+
 export async function fetchBills(query: BillQuery = {}): Promise<BillPage> {
   const page = Math.max(1, query.page ?? 1);
   const pageSize = Math.min(500, Math.max(1, query.pageSize ?? 50));
+
+  /* The two ordering modes look at the whole matching set before the page is cut. */
+  if ((query.sort ?? "default") !== "default") {
+    return fetchSortedBills(query, page, pageSize);
+  }
 
   /* The folder filter is an inner join rather than an id list, because a folder can
      hold thousands of bills and their ids cannot be serialized into a request. It

@@ -83,6 +83,7 @@ import { SkeletonCard } from "../ui/Skeleton";
 import { notify } from "../../utils/notify";
 import { BillDocumentTypeContext, useBillDocumentType } from "../../context/BillDocumentTypeContext";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../../services/billDocumentTypes";
+import { nextSortMode, type BillSortMode } from "../../services/billSorting";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -120,6 +121,12 @@ export function BillsScreen({ documentType }: { documentType: BillDocumentType }
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
+  /**
+   * Which ordering the list is using. `default` is the list's original newest-first
+   * order; the two sort modes are ordered over every matching bill before the page is
+   * cut, so switching one on resets to page 1 rather than re-ordering 20 rows.
+   */
+  const [sortMode, setSortMode] = useState<BillSortMode>("default");
 
   const [uploadOpen, setUploadOpen] = useState(false);
 const [createOpen, setCreateOpen] = useState(false);
@@ -208,6 +215,7 @@ const [createOpen, setCreateOpen] = useState(false);
             from: fromBound,
             to: toBound,
             jobKindValues: jobKindValuesForGroup,
+            sort: sortMode,
             page,
             pageSize: DEFAULT_PAGE_SIZE,
           }),
@@ -237,7 +245,7 @@ const [createOpen, setCreateOpen] = useState(false);
         setLoadedOnce(true);
       }
     },
-    [documentType, search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, page]
+    [documentType, search, uploadFilter, fromBound, toBound, jobKindValuesForGroup, sortMode, page]
   );
 
   /* Regeneration is driven by the server's job; the hook only mirrors it, so a
@@ -867,6 +875,49 @@ const [createOpen, setCreateOpen] = useState(false);
             size={48}
             iconSize={18}
           />
+        </View>
+
+        {/* Sorting, kept apart from the filters because it changes the ORDER of what
+            they matched, not what matches. Both modes are ordered across every page
+            before the page is cut (see services/billSorting.ts); they are mutually
+            exclusive and unticking the active one restores the default order. */}
+        <View style={styles.sortRow} accessibilityLabel="Sort bills">
+          <Text style={styles.sortHeading}>Sort</Text>
+          {(
+            [
+              { mode: "document_number", label: "Sort by document number (Ascending)" },
+              { mode: "upload_date", label: "Sort by Excel upload date (Oldest to Newest)" },
+            ] as const
+          ).map((option) => {
+            const active = sortMode === option.mode;
+            return (
+              <Pressable
+                key={option.mode}
+                onPress={() => {
+                  setSortMode((current) => nextSortMode(current, option.mode));
+                  setPage(1);
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: active }}
+                accessibilityLabel={option.label}
+                style={({ pressed }) => [styles.sortOption, pressed && styles.pressed]}
+              >
+                <View style={[styles.sortBox, active && styles.sortBoxChecked]}>
+                  {active && (
+                    <Icon
+                      name="check"
+                      size={11}
+                      color={theme.colors.primaryButtonText}
+                      strokeWidth={3}
+                    />
+                  )}
+                </View>
+                <Text style={[styles.sortOptionText, active && styles.sortOptionTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         <View style={styles.actionBar}>
@@ -1884,6 +1935,46 @@ const createStyles = (theme: AppTheme) =>
       gap: theme.spacing.sm,
     },
     searchBar: { flex: 1 },
+    sortRow: {
+      marginTop: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+      gap: 2,
+    },
+    sortHeading: {
+      color: theme.colors.textMuted,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "700",
+      letterSpacing: 0.5,
+      textTransform: "uppercase",
+      marginBottom: 2,
+    },
+    sortOption: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.sm,
+      minHeight: 40,
+    },
+    sortBox: {
+      width: 18,
+      height: 18,
+      borderRadius: 5,
+      borderWidth: 1.5,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    sortBoxChecked: {
+      borderColor: theme.colors.primary,
+      backgroundColor: theme.colors.primary,
+    },
+    sortOptionText: {
+      flex: 1,
+      color: theme.colors.textSecondary,
+      fontSize: theme.textSizes.xs,
+      fontWeight: "600",
+    },
+    sortOptionTextActive: { color: theme.colors.text, fontWeight: "700" },
     actionBar: {
       flexDirection: "row",
       gap: theme.spacing.sm,

@@ -18,6 +18,7 @@ import GroupBillsPage from "./pages/GroupBills";
 import GroupDrawingsPage from "./pages/GroupDrawings";
 import DrawingUploadPage from "./pages/DrawingUpload";
 import BillsPage from "./pages/Bills";
+import BillingOverviewPage from "./pages/BillingOverview";
 import CompanyBillsPage from "./pages/CompanyBills";
 import CreateBillPage from "./pages/CreateBill";
 import InvoiceLogosPage from "./pages/InvoiceLogos";
@@ -63,6 +64,10 @@ export default function App() {
                   <Route path="/stock-company" element={<CompanyStockPage />} />
 
                   {/* Phase 4 — Documents */}
+                  {/* One Billing entry point, with the two sections one click behind
+                      it. `/bills` and `/challan-bills` are unchanged and stay
+                      reachable: this is an extra door, not a move. */}
+                  <Route path="/billing" element={<BillingOverviewPage />} />
                   <Route path="/bills" element={<BillsPage key="tax_invoice" documentType="tax_invoice" />} />
                   <Route path="/challan-bills" element={<BillsPage key="delivery_challan" documentType="delivery_challan" />} />
                    <Route path="/company-bills" element={<CompanyBillsPage />} />

@@ -152,7 +152,9 @@ export function AdminShell({ children }: AdminShellProps) {
         navigateTo("/dashboard");
         break;
       case "bills":
-        navigateTo("/bills");
+        /* The tab is "Billing" now, so it opens the overview rather than dropping
+           the user straight into Tax Bills. */
+        navigateTo("/billing");
         break;
       case "folders":
         navigateTo("/folders");

@@ -89,8 +89,11 @@ const navSections: NavSection[] = [
   {
     title: "Documents",
     items: [
-      { label: "Tax Bills", icon: <Receipt size={18} />, path: "/bills" },
-      { label: "Challan Bills", icon: <Receipt size={18} />, path: "/challan-bills" },
+      // One Billing entry instead of two. The overview it opens offers Tax Invoice
+      // Billing and Challan Billing as full-width cards, so the choice still costs one
+      // click; `/bills` and `/challan-bills` remain real routes for every link that
+      // already points at them.
+      { label: "Billing", icon: <Receipt size={18} />, path: "/billing" },
       { label: "Company Bills", icon: <FolderArchive size={18} />, path: "/company-bills" },
       // How a bill gets made, next to the list of bills that exist. Both entry modes —
       // blank, and blank with the Invoice Business Profile preloaded — and the copy flow
@@ -256,12 +259,10 @@ export default function Sidebar() {
                       unlabelled action. */}
                   <NavLink
                     to={item.path}
-                    /* `/bills` is a prefix of the three other Documents
-                       entries, and NavLink matches on prefix by default — so
-                       Bills lit up on Create Bill, Logo Library and Invoice
-                       Profile at the same time as their own item. `end` keeps
-                       each of those screens showing exactly one active row. */
-                    end={item.path === "/" || item.path === "/bills"}
+                    /* NavLink matches on prefix by default. Only the root needs
+                       `end`; the nested `/bills/...` entries are leaves, so they
+                       cannot light up more than themselves. */
+                    end={item.path === "/"}
                     onClick={() => {
                       if (isMobile) closeMobile();
                     }}

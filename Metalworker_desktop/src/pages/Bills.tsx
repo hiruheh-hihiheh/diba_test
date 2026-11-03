@@ -71,6 +71,7 @@ import { BillDocumentTypeContext } from "../contexts/BillDocumentTypeContext";
 import { DOCUMENT_TYPE_INFO, type BillDocumentType } from "../services/billDocumentTypes";
 import { useSelection } from "../hooks/useSelection";
 import { useToast } from "../hooks/useToast";
+import { nextSortMode, type BillSortMode } from "../services/billSorting";
 import { useConfirm } from "../hooks/useConfirm";
 import SearchInput from "../components/ui/SearchInput";
 import EmptyState from "../components/ui/EmptyState";
@@ -160,6 +161,36 @@ function createBillChoices(documentType: BillDocumentType) {
 }
 
 /**
+ * One sorting checkbox.
+ *
+ * A real controlled `<input type="checkbox">` rather than a styled button: it is
+ * keyboard-operable, announced as a checkbox with its checked state, and the browser
+ * draws the tick. The two controls are mutually exclusive because they share one
+ * mode — `nextSortMode` is what turns the other one off.
+ */
+function SortCheckbox({
+  label,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-2 text-xs text-text-muted cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        className="w-4 h-4 rounded accent-primary cursor-pointer"
+      />
+      <span className={checked ? "text-text font-semibold" : ""}>{label}</span>
+    </label>
+  );
+}
+
+/**
  * The bill workspace, for one document type.
  *
  * Mounted twice: at /bills as Tax Bills and at /challan-bills as Challan Bills.
@@ -186,6 +217,12 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeRaw] = useState(DEFAULT_PAGE_SIZE);
+  /**
+   * Which ordering the list is using. `default` is the list's original newest-first
+   * order; the two sort modes are ordered over every matching bill before the page is
+   * cut, so switching one on resets to page 1 rather than re-ordering 20 rows.
+   */
+  const [sortMode, setSortMode] = useState<BillSortMode>("default");
 
   /** `null` = All. Otherwise the raw stored `job_kind` values in that bucket. */
   const [jobGroup, setJobGroup] = useState<BillJobGroup | null>(null);
@@ -276,6 +313,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
             from: from || null,
             to: to || null,
             jobKindValues: jobKindValuesForGroup,
+            sort: sortMode,
             page,
             pageSize,
           }),
@@ -299,7 +337,7 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
         setLoadedOnce(true);
       }
     },
-    [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, page, pageSize]
+    [documentType, search, uploadFilter, from, to, jobKindValuesForGroup, sortMode, page, pageSize]
   );
 
   /* Regeneration is driven by the server's job; the hook only mirrors it, so a
@@ -1140,6 +1178,36 @@ export default function BillsPage({ documentType = "tax_invoice" }: { documentTy
           placeholder={`Search ${info.word}s…`}
           className="lg:max-w-2xl"
         />
+
+        {/* Sorting, kept apart from the filters below because it changes the ORDER of
+            what they matched, not what matches. Both modes are ordered across every
+            page before the page is cut (see services/billSorting.ts), they are
+            mutually exclusive, and unticking the active one restores the default
+            order. Changing one goes back to page 1, since page 4 of the old order is
+            not page 4 of the new one. */}
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-5"
+          role="group"
+          aria-label="Sort bills"
+        >
+          <span className="text-xs font-semibold text-text-muted">Sort</span>
+          <SortCheckbox
+            label="Sort by document number (Ascending)"
+            checked={sortMode === "document_number"}
+            onToggle={() => {
+              setSortMode((current) => nextSortMode(current, "document_number"));
+              setPage(1);
+            }}
+          />
+          <SortCheckbox
+            label="Sort by Excel upload date (Oldest to Newest)"
+            checked={sortMode === "upload_date"}
+            onToggle={() => {
+              setSortMode((current) => nextSortMode(current, "upload_date"));
+              setPage(1);
+            }}
+          />
+        </div>
 
         {/* Job-type grouping.
             One workbook legitimately contains both kinds, so this is a filter on

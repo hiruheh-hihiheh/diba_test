@@ -68,10 +68,13 @@ export const BOTTOM_TABS: BottomTab[] = [
   },
   {
     key: "bills",
-    label: "Tax Bills",
+    /* One Billing tab instead of a Tax Bills tab. It opens the overview, where the
+       two sections are full-width cards — so the choice costs one tap, and the tab
+       stays lit on either section it leads to. */
+    label: "Billing",
     icon: "receipt",
-    route: "/bills",
-    activeRoutes: ["/bills", "/bill-create"],
+    route: "/billing",
+    activeRoutes: ["/billing", "/bills", "/challan-bills", "/bill-create"],
   },
   {
     key: "folders",
@@ -153,11 +156,11 @@ export const MORE_SHEET_SECTIONS: NavSection[] = [
     title: "Documents",
     items: [
       {
-        key: "challan-bills",
-        label: "Challan Bills",
+        key: "billing",
+        label: "Billing",
         icon: "receipt",
-        description: "Delivery Challans",
-        route: "/challan-bills",
+        description: "Tax invoices and challans",
+        route: "/billing",
       },
       {
         key: "group-bills",
@@ -256,8 +259,9 @@ export const DRAWER_SECTIONS: NavSection[] = [
     key: "documents",
     title: "Documents",
     items: [
-      { key: "bills", label: "Tax Bills", icon: "receipt", route: "/bills" },
-      { key: "challan-bills", label: "Challan Bills", icon: "receipt", route: "/challan-bills" },
+      /* A single Billing entry: the overview it opens offers both sections as cards.
+         `/bills` and `/challan-bills` remain real routes for every existing link. */
+      { key: "billing", label: "Billing", icon: "receipt", route: "/billing" },
       { key: "bill-create", label: "Create Bill", icon: "plus", route: "/bill-create" },
       { key: "group-bills", label: "Group Bills", icon: "layers", route: "/group-bills" },
       {
@@ -304,6 +308,7 @@ export const ROUTE_TITLES: Record<string, string> = {
   "/jobs-with-material": "With Material Jobs",
   "/bills": "Tax Bills",
   "/challan-bills": "Challan Bills",
+  "/billing": "Billing Overview",
   "/bill-create": "Create Bill",
   "/folders": "Folders",
   "/folder-detail": "Folder Details",
