@@ -288,10 +288,51 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "The draft could not be read." }, 500);
     }
     if (!read.row) return json({ ok: false, error: "That draft no longer exists." }, 404);
+    /* A manual draft belongs to the admin who started it. Imported rows have no
+       author and are not reachable here because they are finalized. */
+    if (
+      typeof read.row.created_by === "string" &&
+      read.row.created_by !== user.id
+    ) {
+      return json({ ok: false, error: "That draft could not be found." }, 404);
+    }
     if (read.row.status === "finalized") {
       /* A finalized document is immutable here. `update-bill` exists for changing one,
          and routing that through here would give a second, differently-audited path to
-         the same edit. */
+         the same edit.
+
+         `finalize` is the one exception, and it is not a write: the client may have
+         lost the HTTP response after the server successfully generated the documents.
+         Re-sending the same finalize returns the row that already exists, so a retry
+         cannot create a second bill and does not pretend to have changed anything. */
+      if (action === "finalize") {
+        const stored = read.row;
+        return json({
+          ok: true,
+          bill_id: String(stored.id),
+          created: false,
+          status: "finalized",
+          already_generated: true,
+          pdf_version: stored.pdf_version ?? 1,
+          amount_in_words: stored.amount_in_words ?? null,
+          total_quantity: stored.total_quantity ?? null,
+          amount_before_tax: stored.amount_before_tax ?? 0,
+          cgst: stored.cgst ?? 0,
+          sgst: stored.sgst ?? 0,
+          igst: stored.igst ?? 0,
+          total_gst: stored.total_gst ?? 0,
+          amount_after_tax: stored.amount_after_tax ?? 0,
+          jobs_linked: true,
+          jobs_error: null,
+          folder_linked: true,
+          duplicate_invoice_no: null,
+          pdfs: [
+            { copy: "original", label: COPY_LABEL.original, path: stored.original_pdf_path ?? null },
+            { copy: "duplicate", label: COPY_LABEL.duplicate, path: stored.duplicate_pdf_path ?? null },
+            { copy: "triplicate", label: COPY_LABEL.triplicate, path: stored.triplicate_pdf_path ?? null },
+          ],
+        });
+      }
       return json(
         { ok: false, error: finalizedDraftMessage(), reason: "already_finalized" },
         409
@@ -471,49 +512,102 @@ Deno.serve(async (req) => {
     values.amount_in_words = amountInWords(Number(values.amount_after_tax ?? 0));
   }
 
-  /* ---- the write ----------------------------------------------------------- */
-
-  const write: Record<string, unknown> = {
-    ...values,
-    updated_at: new Date().toISOString(),
-    updated_by: user.id,
-  };
+  /* ---- the write -----------------------------------------------------------
+     One transaction, not two. `save_creator_draft` locks the bill row, checks
+     that it is still a draft, refuses a live generation claim, writes the
+     columns and replaces the line items. A separate UPDATE followed by a
+     DELETE/INSERT could be interleaved by a finalize and leave a finalized
+     document whose lines were replaced afterwards; this cannot. */
+  const write: Record<string, unknown> = { ...values };
   /* `logo_id` is the letterhead and belongs to the invoice. Absent from the request
      means "leave it alone"; present means set it, and an explicit null clears it. */
   if (body.logo_id !== undefined) {
     write.logo_id = body.logo_id === null ? null : String(body.logo_id);
   }
+
+  /* A finalize takes a durable claim BEFORE the write. Rendering and uploading
+     happen outside the database, so a row lock cannot cover them; the token in
+     the row is what keeps a late autosave out for the whole operation. */
+  let claimToken: string | null = null;
+  let claimFinalized = false;
+
+  const releaseClaim = async () => {
+    if (!claimToken || claimFinalized) return;
+    const token = claimToken;
+    claimToken = null;
+    try {
+      await admin.rpc("release_bill_generation", {
+        p_bill_id: draftId,
+        p_claim_token: token,
+      });
+    } catch (err) {
+      console.error("create-bill: claim release failed:", err);
+    }
+  };
+
   if (action === "finalize") {
-    write.status = "finalized";
-  }
-
-  const { error: writeError } = await admin.from(TABLE).update(write).eq("id", draftId);
-  if (writeError) {
-    console.error("create-bill: row update failed:", writeError.message);
-    return json({ ok: false, error: "The bill could not be saved." }, 500);
-  }
-
-  /* Line items are REPLACED, not diffed, and only when the client sent them. The same
-     argument `update-bill` makes: this is a short ordered list shown as a table, and
-     a delete-and-reinsert cannot leave a stale row behind when a line is deleted. */
-  let linesTouched = false;
-  if (patch.line_items !== undefined) {
-    linesTouched = true;
-    const { error: delError } = await admin.from(LINE_ITEMS).delete().eq("bill_id", draftId);
-    if (delError) {
-      console.error("create-bill: line items delete failed:", delError.message);
-      return json({ ok: false, error: "The bill's line items could not be replaced." }, 500);
-    }
-    if (lineItems.length > 0) {
-      const { error: insError } = await admin.from(LINE_ITEMS).insert(
-        lineItems.map((item) => lineItemInsertRow(draftId, item))
+    const { data: claimed, error: claimError } = await admin.rpc("claim_bill_generation", {
+      p_bill_id: draftId,
+      p_user_id: user.id,
+      p_document_type: documentType,
+    });
+    if (claimError) {
+      console.error("create-bill: generation claim failed:", claimError);
+      return json(
+        {
+          ok: false,
+          error: "The document could not be locked for generation. Nothing was generated.",
+          reason: "claim_failed",
+        },
+        500
       );
-      if (insError) {
-        console.error("create-bill: line items insert failed:", insError.message);
-        return json({ ok: false, error: "The bill's line items could not be saved." }, 500);
-      }
     }
+    const claim = claimed as Record<string, unknown> | null;
+    if (claim?.ok !== true) {
+      return json(
+        {
+          ok: false,
+          error: String(claim?.message ?? "This document is already being generated."),
+          reason: String(claim?.reason ?? "generation_in_progress"),
+          bill_id: draftId,
+        },
+        Number(claim?.status ?? 409)
+      );
+    }
+    claimToken = String(claim.claim_token);
   }
+
+  const { data: saveData, error: saveError } = await admin.rpc("save_creator_draft", {
+    p_bill_id: draftId,
+    p_user_id: user.id,
+    p_document_type: documentType,
+    p_patch: write,
+    p_line_items:
+      patch.line_items !== undefined
+        ? lineItems.map((item) => lineItemInsertRow(draftId, item))
+        : null,
+    p_claim_token: claimToken,
+  });
+  if (saveError) {
+    console.error("create-bill: atomic draft save failed:", saveError);
+    await releaseClaim();
+    return json({ ok: false, error: "The bill could not be saved.", reason: "db_unavailable" }, 500);
+  }
+  const saved = saveData as Record<string, unknown> | null;
+  if (saved?.ok !== true) {
+    await releaseClaim();
+    return json(
+      {
+        ok: false,
+        error: String(saved?.message ?? "The bill could not be saved."),
+        reason: String(saved?.reason ?? "save_conflict"),
+        bill_id: draftId,
+      },
+      Number(saved?.status ?? 409)
+    );
+  }
+
+  const linesTouched = patch.line_items !== undefined;
 
   /* ---- duplicate invoice numbers ------------------------------------------
      A warning the admin has to clear, not a hard block. Two invoices can legitimately
@@ -541,6 +635,7 @@ Deno.serve(async (req) => {
          outcome: the admin's work is kept and they can change the number and try
          again. But the status is NOT finalized - it was not written yet, because the
          duplicate check runs before the finalize write below. */
+      await releaseClaim();
       return json(
         {
           ok: false,
@@ -563,6 +658,7 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (rereadError || !stored) {
     console.error("create-bill: re-read failed:", rereadError?.message);
+    await releaseClaim();
     return json({ ok: false, error: "The saved bill could not be read back." }, 500);
   }
   const row = stored as Record<string, unknown>;
@@ -598,6 +694,7 @@ Deno.serve(async (req) => {
     }
   } catch (err) {
     console.error("create-bill: invoice business profile read error:", err);
+    await releaseClaim();
     return json(
       {
         ok: false,
@@ -614,6 +711,7 @@ Deno.serve(async (req) => {
   if (logoWanted && !logoImage) {
     /* A hard failure, deliberately. Continuing would produce a document with the
        letterhead missing, point the row at it, and report success. */
+    await releaseClaim();
     return json(
       {
         ok: false,
@@ -639,6 +737,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("create-bill: render failed:", err);
+    await releaseClaim();
     return json(
       {
         ok: false,
@@ -684,7 +783,7 @@ Deno.serve(async (req) => {
       bill_id: draftId,
       created,
       status: row.status ?? "draft",
-      saved_at: write.updated_at,
+      saved_at: saved.saved_at ?? new Date().toISOString(),
       amount_in_words: row.amount_in_words ?? null,
       ...totals,
     });
@@ -705,6 +804,7 @@ Deno.serve(async (req) => {
     },
   });
   if (blockers.length > 0) {
+    await releaseClaim();
     return json(
       {
         ok: false,
@@ -746,7 +846,7 @@ Deno.serve(async (req) => {
          draft, so there is no state in which a bill claims documents it does not
          have. */
       if (uploaded.length > 0) await admin.storage.from(BUCKET).remove(uploaded);
-      await admin.from(TABLE).update({ status: "draft" }).eq("id", draftId);
+      await releaseClaim();
       return json(
         {
           ok: false,
@@ -761,34 +861,26 @@ Deno.serve(async (req) => {
   }
 
   /* ONE statement sets the paths, the version, the logo that was actually rendered,
-     the profile snapshot, and the status. `bills_draft_has_no_documents` makes the
-     draft-with-paths state unrepresentable, so this cannot be observed half-applied,
-     and a failure here leaves the uploaded objects to be removed by the caller of
-     this handler rather than stranding them. */
-  const { error: finalizeError } = await admin
-    .from(TABLE)
-    .update({
-      original_pdf_path: newPaths.original,
-      duplicate_pdf_path: newPaths.duplicate,
-      triplicate_pdf_path: newPaths.triplicate,
-      pdf_version: 1,
-      /* Recorded so this bill does not sit in the re-print queue forever: these
-         documents were rendered WITH this logo. */
-      logo_rendered_logo_id: logoWanted,
-      /* Whatever produced these three, frozen against later profile edits. */
-      business_profile_snapshot: billProfile.snapshot,
-      status: "finalized",
-      finalized_at: new Date().toISOString(),
-    })
-    .eq("id", draftId);
+     the profile snapshot, the status and clears the claim. `bills_draft_has_no_documents`
+     makes the draft-with-paths state unrepresentable, so this cannot be observed
+     half-applied. Only the holder of the claim token can reach this update; a stale
+     generation that lost its claim is refused rather than overwriting a newer result. */
+  const { data: finalized, error: finalizeError } = await admin.rpc("finalize_bill_generation", {
+    p_bill_id: draftId,
+    p_claim_token: claimToken,
+    p_original_path: newPaths.original,
+    p_duplicate_path: newPaths.duplicate,
+    p_triplicate_path: newPaths.triplicate,
+    p_logo_id: logoWanted,
+    p_profile_snapshot: billProfile.snapshot,
+  });
 
-  if (finalizeError) {
-    console.error("create-bill: finalize update failed:", finalizeError.message);
+  if (finalizeError || (finalized as Record<string, unknown> | null)?.ok !== true) {
+    console.error("create-bill: finalize update failed:", finalizeError ?? finalized);
     await admin.storage.from(BUCKET).remove(uploaded);
-    /* Put the row back to a draft. It is already a draft as far as the documents are
-       concerned - the paths were never written - so this only corrects the status
-       column that the failed statement may have half-set. */
-    await admin.from(TABLE).update({ status: "draft" }).eq("id", draftId);
+    /* The claim is still ours (the RPC refused rather than finalized), so release it
+       and leave the draft retryable. Nothing was written to the row. */
+    await releaseClaim();
     return json(
       {
         ok: false,
@@ -799,6 +891,9 @@ Deno.serve(async (req) => {
       500
     );
   }
+  /* The claim was cleared by the same statement that finalized the bill. */
+  claimFinalized = true;
+  claimToken = null;
 
   /* ---- job links and folder, LAST ------------------------------------------
      After the documents exist, and through the CALLER'S OWN session so the 0013

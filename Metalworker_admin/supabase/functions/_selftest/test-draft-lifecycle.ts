@@ -34,8 +34,13 @@ import {
   type DraftStorage,
 } from "../../../src/services/draftLifecycle.ts";
 import { createSaveQueue, type SaveOutcome } from "../../../src/services/saveQueue.ts";
+import {
+  createDraftSessionStore,
+  type AsyncDraftBackend,
+} from "../../../src/services/draftSessionStoreCore.ts";
 import { isLegacyBill } from "../../../src/services/billDocument.ts";
 import { classifyDraftRecovery, finalizedDraftMessage } from "../create-bill/draftRecovery.ts";
+import type { DraftRecoveryRow } from "../create-bill/draftRecovery.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -342,12 +347,20 @@ section("D. autosave is serialized and always persists the newest values");
   check(!serial.isDirty(), "and the queue ends clean");
 
   /* A failure keeps the values dirty and NEVER advances the saved time. */
+  let failingAttempt = 0;
   const failing = createSaveQueue({
     debounceMs: 0,
     now: () => new Date("2026-11-03T10:00:00.000Z"),
-    save: async () => ({ ok: false, error: "network down" }),
+    save: async () => {
+      failingAttempt += 1;
+      return failingAttempt === 1
+        ? { ok: true, savedAt: "2026-11-03T09:00:00.000Z" }
+        : { ok: false, error: "network down" };
+    },
   });
-  failing.markSaved("2026-11-03T09:00:00.000Z");
+  failing.change();
+  await failing.flush();
+  check(failing.state().savedAt === "2026-11-03T09:00:00.000Z", "a successful save records its time");
   failing.change();
   const failedFlush = await failing.flush();
   check(failedFlush === false, "a failed save makes flush report failure");
@@ -385,6 +398,235 @@ section("D. autosave is serialized and always persists the newest values");
     const desktop = readFileSync(join(root, "Metalworker_desktop", file), "utf8");
     check(admin === desktop, `${file} is identical in both apps`);
   }
+}
+
+/* ──────────────────────────────────────────────
+   E. Save Draft and Leave draft
+   ────────────────────────────────────────────── */
+
+section("E. Save Draft works before the first autosave, and Leave draft abandons pending work");
+
+{
+  let forced = 0;
+  const fresh = createSaveQueue({
+    debounceMs: 1200,
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+    save: async () => {
+      forced += 1;
+      return { ok: true, savedAt: "2026-11-03T11:00:00.000Z" };
+    },
+  });
+  check(fresh.state().status === "idle", "a brand-new form is idle");
+  const savedNow = await fresh.saveNow();
+  check(
+    savedNow === true && forced === 1,
+    "Save Draft writes even though no autosave was ever scheduled",
+    `${savedNow}/${forced}`
+  );
+  check(!fresh.isDirty(), "and the form is clean afterwards");
+
+  /* Abandon: a newer edit during the request is discarded, not saved. */
+  let calls = 0;
+  const resolvers: ((outcome: SaveOutcome) => void)[] = [];
+  const abandoning = createSaveQueue({
+    debounceMs: 1200,
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
+    save: () => {
+      calls += 1;
+      return new Promise<SaveOutcome>((resolve) => resolvers.push(resolve));
+    },
+  });
+  abandoning.change();
+  const flushPromise = abandoning.flush();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(calls === 1, "the flush starts one request");
+  abandoning.change();
+  check(abandoning.isDirty(), "an edit during the request is pending");
+  const abandoned = abandoning.abandon();
+  resolvers[0]({ ok: true, savedAt: "2026-11-03T11:01:00.000Z" });
+  await abandoned;
+  await flushPromise;
+  check(calls === 1, "abandon never starts another save for the discarded version", String(calls));
+  check(!abandoning.isDirty(), "abandon discards the version it never confirmed");
+  check(abandoning.state().status === "saved", "the last confirmed version is what remains");
+
+  /* A pending debounce is cancelled, not fired after leaving. */
+  let pending: (() => void) | null = null;
+  let fired = 0;
+  const timered = createSaveQueue({
+    debounceMs: 1200,
+    setTimeoutFn: (handler) => {
+      pending = handler;
+      return 1;
+    },
+    clearTimeoutFn: () => {
+      pending = null;
+    },
+    save: async () => {
+      fired += 1;
+      return { ok: true };
+    },
+  });
+  timered.change();
+  check(pending !== null, "an edit schedules a debounce");
+  await timered.abandon();
+  check(pending === null, "abandon cancels the debounce");
+  if (pending) (pending as () => void)();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(fired === 0, "and the cancelled debounce never writes");
+}
+
+/* ──────────────────────────────────────────────
+   F. Strict recovery identity
+   ────────────────────────────────────────────── */
+
+section("F. recovery refuses an identity it cannot prove");
+
+{
+  const request = {
+    userId: "user-1",
+    documentType: "tax_invoice" as const,
+    key: "key-1",
+    noun: "invoice",
+  };
+  const base: DraftRecoveryRow = {
+    id: "bill-1",
+    status: "draft",
+    document_type: "tax_invoice",
+    created_by: "user-1",
+    creator_draft_key: "key-1",
+  };
+
+  const cases: Array<[string, DraftRecoveryRow, number]> = [
+    ["a null author", { ...base, created_by: null }, 404],
+    ["a missing author", { ...base, created_by: undefined }, 404],
+    ["an empty author", { ...base, created_by: "" }, 404],
+    ["a null key", { ...base, creator_draft_key: null }, 409],
+    ["a missing key", { ...base, creator_draft_key: undefined }, 409],
+    ["an empty key", { ...base, creator_draft_key: "" }, 409],
+  ];
+  for (const [label, row, status] of cases) {
+    const decision = classifyDraftRecovery(row, request);
+    check(decision.action === "refuse", `${label} is refused`);
+    check(
+      decision.action === "refuse" && decision.status === status,
+      `${label} gets HTTP ${status}`
+    );
+  }
+
+  const badId = classifyDraftRecovery({ ...base, id: "" }, request);
+  check(badId.action === "refuse" && badId.status === 500, "an invalid id is refused");
+
+  const good = classifyDraftRecovery(base, request);
+  check(good.action === "resume", "an exact identity is still resumed");
+}
+
+/* ──────────────────────────────────────────────
+   G. Durable session storage on a phone
+   ────────────────────────────────────────────── */
+
+section("G. the native session store survives a restart and clears on finalize");
+
+{
+  function asyncMemoryBackend(seed: Record<string, string> = {}): AsyncDraftBackend & {
+    dump(): Map<string, string>;
+  } {
+    const map = new Map<string, string>(Object.entries(seed));
+    return {
+      getAllKeys: async () => [...map.keys()],
+      multiGet: async (keys) =>
+        keys.map((key) => [key, map.get(key) ?? null] as const),
+      setItem: async (key, value) => {
+        map.set(key, value);
+      },
+      removeItem: async (key) => {
+        map.delete(key);
+      },
+      dump: () => map,
+    };
+  }
+
+  const backend = asyncMemoryBackend();
+  const store = createDraftSessionStore(backend);
+  check(!store.isHydrated(), "the native store starts unhydrated");
+  await store.hydrate();
+  check(store.isHydrated(), "hydration reads the backend once");
+
+  const session = newDraftKey();
+  const created = await store.remember({
+    sessionId: session,
+    documentType: "tax_invoice",
+    draftKey: "key-native",
+    billId: null,
+    mode: "empty",
+    sourceBillId: null,
+  });
+  check(
+    created.draftKey === "key-native" && created.billId === null,
+    "a new session is recorded with its key and no bill yet"
+  );
+  check(backend.dump().has("bill-creator:active"), "the active record reaches the durable backend");
+  check(
+    backend.dump().get(draftSessionStorageKey("tax_invoice", session)) === "key-native",
+    "the idempotency key reaches the durable backend"
+  );
+
+  const updated = await store.remember({
+    sessionId: session,
+    documentType: "tax_invoice",
+    billId: "bill-native-1",
+  });
+  check(
+    updated.billId === "bill-native-1" && updated.draftKey === "key-native",
+    "a later save keeps the key and records the canonical bill id"
+  );
+
+  /* A restart: a brand-new store over the same bytes. */
+  const restoredStore = createDraftSessionStore(
+    asyncMemoryBackend(Object.fromEntries(backend.dump()))
+  );
+  const restored = await restoredStore.readActive();
+  check(
+    restored?.sessionId === session && restored.billId === "bill-native-1",
+    "a restart restores the unfinished session"
+  );
+  check(
+    restored !== null &&
+      draftKeyForSession(restored.sessionId, restored.documentType, restoredStore.storage()) ===
+        "key-native",
+    "the restored session reuses the key it actually sent"
+  );
+
+  await store.forget(session, "tax_invoice");
+  check((await store.readActive()) === null, "forget clears the active session");
+  check(
+    backend.dump().get(draftSessionStorageKey("tax_invoice", session)) === undefined,
+    "forget clears the idempotency key"
+  );
+
+  const corrupt = createDraftSessionStore(
+    asyncMemoryBackend({ "bill-creator:active": "{not json" })
+  );
+  check(
+    (await corrupt.readActive()) === null,
+    "a corrupt stored record is ignored rather than crashing"
+  );
+
+  const broken = createDraftSessionStore({
+    getAllKeys: async () => {
+      throw new Error("storage unavailable");
+    },
+    multiGet: async () => [],
+    setItem: async () => {},
+    removeItem: async () => {},
+  });
+  await broken.hydrate();
+  check(
+    /storage unavailable/.test(broken.storageError() ?? ""),
+    "a storage failure is reported, not swallowed"
+  );
 }
 
 console.log(

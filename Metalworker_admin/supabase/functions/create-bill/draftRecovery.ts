@@ -57,11 +57,13 @@ export function classifyDraftRecovery(
     };
   }
 
-  /* Ownership first. A key is a UUID the client chose, so another admin's key can be
-     guessed or copied from a shared link; without this check that would be a way to
-     write to somebody else's draft. 404 rather than 403 so a wrong key does not confirm
-     that a bill exists at that id. */
-  if (typeof row.created_by === "string" && row.created_by !== request.userId) {
+  /* Ownership first, and EXACTLY. A missing or null author is not "probably mine":
+     recovery is an idempotency path, and the only safe answer to an identity that
+     does not match is to refuse. A key is a UUID the client chose, so another
+     admin's key can be guessed or copied from a shared link; without this check that
+     would be a way to write to somebody else's draft. 404 rather than 403 so a wrong
+     key does not confirm that a bill exists at that id. */
+  if (typeof row.created_by !== "string" || row.created_by === "" || row.created_by !== request.userId) {
     return {
       action: "refuse",
       status: 404,
@@ -70,10 +72,14 @@ export function classifyDraftRecovery(
     };
   }
 
-  /* The key must be the one that actually matched. `createDraft` looks the row up by
-     key, but checking it here keeps the rule true even if a caller passes a row read by
-     id. */
-  if (typeof row.creator_draft_key === "string" && row.creator_draft_key !== request.key) {
+  /* The key must be exactly the one that actually matched. `createDraft` looks the
+     row up by key, but checking it here keeps the rule true even if a caller passes
+     a row read by id. A null or missing key is a mismatch, not a pass. */
+  if (
+    typeof row.creator_draft_key !== "string" ||
+    row.creator_draft_key === "" ||
+    row.creator_draft_key !== request.key
+  ) {
     return {
       action: "refuse",
       status: 409,

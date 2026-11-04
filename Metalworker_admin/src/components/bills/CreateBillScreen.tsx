@@ -83,11 +83,8 @@ import { showCreatorPreview } from "../../services/creatorPreview";
 import { getBillConnections, unlinkJobsFromBill } from "../../services/billJobConnections";
 import { createBillingFolder, fetchBillingFolders, type BillingFolder } from "../../services/billingFolders";
 import { fetchBill, fetchBillFolderId, fetchBillLineItems, fetchBills } from "../../services/bills";
-import {
-  completeDraftSession,
-  draftKeyForSession,
-  newDraftKey,
-} from "../../services/draftLifecycle";
+import { draftKeyForSession, newDraftKey } from "../../services/draftLifecycle";
+import { draftSessionStore } from "../../services/draftSessionStore";
 import {
   createSaveQueue,
   type SaveOutcome,
@@ -135,6 +132,8 @@ export interface CreateBillScreenProps {
   onExit: () => void;
   /** Back of the form to the entry screen, abandoning the current mode's draft view. */
   onBackToEntry: () => void;
+  /** A persistence warning from the route, shown instead of silently promising recovery. */
+  storageNote?: string | null;
 }
 
 type Styles = ReturnType<typeof createStyles>;
@@ -171,6 +170,7 @@ export function CreateBillScreen(props: CreateBillScreenProps) {
       onExit={props.onExit}
       onBackToEntry={props.onBackToEntry}
       sessionId={sessionId}
+      storageNote={props.storageNote ?? null}
     />
   );
 }
@@ -316,6 +316,7 @@ function CreatorForm({
   isAdmin,
   onExit,
   onBackToEntry,
+  storageNote,
 }: {
   mode: CreatorMode;
   sourceBillId: string | null;
@@ -325,6 +326,7 @@ function CreatorForm({
   isAdmin: boolean;
   onExit: () => void;
   onBackToEntry: () => void;
+  storageNote: string | null;
 }) {
   const isCopy = mode === "copy";
   const isResume = mode === "resume";
@@ -338,20 +340,168 @@ function CreatorForm({
 
   const [values, setValues] = useState<CreatorFormValues>({});
   const [lines, setLines] = useState<CreatorLineDraft[]>([]);
-  const [bank, setBank] = useState<BankDetails>({});
-  const [amountInWords, setAmountInWords] = useState("");
-  const [wordsTouched, setWordsTouched] = useState(false);
-  const [roundOff, setRoundOff] = useState<string | null>(null);
-  const [reverseChargeGst, setReverseChargeGst] = useState<string | null>(null);
+  const [bank, setBankState] = useState<BankDetails>({});
+  const [amountInWords, setAmountInWordsState] = useState("");
+  const [wordsTouched, setWordsTouchedState] = useState(false);
+  const [roundOff, setRoundOffState] = useState<string | null>(null);
+  const [reverseChargeGst, setReverseChargeGstState] = useState<string | null>(null);
 
   /* ── Everything that is NOT a patch field ────────────────── */
 
-  const [billId, setBillId] = useState<string | null>(null);
-  const [logoId, setLogoId] = useState<string | null | undefined>(undefined);
-  const [folderId, setFolderId] = useState<string | null>(null);
-  const [jobIds, setJobIds] = useState<string[]>([]);
+  const [billId, setBillIdState] = useState<string | null>(null);
+  const [logoId, setLogoIdState] = useState<string | null | undefined>(undefined);
+  const [folderId, setFolderIdState] = useState<string | null>(null);
+  const [jobIds, setJobIdsState] = useState<string[]>([]);
   const [connections, setConnections] = useState<BillJobConnection[]>([]);
-  const [useCurrentProfile, setUseCurrentProfile] = useState(false);
+  const [useCurrentProfile, setUseCurrentProfileState] = useState(false);
+
+  /* ── The latest form, readable synchronously ──────────────
+     React state is not readable from the event that is still being handled: a field
+     change and a Generate click can land before the next render. These refs are
+     updated by every mutation helper (and re-synced after each render as a safety
+     net), so `buildRequest` always sends the value the admin last typed. */
+  const valuesRef = useRef(values);
+  const linesRef = useRef(lines);
+  const bankRef = useRef(bank);
+  const amountInWordsRef = useRef(amountInWords);
+  const wordsTouchedRef = useRef(wordsTouched);
+  const roundOffRef = useRef(roundOff);
+  const reverseChargeRef = useRef(reverseChargeGst);
+  const billIdRef = useRef<string | null>(null);
+  const logoIdRef = useRef(logoId);
+  const folderIdRef = useRef(folderId);
+  const jobIdsRef = useRef(jobIds);
+  const useCurrentProfileRef = useRef(useCurrentProfile);
+  const queueRef = useRef<SaveQueue | null>(null);
+
+  /**
+   * Report an edit to the save queue.
+   *
+   * Every mutation helper below updates its ref FIRST and then calls this, so a
+   * Generate that happens in the same event loop turn as a keystroke still sends the
+   * typed value. The queue owns the debounce and the version counter; this only says
+   * "there is a newer version".
+   */
+  const markChanged = useCallback(() => {
+    queueRef.current?.change();
+  }, []);
+
+  /* ── Setters that keep the refs in step ─────────────────── */
+
+  const setBillId = useCallback((id: string | null) => {
+    billIdRef.current = id;
+    setBillIdState(id);
+  }, []);
+
+  const setLogoId = useCallback(
+    (id: string | null | undefined) => {
+      logoIdRef.current = id;
+      setLogoIdState(id);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setFolderId = useCallback(
+    (id: string | null) => {
+      folderIdRef.current = id;
+      setFolderIdState(id);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setJobIds = useCallback(
+    (update: string[] | ((previous: string[]) => string[])) => {
+      const next = typeof update === "function" ? update(jobIdsRef.current) : update;
+      jobIdsRef.current = next;
+      setJobIdsState(next);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setUseCurrentProfile = useCallback(
+    (update: boolean | ((previous: boolean) => boolean)) => {
+      const next =
+        typeof update === "function" ? update(useCurrentProfileRef.current) : update;
+      useCurrentProfileRef.current = next;
+      setUseCurrentProfileState(next);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setBank = useCallback(
+    (update: BankDetails | ((previous: BankDetails) => BankDetails)) => {
+      const next = typeof update === "function" ? update(bankRef.current) : update;
+      bankRef.current = next;
+      setBankState(next);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setAmountInWords = useCallback(
+    (value: string) => {
+      amountInWordsRef.current = value;
+      setAmountInWordsState(value);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setWordsTouched = useCallback((value: boolean) => {
+    wordsTouchedRef.current = value;
+    setWordsTouchedState(value);
+  }, []);
+
+  const setRoundOff = useCallback(
+    (value: string | null) => {
+      roundOffRef.current = value;
+      setRoundOffState(value);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  const setReverseChargeGst = useCallback(
+    (value: string | null) => {
+      reverseChargeRef.current = value;
+      setReverseChargeGstState(value);
+      markChanged();
+    },
+    [markChanged]
+  );
+
+  /* A safety net, not the primary path. Every setter above already updates its ref, so
+     this only matters if some future state change forgets to. It runs after the render
+     and deliberately does NOT call `change()`: seeding a form is not an edit. */
+  useEffect(() => {
+    valuesRef.current = values;
+    linesRef.current = lines;
+    bankRef.current = bank;
+    amountInWordsRef.current = amountInWords;
+    wordsTouchedRef.current = wordsTouched;
+    roundOffRef.current = roundOff;
+    reverseChargeRef.current = reverseChargeGst;
+    logoIdRef.current = logoId;
+    folderIdRef.current = folderId;
+    jobIdsRef.current = jobIds;
+    useCurrentProfileRef.current = useCurrentProfile;
+  }, [
+    values,
+    lines,
+    bank,
+    amountInWords,
+    wordsTouched,
+    roundOff,
+    reverseChargeGst,
+    logoId,
+    folderId,
+    jobIds,
+    useCurrentProfile,
+  ]);
 
   /* ── Server's numbers. Displayed, never computed here. ──── */
 
@@ -370,9 +520,13 @@ function CreatorForm({
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [problems, setProblems] = useState<{ field: string; message: string }[]>([]);
   const [duplicates, setDuplicates] = useState<CreatorDuplicate[]>([]);
   const [busy, setBusy] = useState<null | "preview" | "finalize">(null);
+  /* A synchronous guard, because `busy` only becomes true after React re-renders. Two
+     taps in the same frame would otherwise start two finalizes. */
+  const inFlightRef = useRef(false);
   const [logoPickerOpen, setLogoPickerOpen] = useState(false);
   const [jobsModalOpen, setJobsModalOpen] = useState(false);
   const [jobsTab, setJobsTab] = useState<JobType>("labour");
@@ -389,14 +543,15 @@ function CreatorForm({
   /* A resumed draft is identified by its bill id, so it sends no creation key at all —
      sending one would ask the server to create a second bill beside the row being
      edited. A new draft's key belongs to this session, never to the mode or source, so
-     a second "Create Bill" click cannot reuse the first form's token. */
-  const draftKey = useMemo(
-    () =>
-      isResume
-        ? ""
-        : draftKeyForSession(sessionId, documentType, globalThis.sessionStorage ?? null),
-    [isResume, sessionId, documentType]
+     a second "Create Bill" click cannot reuse the first form's token.
+
+     `sessionKey` is always present, because the session store needs one to record the
+     session even when the request itself omits it. */
+  const sessionKey = useMemo(
+    () => draftKeyForSession(sessionId, documentType, draftSessionStore.storage()),
+    [sessionId, documentType]
   );
+  const draftKey = isResume ? "" : sessionKey;
 
   /* ── Loading the form's starting state ───────────────────── */
 
@@ -405,19 +560,31 @@ function CreatorForm({
        on the server they are not three columns — they are one `terms` array. Flattening
        them here is only safe because the network layer reads them back out of `values`
        and re-joins them through `termsToPatch`, so the decision about whether an all-blank
-       set of terms should clear or be left alone is still made in one place. */
-    setValues({
+       set of terms should clear or be left alone is still made in one place.
+
+       Seeding is NOT an edit. It writes the refs directly and bypasses `markChanged`, so
+       opening a draft does not immediately schedule a redundant write. */
+    const seededValues: CreatorFormValues = {
       ...seed.values,
       term_1: seed.terms[0],
       term_2: seed.terms[1],
       term_3: seed.terms[2],
-    });
+    };
+    valuesRef.current = seededValues;
+    linesRef.current = seed.lines;
+    bankRef.current = seed.bank;
+    amountInWordsRef.current = seed.amountInWords;
+    wordsTouchedRef.current = false;
+    roundOffRef.current = seed.roundOff;
+    reverseChargeRef.current = seed.reverseChargeGst;
+
+    setValues(seededValues);
     setLines(seed.lines);
-    setBank(seed.bank);
-    setAmountInWords(seed.amountInWords);
-    setWordsTouched(false);
-    setRoundOff(seed.roundOff);
-    setReverseChargeGst(seed.reverseChargeGst);
+    setBankState(seed.bank);
+    setAmountInWordsState(seed.amountInWords);
+    setWordsTouchedState(false);
+    setRoundOffState(seed.roundOff);
+    setReverseChargeGstState(seed.reverseChargeGst);
   }, []);
 
   /* Runs exactly once: the component is mounted fresh per mode. Every setState in it
@@ -561,7 +728,7 @@ function CreatorForm({
     return () => {
       live = false;
     };
-  }, [mode, sourceBillId, applySeed, documentType, challan]);
+  }, [mode, sourceBillId, applySeed, documentType, challan, setBillId, setLogoId, setFolderId, setJobIds]);
 
   /* ── The link set, read back from the bill ──────────────── */
 
@@ -593,87 +760,95 @@ function CreatorForm({
 
   /* ── Changing a value ────────────────────────────────────── */
 
-  const setField = useCallback((field: string, value: string) => {
-    setValues((previous) => ({ ...previous, [field]: value }));
-  }, []);
+  const setField = useCallback(
+    (field: string, value: string) => {
+      const next = { ...valuesRef.current, [field]: value };
+      valuesRef.current = next;
+      setValues(next);
+      markChanged();
+    },
+    [markChanged]
+  );
 
   const setLine = useCallback(
     (key: string, field: keyof Omit<CreatorLineDraft, "key">, value: string) => {
-      setLines((previous) =>
-        previous.map((line) => (line.key === key ? { ...line, [field]: value } : line))
+      const next = linesRef.current.map((line) =>
+        line.key === key ? { ...line, [field]: value } : line
       );
+      linesRef.current = next;
+      setLines(next);
+      markChanged();
     },
-    []
+    [markChanged]
   );
 
   const addLine = useCallback(() => {
-    setLines((previous) => [
+    const previous = linesRef.current;
+    const next = [
       ...previous,
       blankCreatorLine(`row-${Date.now()}-${previous.length}`, previous.length),
-    ]);
-  }, []);
+    ];
+    linesRef.current = next;
+    setLines(next);
+    markChanged();
+  }, [markChanged]);
 
-  const removeLine = useCallback((key: string) => {
-    /* Never leave zero rows. An empty table has nowhere to type, and a bill with no line
-       items is refused at finalization anyway. */
-    setLines((previous) =>
-      previous.length <= 1
-        ? [{ ...blankCreatorLine(`row-${Date.now()}`, 0) }]
-        : previous.filter((line) => line.key !== key)
-    );
-  }, []);
+  const removeLine = useCallback(
+    (key: string) => {
+      /* Never leave zero rows. An empty table has nowhere to type, and a bill with no line
+         items is refused at finalization anyway. */
+      const previous = linesRef.current;
+      const next =
+        previous.length <= 1
+          ? [{ ...blankCreatorLine(`row-${Date.now()}`, 0) }]
+          : previous.filter((line) => line.key !== key);
+      linesRef.current = next;
+      setLines(next);
+      markChanged();
+    },
+    [markChanged]
+  );
 
-  const moveLine = useCallback((key: string, by: number) => {
-    setLines((previous) => {
+  const moveLine = useCallback(
+    (key: string, by: number) => {
+      const previous = linesRef.current;
       const at = previous.findIndex((line) => line.key === key);
       const to = at + by;
-      if (at < 0 || to < 0 || to >= previous.length) return previous;
-      const next = [...previous];
-      const [moved] = next.splice(at, 1);
-      next.splice(to, 0, moved);
+      if (at < 0 || to < 0 || to >= previous.length) return;
+      const reordered = [...previous];
+      const [moved] = reordered.splice(at, 1);
+      reordered.splice(to, 0, moved);
       /* `sr_no` is renumbered with the row. It is a printed column, so leaving it behind
          would print "1, 3, 2" after a reorder — the invoice would look like a mistake. */
-      return next.map((line, index) => ({ ...line, srNo: String(index + 1) }));
-    });
-  }, []);
+      const next = reordered.map((line, index) => ({ ...line, srNo: String(index + 1) }));
+      linesRef.current = next;
+      setLines(next);
+      markChanged();
+    },
+    [markChanged]
+  );
 
   /* ── Saving ──────────────────────────────────────────────── */
 
   const buildRequest = useCallback(
     (overrides: Record<string, unknown> = {}) => ({
       documentType,
-      billId,
+      billId: billIdRef.current,
       sourceBillId,
-      useCurrentProfile,
-      values,
-      lines,
-      amountInWords: amountInWordsForPatch(amountInWords, wordsTouched),
-      roundOff,
-      reverseChargeGst,
-      bank,
+      useCurrentProfile: useCurrentProfileRef.current,
+      values: valuesRef.current,
+      lines: linesRef.current,
+      amountInWords: amountInWordsForPatch(amountInWordsRef.current, wordsTouchedRef.current),
+      roundOff: roundOffRef.current,
+      reverseChargeGst: reverseChargeRef.current,
+      bank: bankRef.current,
       draftKey,
-      logoId,
-      folderId,
-      jobIds,
+      logoId: logoIdRef.current,
+      folderId: folderIdRef.current,
+      jobIds: jobIdsRef.current,
       ...overrides,
     }),
-    [
-      documentType,
-      billId,
-      sourceBillId,
-      useCurrentProfile,
-      values,
-      lines,
-      amountInWords,
-      wordsTouched,
-      roundOff,
-      reverseChargeGst,
-      bank,
-      draftKey,
-      logoId,
-      folderId,
-      jobIds,
-    ]
+    [documentType, sourceBillId, draftKey]
   );
 
   /* Replaced wholesale, never merged: keeping a previous CGST while a new save has none
@@ -700,30 +875,52 @@ function CreatorForm({
         amount_after_tax: result.amount_after_tax,
       });
       setServerWords(result.amount_in_words);
-      if (!wordsTouched && result.amount_in_words) {
-        setAmountInWords(result.amount_in_words);
+      /* The server's wording is not an edit: writing it through the ref and the raw
+         setter keeps it out of the save queue. */
+      if (!wordsTouchedRef.current && result.amount_in_words) {
+        amountInWordsRef.current = result.amount_in_words;
+        setAmountInWordsState(result.amount_in_words);
       }
     },
-    [wordsTouched]
+    []
   );
 
   const lastSaveError = useRef("The draft could not be saved.");
-  const queueRef = useRef<SaveQueue | null>(null);
   const saveRef = useRef<(options?: { silent?: boolean }) => Promise<CreatorSaveResult | null>>(
     async () => null
   );
 
-  const save = useCallback(
+  /** Record the canonical bill id against this session so a restart can resume it. */
+  const rememberSession = useCallback(
+    (id: string) => {
+      void draftSessionStore
+        .remember({
+          sessionId,
+          documentType,
+          draftKey: sessionKey,
+          billId: id,
+          mode,
+          sourceBillId,
+        })
+        .catch(() => {
+          /* The warning banner already exists; failing to persist must not fail the save. */
+          setStorageWarning(draftSessionStore.storageError());
+        });
+    },
+    [sessionId, documentType, sessionKey, mode, sourceBillId]
+  );
+
+  /* The ONE write path. Autosave, Save Draft, Preview, Generate and Save & Exit all
+     reach the server through the queue, which calls this. Nothing else calls
+     `saveCreatorDraft` directly, so two writes can never be in flight at once. */
+  const performSave = useCallback(
     async (options: { silent?: boolean } = {}) => {
       if (loading) return null;
       try {
         const result = await saveCreatorDraft(buildRequest());
         setBillId(result.bill_id);
         applyServerTotals(result);
-        /* Keep the queue honest after an explicit save or a preview's save: those are
-           real writes, and leaving the version dirty would show "Unsaved changes" over
-           values that are already stored. */
-        queueRef.current?.markSaved(result.saved_at ?? null);
+        rememberSession(result.bill_id);
         setProblems([]);
         if (!options.silent) notify("Draft saved");
         return result;
@@ -745,13 +942,13 @@ function CreatorForm({
         return null;
       }
     },
-    [loading, buildRequest, applyServerTotals]
+    [loading, buildRequest, applyServerTotals, rememberSession, setBillId]
   );
   /* Written in an effect, not during render: a ref updated in the render path is exactly
      what the hooks linting forbids, and the queue only reads it when a save actually runs. */
   useEffect(() => {
-    saveRef.current = save;
-  }, [save]);
+    saveRef.current = performSave;
+  }, [performSave]);
 
   const [queueState, setQueueState] = useState<SaveQueueState>({
     status: "idle",
@@ -759,6 +956,7 @@ function CreatorForm({
     savedVersion: 0,
     savedAt: null,
     error: null,
+    running: false,
   });
   /* Created in an effect, never during render: the queue's save callback closes over a
      ref, and building it in the render path would read that ref while rendering. */
@@ -780,20 +978,29 @@ function CreatorForm({
     };
   }, []);
 
+  /* A resumed draft is already stored under its bill id; remembering it here is what
+     lets a phone restart land back on it rather than on the entry screen. */
+  useEffect(() => {
+    if (!isResume || !sourceBillId) return;
+    void draftSessionStore
+      .remember({
+        sessionId,
+        documentType,
+        draftKey: sessionKey,
+        billId: sourceBillId,
+        mode: "resume",
+        sourceBillId,
+      })
+      .catch(() => {
+        /* Non-fatal: the URL still carries the bill id. */
+      });
+  }, [isResume, sourceBillId, sessionId, documentType, sessionKey]);
+
   /* ── Autosave ────────────────────────────────────────────── */
 
-  /* The queue owns the debounce and the ordering: one write at a time, and always the
-     newest values. This effect only reports that a new version exists. */
-  const skipFirst = useRef(true);
-
-  useEffect(() => {
-    if (loading) return;
-    if (skipFirst.current) {
-      skipFirst.current = false;
-      return;
-    }
-    queueRef.current?.change();
-  }, [values, lines, bank, amountInWords, roundOff, reverseChargeGst, loading]);
+  /* The queue owns the debounce and the ordering. Every mutation helper calls
+     `markChanged()`, so there is no render-driven effect that could report a seeded
+     form as an edit. */
 
   /* ── Leaving with unsaved work ───────────────────────────── */
 
@@ -801,12 +1008,12 @@ function CreatorForm({
   const [exitBusy, setExitBusy] = useState(false);
 
   const leave = useCallback(() => {
-    queueRef.current?.markSaved();
     onExit();
   }, [onExit]);
 
   const requestExit = useCallback(() => {
-    if (queueRef.current?.isDirty() || queueRef.current?.state().status === "error") {
+    const queue = queueRef.current;
+    if (queue && (queue.isDirty() || queue.state().status === "error")) {
       setExitOpen(true);
       return;
     }
@@ -827,12 +1034,38 @@ function CreatorForm({
     leave();
   }, [leave]);
 
+  /* Save Draft forces a write even when no autosave has been scheduled yet, which is
+     what makes it work on a brand-new form. It goes through the same queue, so it can
+     never run beside an autosave. */
+  const saveDraft = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    try {
+      const saved = (await queueRef.current?.saveNow()) === true;
+      if (saved) notify("Draft saved");
+      else notify("Not saved", lastSaveError.current);
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, []);
+
+  /* Leave draft cancels the debounce, waits for a request that is already on the wire,
+     discards every version it never confirmed, and starts no further save. */
+  const leaveDraft = useCallback(async () => {
+    setExitBusy(true);
+    await queueRef.current?.abandon();
+    setExitBusy(false);
+    setExitOpen(false);
+    leave();
+  }, [leave]);
+
   /* Android's hardware back is an exit path like any other, so it goes through the same
      prompt instead of bypassing it. Returning true tells the OS the press was handled. */
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (busy !== null) return true;
-      if (queueRef.current?.isDirty() || queueRef.current?.state().status === "error") {
+      const queue = queueRef.current;
+      if (queue && (queue.isDirty() || queue.state().status === "error")) {
         setExitOpen(true);
         return true;
       }
@@ -845,17 +1078,19 @@ function CreatorForm({
   /* ── Preview ─────────────────────────────────────────────── */
 
   const preview = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setBusy("preview");
     try {
-      /* Persist first, then preview. The preview is rendered from the SAVED row, so the
-         PDF an admin is shown is the PDF that would be generated — so the preview cannot
-         flatter a bill the finalize would then reject. */
-      const saved = await save({ silent: true });
-      if (!saved) {
-        notify("Not previewed", "Save the draft first — the preview is made from the saved bill.");
+      /* `saveNow` forces one write even when the queue believes it is clean, so the
+         preview always renders the latest values and always has a canonical bill id. */
+      const saved = (await queueRef.current?.saveNow()) === true;
+      const id = billIdRef.current;
+      if (!saved || !id) {
+        notify("Not previewed", lastSaveError.current);
         return;
       }
-      const result = await previewCreatorDraft(buildRequest({ billId: saved.bill_id }));
+      const result = await previewCreatorDraft(buildRequest({ billId: id }));
       setBillId(result.bill_id);
       applyServerTotals(result);
       const outcome = await showCreatorPreview(result.pdf_base64, result.filename);
@@ -870,19 +1105,36 @@ function CreatorForm({
         err instanceof Error ? err.message : "The preview could not be produced."
       );
     } finally {
+      inFlightRef.current = false;
       setBusy(null);
     }
-  }, [save, buildRequest, applyServerTotals]);
+  }, [buildRequest, applyServerTotals, setBillId]);
 
   /* ── Finalize ────────────────────────────────────────────── */
 
   const finalize = useCallback(
     async (confirmDuplicate: boolean) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
       setBusy("finalize");
       setDuplicates([]);
       try {
+        /* Persist the newest values and confirm the canonical row BEFORE generating. A
+           generation that started from an unsaved form would print something different
+           from the draft the admin can see. */
+        const saved = (await queueRef.current?.flush()) === true;
+        const id = billIdRef.current;
+        if (!saved || !id) {
+          notify(
+            "Not generated",
+            lastSaveError.current ||
+              "The latest changes could not be saved, so nothing was generated."
+          );
+          return;
+        }
+
         const result = await finalizeCreatorDraft(
-          buildRequest({ confirmDuplicateInvoiceNo: confirmDuplicate })
+          buildRequest({ billId: id, confirmDuplicateInvoiceNo: confirmDuplicate })
         );
         setBillId(result.bill_id);
         setProblems([]);
@@ -898,8 +1150,10 @@ function CreatorForm({
         notify(notice.title, notice.body);
         /* Retire the creation session only after the server confirms the generated bill.
            A failed finalize leaves the key alone so a retry updates this draft. */
-        completeDraftSession(sessionId, documentType, globalThis.sessionStorage ?? null);
-        queueRef.current?.markSaved();
+        await draftSessionStore.forget(sessionId, documentType);
+        /* Nothing that was typed during generation is saved onto a finalized row: the
+           queue drops unconfirmed versions instead of starting another write. */
+        await queueRef.current?.abandon();
         /* Away to the list, because the work is done and the list is where an admin
            verifies it. Staying here would show a form for a bill that can no longer be
            edited. */
@@ -921,10 +1175,11 @@ function CreatorForm({
           );
         }
       } finally {
+        inFlightRef.current = false;
         setBusy(null);
       }
     },
-    [buildRequest, onExit, challan, documentNoun, sessionId, documentType]
+    [buildRequest, onExit, challan, documentNoun, sessionId, documentType, setBillId]
   );
 
   /* ── Jobs ────────────────────────────────────────────────── */
@@ -943,7 +1198,7 @@ function CreatorForm({
         );
       }
     },
-    [billId, refreshConnections]
+    [billId, refreshConnections, setJobIds]
   );
 
   /* ── Folders ─────────────────────────────────────────────── */
@@ -970,7 +1225,7 @@ function CreatorForm({
     setNewFolderName("");
     setFolderPickerOpen(false);
     notify("Folder ready", `“${created.name}” created and selected.`);
-  }, [newFolderName, documentType]);
+  }, [newFolderName, documentType, setFolderId]);
 
   /* ── Derived, display only ───────────────────────────────── */
 
@@ -1040,6 +1295,12 @@ function CreatorForm({
               ? `A new draft from an existing ${documentNoun}. The original is not changed.`
               : `A new ${documentNoun}, saved as a draft until you generate it.`}
           </Text>
+
+          {storageNote || storageWarning ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.note}>{storageNote ?? storageWarning}</Text>
+            </View>
+          ) : null}
 
           {isCopy && (
             <Pressable
@@ -1856,7 +2117,7 @@ function CreatorForm({
             <SmallBtn
               styles={styles}
               disabled={busy !== null || !isAdmin}
-              onPress={() => void save()}
+              onPress={() => void saveDraft()}
             >
               Save Draft
             </SmallBtn>
@@ -1955,8 +2216,7 @@ function CreatorForm({
             </Pressable>
             <Pressable
               onPress={() => {
-                setExitOpen(false);
-                leave();
+                void leaveDraft();
               }}
               disabled={exitBusy}
               accessibilityRole="button"
@@ -1967,6 +2227,16 @@ function CreatorForm({
           </View>
         </View>
       </Modal>
+
+      {/* Generation takes a server-side claim and renders three PDFs. Editing during it
+          would either be lost or arrive after the document was finalized, so the form is
+          covered until the request settles. */}
+      {busy === "finalize" && (
+        <View style={styles.generatingOverlay} pointerEvents="auto">
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.note}>Generating the three copies…</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -2452,6 +2722,17 @@ function createStyles(theme: AppTheme) {
       alignItems: "center",
       justifyContent: "center",
       padding: theme.spacing.lg,
+    },
+    generatingOverlay: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(255,255,255,0.72)",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
     },
     exitCard: {
       width: "100%",
