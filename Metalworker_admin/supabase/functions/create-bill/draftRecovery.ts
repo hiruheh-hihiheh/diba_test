@@ -44,6 +44,23 @@ export function finalizedDraftMessage(): string {
   return "This document has already been generated. Open it from Billing to make an edit.";
 }
 
+/**
+ * Exact creator ownership, used by EVERY creator path: the bill-id save/preview/
+ * generate/resume path and the idempotency-key recovery path.
+ *
+ * A missing, null or empty `created_by` is not ownership. Historical drafts without an
+ * author cannot be proved to belong to the caller, so they are refused exactly like
+ * somebody else's row; the safe recovery is to start a new draft, and this predicate is
+ * what stops that refusal from being softened in one place and not the other.
+ */
+export function isCreatorOwner(row: { created_by?: unknown } | null | undefined, userId: string): boolean {
+  return (
+    typeof row?.created_by === "string" &&
+    row.created_by !== "" &&
+    row.created_by === userId
+  );
+}
+
 export function classifyDraftRecovery(
   row: DraftRecoveryRow | null | undefined,
   request: DraftRecoveryRequest
@@ -63,7 +80,7 @@ export function classifyDraftRecovery(
      admin's key can be guessed or copied from a shared link; without this check that
      would be a way to write to somebody else's draft. 404 rather than 403 so a wrong
      key does not confirm that a bill exists at that id. */
-  if (typeof row.created_by !== "string" || row.created_by === "" || row.created_by !== request.userId) {
+  if (!isCreatorOwner(row, request.userId)) {
     return {
       action: "refuse",
       status: 404,

@@ -38,8 +38,17 @@ import {
   createDraftSessionStore,
   type AsyncDraftBackend,
 } from "../../../src/services/draftSessionStoreCore.ts";
+import {
+  intentFromRecord,
+  intentMatchesParams,
+  intentToParams,
+} from "../../../src/services/draftSessionIntent.ts";
 import { isLegacyBill } from "../../../src/services/billDocument.ts";
-import { classifyDraftRecovery, finalizedDraftMessage } from "../create-bill/draftRecovery.ts";
+import {
+  classifyDraftRecovery,
+  finalizedDraftMessage,
+  isCreatorOwner,
+} from "../create-bill/draftRecovery.ts";
 import type { DraftRecoveryRow } from "../create-bill/draftRecovery.ts";
 
 let passed = 0;
@@ -521,6 +530,30 @@ section("F. recovery refuses an identity it cannot prove");
 
   const good = classifyDraftRecovery(base, request);
   check(good.action === "resume", "an exact identity is still resumed");
+
+  /* The same predicate guards the normal bill-id path, so it is exercised on its own:
+     save, preview, generate and resume all reach the row through it. */
+  check(isCreatorOwner(base, "user-1"), "the recorded author owns the row");
+  check(!isCreatorOwner({ created_by: null }, "user-1"), "a null author is refused");
+  check(!isCreatorOwner({ created_by: undefined }, "user-1"), "a missing author is refused");
+  check(!isCreatorOwner({ created_by: "" }, "user-1"), "an empty author is refused");
+  check(!isCreatorOwner({ created_by: "user-2" }, "user-1"), "another admin is refused");
+  check(!isCreatorOwner(null, "user-1"), "a missing row is refused");
+
+  /* Every creator path must use that one predicate rather than re-spelling a nullable
+     check that would quietly adopt an unowned row. */
+  const edge = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "create-bill", "index.ts"),
+    "utf8"
+  );
+  check(
+    edge.includes("isCreatorOwner(read.row, user.id)"),
+    "the bill-id path uses the shared ownership predicate"
+  );
+  check(
+    !/created_by\s+IS\s+NOT\s+NULL/.test(edge),
+    "the bill-id path no longer accepts a nullable author"
+  );
 }
 
 /* ──────────────────────────────────────────────
@@ -626,6 +659,301 @@ section("G. the native session store survives a restart and clears on finalize")
   check(
     /storage unavailable/.test(broken.storageError() ?? ""),
     "a storage failure is reported, not swallowed"
+  );
+}
+
+/* ──────────────────────────────────────────────
+   H. Navigation waits for writes
+   ────────────────────────────────────────────── */
+
+section("H. a navigation guard sees work that is not 'dirty'");
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+{
+  /* A forced Save Draft on a clean form: `isDirty()` is false, yet a real request is on
+     the wire. This is the state the old `requestExit()` could not see. */
+  const gate = deferred();
+  let calls = 0;
+  const queue = createSaveQueue({
+    debounceMs: 1,
+    save: async () => {
+      calls += 1;
+      await gate.promise;
+      return { ok: true, savedAt: "2026-04-01T10:00:00.000Z" };
+    },
+  });
+
+  const forced = queue.saveNow();
+  await tick();
+  check(calls === 1, "an explicit Save Draft starts one write");
+  check(!queue.isDirty(), "and the form is not 'dirty' while it runs");
+  check(queue.isBusy(), "but the queue reports that it is busy");
+
+  const flushing = queue.flush();
+  gate.resolve();
+  const [forcedResult, flushResult] = await Promise.all([forced, flushing]);
+  check(forcedResult === true && flushResult === true, "both callers see a confirmed save");
+  check(calls === 1, "flush waited for the in-flight write instead of starting a second");
+  check(!queue.isBusy(), "the queue is idle once the write settles");
+}
+
+{
+  /* Leave draft during an in-flight write: it must wait for that request, discard what
+     was never confirmed, and never start another write. */
+  const gate = deferred();
+  let calls = 0;
+  let started = 0;
+  const queue = createSaveQueue({
+    debounceMs: 1,
+    save: async () => {
+      calls += 1;
+      started += 1;
+      await gate.promise;
+      return { ok: true };
+    },
+  });
+
+  const forced = queue.saveNow();
+  await tick();
+  const savedDuring = queue.saveNow();
+  const abandoning = queue.abandon();
+  gate.resolve();
+  const [, duringResult] = await Promise.all([forced, savedDuring, abandoning]);
+
+  check(calls === 1, "abandon waits for the request already on the wire");
+  check(duringResult === false, "a Save Draft that was waiting cannot report success after leaving");
+  check(!queue.isBusy(), "nothing is left running after abandon");
+  check((await queue.saveNow()) === false, "abandon is terminal: no later save is started");
+  check(calls === 1, "and no further request reached the server");
+
+  queue.change();
+  await tick();
+  check(calls === 1, "an edit after abandon does not schedule a write");
+}
+
+/* ──────────────────────────────────────────────
+   I. Durable persistence reports its own failures
+   ────────────────────────────────────────────── */
+
+section("I. a failed key write is not hidden by a successful record write");
+
+{
+  function partialBackend(failKeyWrites: boolean): AsyncDraftBackend & { dump(): Map<string, string> } {
+    const map = new Map<string, string>();
+    return {
+      getAllKeys: async () => [...map.keys()],
+      multiGet: async (keys) => keys.map((key) => [key, map.get(key) ?? null] as const),
+      setItem: async (key, value) => {
+        if (failKeyWrites && key !== "bill-creator:active") {
+          throw new Error("key storage is read-only");
+        }
+        map.set(key, value);
+      },
+      removeItem: async (key) => {
+        map.delete(key);
+      },
+      dump: () => map,
+    };
+  }
+
+  const backend = partialBackend(true);
+  const store = createDraftSessionStore(backend);
+  const session = newDraftKey();
+  let message = "";
+  try {
+    await store.remember({
+      sessionId: session,
+      documentType: "tax_invoice",
+      draftKey: "key-partial",
+      billId: "bill-partial",
+      mode: "empty",
+      sourceBillId: null,
+    });
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  check(/identity could not be saved/.test(message), "remember() reports the key failure", message);
+  check(
+    /identity could not be saved/.test(store.storageError() ?? ""),
+    "the failure stays outstanding after the active record was written"
+  );
+  check(
+    backend.dump().has("bill-creator:active"),
+    "the canonical bill id was still persisted, so the draft stays reachable"
+  );
+  check(
+    (await store.readActive())?.billId === "bill-partial",
+    "and it can be read back from the durable record"
+  );
+}
+
+{
+  /* A transient hydration failure must not be cached as 'already tried'. */
+  let attempts = 0;
+  const bytes = new Map<string, string>([
+    [
+      "bill-creator:active",
+      JSON.stringify({
+        sessionId: "session-retry",
+        documentType: "tax_invoice",
+        draftKey: "key-retry",
+        billId: "bill-retry",
+        mode: "empty",
+        sourceBillId: null,
+        updatedAt: "2026-04-01T10:00:00.000Z",
+      }),
+    ],
+  ]);
+  const store = createDraftSessionStore({
+    getAllKeys: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient storage fault");
+      return [...bytes.keys()];
+    },
+    multiGet: async (keys) => keys.map((key) => [key, bytes.get(key) ?? null] as const),
+    setItem: async (key, value) => {
+      bytes.set(key, value);
+    },
+    removeItem: async (key) => {
+      bytes.delete(key);
+    },
+  });
+
+  await store.hydrate();
+  check(!store.isHydrated(), "a failed hydration does not claim success");
+  check(/may not survive a restart/.test(store.storageError() ?? ""), "and it is reported");
+
+  await store.hydrate();
+  check(store.isHydrated(), "a second hydration attempt retries instead of reusing the failure");
+  check(
+    (await store.readActive())?.billId === "bill-retry",
+    "and the stored session is recovered on the retry"
+  );
+  check(store.storageError() === null, "a recovered hydration clears its own warning");
+}
+
+{
+  /* Generation, cleanup and a second intent. */
+  const backend: AsyncDraftBackend = (() => {
+    const map = new Map<string, string>();
+    return {
+      getAllKeys: async () => [...map.keys()],
+      multiGet: async (keys) => keys.map((key) => [key, map.get(key) ?? null] as const),
+      setItem: async (key, value) => {
+        map.set(key, value);
+      },
+      removeItem: async (key) => {
+        map.delete(key);
+      },
+    };
+  })();
+  const store = createDraftSessionStore(backend);
+  const first = newDraftKey();
+  await store.remember({
+    sessionId: first,
+    documentType: "tax_invoice",
+    draftKey: "key-first",
+    billId: null,
+    mode: "empty",
+    sourceBillId: null,
+  });
+  await store.remember({ sessionId: first, documentType: "tax_invoice", billId: "bill-first" });
+  check((await store.readActive())?.billId === "bill-first", "the canonical id is durable");
+
+  await store.forget(first, "tax_invoice");
+  check((await store.readActive()) === null, "generation clears the unfinished session");
+  check(
+    !isDraftSessionComplete(first, "tax_invoice", store.storage()),
+    "a completed session is not offered again"
+  );
+
+  const second = newDraftKey();
+  check(second !== first, "the next Create action mints a new intent");
+  await store.remember({
+    sessionId: second,
+    documentType: "tax_invoice",
+    draftKey: "key-second",
+    billId: null,
+    mode: "empty",
+    sourceBillId: null,
+  });
+  check(
+    (await store.readActive())?.draftKey === "key-second",
+    "and it is stored under its own key"
+  );
+}
+
+/* ──────────────────────────────────────────────
+   J. A restored record restores the intent, not just the id
+   ────────────────────────────────────────────── */
+
+section("J. a restored record restores the whole intent");
+
+{
+  const base = {
+    sessionId: "session-j",
+    documentType: "tax_invoice",
+    draftKey: "key-j",
+    billId: null as string | null,
+    mode: "empty" as const,
+    sourceBillId: null as string | null,
+    updatedAt: "2026-04-01T10:00:00.000Z",
+  };
+
+  const resumed = intentFromRecord({ ...base, billId: "bill-j" });
+  check(
+    resumed.mode === "resume" && resumed.sourceBillId === "bill-j",
+    "a stored bill id resumes the same bill"
+  );
+  check(resumed.sessionId === "session-j", "and keeps the session identity");
+
+  const copied = intentFromRecord({ ...base, mode: "copy", sourceBillId: "source-j" });
+  check(
+    copied.mode === "copy" && copied.sourceBillId === "source-j",
+    "a copy without a bill id continues the copy intent"
+  );
+
+  const profile = intentFromRecord({ ...base, mode: "profile" });
+  check(profile.mode === "profile", "a profile draft continues as a profile draft");
+
+  const blank = intentFromRecord({ ...base });
+  check(blank.mode === "empty" && blank.sessionId === "session-j", "a blank draft continues empty");
+
+  const brokenResume = intentFromRecord({ ...base, mode: "resume", sourceBillId: "gone" });
+  check(
+    brokenResume.mode === "empty" && brokenResume.sessionId === "session-j",
+    "a resume with no bill id falls back safely and keeps the key"
+  );
+
+  const params = intentToParams(resumed);
+  check(
+    params.draft === "bill-j" && params.mode === undefined && params.session === "session-j",
+    "a resumed intent is described by the draft parameter"
+  );
+  check(intentMatchesParams(params, resumed), "the URL it wrote matches the intent");
+
+  const copyParams = intentToParams(copied);
+  check(
+    copyParams.copy === "source-j" && copyParams.draft === undefined,
+    "a copy intent is described by the copy parameter"
+  );
+  check(intentMatchesParams(copyParams, copied), "and matches itself");
+  check(
+    !intentMatchesParams({ ...copyParams, session: "another" }, copied),
+    "a different session is a different intent"
+  );
+  check(
+    !intentMatchesParams(copyParams, resumed),
+    "a draft intent and a copy intent never compare equal"
   );
 }
 

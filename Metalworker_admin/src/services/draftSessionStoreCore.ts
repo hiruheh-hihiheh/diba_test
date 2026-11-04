@@ -77,12 +77,32 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
   const memory = new Map<string, string>();
   let hydrated = false;
   let hydratePromise: Promise<void> | null = null;
-  let failure: string | null = null;
+  /* Failures are kept PER CHANNEL. A successful `writeActive()` must not erase the fact
+     that writing the idempotency key failed: they are two different durable promises,
+     and only the one that recovered may be cleared. `storageError()` reports whichever
+     is outstanding. */
+  const failures = new Map<string, string>();
+
+  function fail(channel: string, message: string) {
+    failures.set(channel, message);
+  }
+
+  function recover(channel: string) {
+    failures.delete(channel);
+  }
+
+  function failureText(): string | null {
+    for (const message of failures.values()) return message;
+    return null;
+  }
 
   async function hydrate(): Promise<void> {
     if (hydrated) return;
     if (hydratePromise) return hydratePromise;
-    hydratePromise = (async () => {
+    /* Cleared in `finally`, so a transient failure does NOT permanently prevent the
+       next hydration attempt: the rejected attempt must not stay cached as "already
+       hydrated". */
+    const attempt = (async () => {
       try {
         const keys = (await backend.getAllKeys()).filter((key) => key.startsWith(PREFIX));
         if (keys.length > 0) {
@@ -92,14 +112,19 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
           }
         }
         hydrated = true;
-        failure = null;
+        recover("hydrate");
       } catch (err) {
         /* The form can still save with an in-memory key. It just cannot promise that
            the same intent comes back after a restart, and the caller is told so. */
-        failure = `Unfinished drafts may not survive a restart: ${errorText(err)}`;
+        fail("hydrate", `Unfinished drafts may not survive a restart: ${errorText(err)}`);
       }
     })();
-    return hydratePromise;
+    hydratePromise = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (hydratePromise === attempt) hydratePromise = null;
+    }
   }
 
   const storage: DraftStorage = {
@@ -108,15 +133,21 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
     },
     setItem(key, value) {
       memory.set(key, value);
-      void backend.setItem(key, value).catch((err) => {
-        failure = `The draft identity could not be saved: ${errorText(err)}`;
-      });
+      void backend.setItem(key, value).then(
+        () => recover("key"),
+        (err) => {
+          fail("key", `The draft identity could not be saved: ${errorText(err)}`);
+        }
+      );
     },
     removeItem(key) {
       memory.delete(key);
-      void backend.removeItem(key).catch((err) => {
-        failure = `The draft identity could not be cleared: ${errorText(err)}`;
-      });
+      void backend.removeItem(key).then(
+        () => recover("key"),
+        (err) => {
+          fail("key", `The draft identity could not be cleared: ${errorText(err)}`);
+        }
+      );
     },
   };
 
@@ -157,10 +188,11 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
     memory.set(ACTIVE_KEY, raw);
     try {
       await backend.setItem(ACTIVE_KEY, raw);
-      failure = null;
+      recover("active");
     } catch (err) {
-      failure = `The unfinished draft could not be recorded: ${errorText(err)}`;
-      throw new Error(failure);
+      const message = `The unfinished draft could not be recorded: ${errorText(err)}`;
+      fail("active", message);
+      throw new Error(message);
     }
   }
 
@@ -190,12 +222,18 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
        that only reached memory would not survive it. */
     const keyStorageKey = draftSessionStorageKey(record.documentType, record.sessionId);
     memory.set(keyStorageKey, record.draftKey);
+    let keyError: string | null = null;
     try {
       await backend.setItem(keyStorageKey, record.draftKey);
+      recover("key");
     } catch (err) {
-      failure = `The draft identity could not be saved: ${errorText(err)}`;
+      keyError = `The draft identity could not be saved: ${errorText(err)}`;
+      fail("key", keyError);
     }
     await writeActive(record);
+    /* `writeActive` recovers its OWN channel; the key failure stays outstanding, and is
+       reported to the caller rather than hidden by the other write succeeding. */
+    if (keyError) throw new Error(failureText() ?? keyError);
     return record;
   }
 
@@ -206,23 +244,25 @@ export function createDraftSessionStore(backend: AsyncDraftBackend): DraftSessio
       memory.delete(ACTIVE_KEY);
       try {
         await backend.removeItem(ACTIVE_KEY);
+        recover("active");
       } catch (err) {
-        failure = `The completed draft session could not be cleared: ${errorText(err)}`;
+        fail("active", `The completed draft session could not be cleared: ${errorText(err)}`);
       }
     }
     const keyStorageKey = draftSessionStorageKey(documentType, sessionId);
     memory.delete(keyStorageKey);
     try {
       await backend.removeItem(keyStorageKey);
+      recover("key");
     } catch (err) {
-      failure = `The draft identity could not be cleared: ${errorText(err)}`;
+      fail("key", `The draft identity could not be cleared: ${errorText(err)}`);
     }
   }
 
   return {
     hydrate,
     isHydrated: () => hydrated,
-    storageError: () => failure,
+    storageError: failureText,
     storage: () => storage,
     readActive,
     writeActive,

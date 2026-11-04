@@ -31,6 +31,35 @@
 -- The claim is a token in the row, not a transaction-level lock, because
 -- rendering three PDFs and uploading them to Storage happens outside the
 -- database and can take longer than a sensible row lock.
+--
+-- THE LEASE POLICY (one rule, used by all four functions)
+--
+-- A claim is VALID when, and only when, all three hold:
+--
+--   token IS NOT NULL, claimed_at IS NOT NULL,
+--   claimed_at > now() - bill_generation_lease()          (30 minutes)
+--
+-- From that single rule follows everything else:
+--
+--   * VALID claim, caller is not the holder -> refuse the save.
+--   * VALID claim -> `claim_bill_generation` refuses a second generation.
+--   * EXPIRED or timestamp-less claim -> it can no longer finalize or block
+--     anything. It is treated as debris, not as ownership.
+--   * `finalize_bill_generation` requires a VALID claim AND the matching token,
+--     so a generation whose lease lapsed can never write PDF paths. This is the
+--     half of the policy that closes the old hole: an ordinary save may proceed
+--     after expiry, and the late finalize is refused rather than accepted.
+--   * An ordinary save that runs into expired/malformed claim debris CLEARS it
+--     in the same UPDATE that writes the row (it already holds the row lock),
+--     so there is no window in which the old generation could still finalize.
+--   * `claim_bill_generation` takes over an expired claim with a NEW token, so
+--     the old generation's finalize and release both fail on the token compare.
+--   * `release_bill_generation` requires the matching token and nothing else:
+--     releasing one's own expired claim is harmless cleanup, and it can never
+--     clear a newer generation's token.
+--
+-- Abandoned claims are therefore recovered by the next generation (takeover)
+-- or by the next ordinary save (clear), never by waiting for a background job.
 
 BEGIN;
 
@@ -68,6 +97,19 @@ BEGIN
     END IF;
 END;
 $$;
+
+-- The lease length, in ONE place. Every function below compares against this,
+-- so "expired" cannot mean 30 minutes in one function and something else in
+-- another.
+CREATE OR REPLACE FUNCTION public.bill_generation_lease()
+RETURNS interval
+LANGUAGE sql
+IMMUTABLE
+AS $$ SELECT interval '30 minutes' $$;
+
+COMMENT ON FUNCTION public.bill_generation_lease() IS
+    'How long a generation claim stays valid. See the lease policy at the top of '
+    'migration 0027: only a VALID claim may finalize or block an ordinary save.';
 
 -- ---------------------------------------------------------------------------
 -- 2. Atomic draft save
@@ -128,6 +170,7 @@ DECLARE
     v_sets text[] := ARRAY['updated_at = now()', 'updated_by = $2'];
     v_key text;
     v_saved_at timestamptz;
+    v_claim_live boolean;
 BEGIN
     IF p_bill_id IS NULL OR p_user_id IS NULL THEN
         RETURN jsonb_build_object('ok', false, 'status', 400, 'reason', 'invalid_request',
@@ -142,9 +185,13 @@ BEGIN
             'message', 'That draft no longer exists.');
     END IF;
 
-    -- Ownership. Drafts written before 0016 have no author; they remain
-    -- editable so the feature keeps working for historical rows.
-    IF v_row.created_by IS NOT NULL AND v_row.created_by <> p_user_id THEN
+    -- Ownership, EXACTLY. A null author is not "probably the caller": it is a row
+    -- whose owner cannot be proved, and proving it is what authorises a write.
+    -- Historical null-owner drafts (if any exist) are therefore refused here with
+    -- the same 404 as any other unknown draft, rather than being silently adopted
+    -- by whoever asks first. The recovery strategy is to start a new draft, which
+    -- this function cannot use to reach anybody else's document.
+    IF v_row.created_by IS DISTINCT FROM p_user_id THEN
         RETURN jsonb_build_object('ok', false, 'status', 404, 'reason', 'draft_not_found',
             'message', 'That draft could not be found.');
     END IF;
@@ -159,14 +206,22 @@ BEGIN
             'message', 'This document has already been generated. Open it from Billing to make an edit.');
     END IF;
 
-    -- A live claim belongs to one finalize. Only the holder may write while it
-    -- is held. An expired claim is ignored here; `claim_bill_generation` is
-    -- what takes it over, and that changes the token.
-    IF v_row.generation_claim_token IS NOT NULL
-       AND v_row.generation_claimed_at > now() - interval '30 minutes'
-       AND (p_claim_token IS NULL OR p_claim_token <> v_row.generation_claim_token) THEN
+    -- LEASE POLICY: valid = token AND timestamp AND inside the lease.
+    v_claim_live := v_row.generation_claim_token IS NOT NULL
+                    AND v_row.generation_claimed_at IS NOT NULL
+                    AND v_row.generation_claimed_at > now() - public.bill_generation_lease();
+
+    IF v_claim_live
+       AND (p_claim_token IS NULL OR p_claim_token IS DISTINCT FROM v_row.generation_claim_token) THEN
         RETURN jsonb_build_object('ok', false, 'status', 409, 'reason', 'generation_in_progress',
             'message', 'This document is being generated. Wait for it to finish, then try again.');
+    END IF;
+
+    -- Expired or timestamp-less claim: this save invalidates it in the SAME UPDATE
+    -- that writes the row, under the row lock already held. Leaving the token behind
+    -- is what used to let a stale generation finalize against newer values.
+    IF NOT v_claim_live AND v_row.generation_claim_token IS NOT NULL THEN
+        v_sets := v_sets || ARRAY['generation_claim_token = NULL', 'generation_claimed_at = NULL'];
     END IF;
 
     IF p_patch IS NOT NULL THEN
@@ -249,7 +304,9 @@ BEGIN
             'message', 'That draft no longer exists.');
     END IF;
 
-    IF v_row.created_by IS NOT NULL AND v_row.created_by <> p_user_id THEN
+    -- Exact ownership. See the note in save_creator_draft: a null author cannot be
+    -- proved, so it is refused rather than adopted.
+    IF v_row.created_by IS DISTINCT FROM p_user_id THEN
         RETURN jsonb_build_object('ok', false, 'status', 404, 'reason', 'draft_not_found',
             'message', 'That draft could not be found.');
     END IF;
@@ -264,8 +321,13 @@ BEGIN
             'message', 'This document has already been generated. Open it from Billing to make an edit.');
     END IF;
 
+    -- A VALID claim is somebody's live generation. An expired one (or one whose
+    -- timestamp is missing) is debris and is replaced below, under this row lock and
+    -- in the same statement, so the previous generation's token stops matching
+    -- before this function returns.
     IF v_row.generation_claim_token IS NOT NULL
-       AND v_row.generation_claimed_at > now() - interval '30 minutes' THEN
+       AND v_row.generation_claimed_at IS NOT NULL
+       AND v_row.generation_claimed_at > now() - public.bill_generation_lease() THEN
         RETURN jsonb_build_object('ok', false, 'status', 409, 'reason', 'generation_in_progress',
             'message', 'This document is already being generated. Wait for it to finish, then try again.');
     END IF;
@@ -321,6 +383,15 @@ BEGIN
             'message', 'This generation was superseded by another request. Nothing was changed.');
     END IF;
 
+    -- The token still matches, but the lease has run out. Without this check the old
+    -- generation could finalize PDFs rendered from an older snapshot after a newer
+    -- save had already written the row.
+    IF v_row.generation_claimed_at IS NULL
+       OR v_row.generation_claimed_at <= now() - public.bill_generation_lease() THEN
+        RETURN jsonb_build_object('ok', false, 'status', 409, 'reason', 'claim_expired',
+            'message', 'This generation took too long and was superseded. Nothing was changed.');
+    END IF;
+
     IF p_original_path IS NULL OR p_duplicate_path IS NULL OR p_triplicate_path IS NULL THEN
         RETURN jsonb_build_object('ok', false, 'status', 400, 'reason', 'invalid_paths',
             'message', 'All three document paths are required.');
@@ -367,7 +438,15 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
 BEGIN
+    -- Only the holder can release, and only on a draft. A NULL token matches
+    -- nothing; an expired token still matches its own row (cleaning it up is
+    -- harmless), but a token replaced by a takeover no longer matches at all.
+    IF p_bill_id IS NULL OR p_claim_token IS NULL THEN
+        RETURN false;
+    END IF;
+
     UPDATE public.bills
        SET generation_claim_token = NULL,
            generation_claimed_at = NULL
@@ -405,8 +484,13 @@ DECLARE
     v_upload uuid;
     v_draft uuid;
     v_second uuid;
+    v_third uuid;
+    v_fourth uuid;
+    v_fifth uuid;
+    v_sixth uuid;
     v_claim jsonb;
     v_token uuid;
+    v_token2 uuid;
     v_result jsonb;
     v_ok boolean;
 BEGIN
@@ -430,7 +514,7 @@ BEGIN
         (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
          created_by, creator_draft_key, document_type)
     VALUES (v_upload, 'CLAIM-CHECK', 'CLAIM-CHECK', '2026-04-01', 'draft', 'manual',
-            v_admin, 'claim-check-key-1', 'tax_invoice')
+            v_admin, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
     RETURNING id INTO v_draft;
 
     INSERT INTO public.bill_line_items (bill_id, sr_no, description, quantity, rate, amount)
@@ -556,7 +640,7 @@ BEGIN
         (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
          created_by, creator_draft_key, document_type)
     VALUES (v_upload, 'CLAIM-CHECK-2', 'CLAIM-CHECK-2', '2026-04-02', 'draft', 'manual',
-            v_admin, 'claim-check-key-2', 'tax_invoice')
+            v_admin, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
     RETURNING id INTO v_second;
 
     v_claim := public.claim_bill_generation(v_second, v_admin, 'tax_invoice');
@@ -586,7 +670,217 @@ BEGIN
     END IF;
     RAISE NOTICE 'self-check 10: a released draft is retryable.';
 
-    DELETE FROM public.bills WHERE id IN (v_draft, v_second);
+    -- 11. LEASE EXPIRY, SAVE PATH. An ordinary save after expiry proceeds, because
+    --     the generation can no longer finalize, and the save clears the debris in
+    --     the same statement.
+    INSERT INTO public.bills
+        (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
+         created_by, creator_draft_key, document_type)
+    VALUES (v_upload, 'CLAIM-CHECK-3', 'CLAIM-CHECK-3', '2026-04-03', 'draft', 'manual',
+            v_admin, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
+    RETURNING id INTO v_third;
+
+    v_claim := public.claim_bill_generation(v_third, v_admin, 'tax_invoice');
+    v_token := (v_claim->>'claim_token')::uuid;
+    UPDATE public.bills
+       SET generation_claimed_at = now() - interval '31 minutes'
+     WHERE id = v_third;
+
+    v_result := public.save_creator_draft(
+        v_third, v_admin, 'tax_invoice',
+        jsonb_build_object('party_name', 'After expiry'),
+        jsonb_build_array(jsonb_build_object('sr_no', 1, 'description', 'Expired save line')),
+        NULL);
+    IF (v_result->>'ok')::boolean IS NOT TRUE THEN
+        RAISE EXCEPTION 'self-check 11: save after expiry was refused: %', v_result;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.bills
+        WHERE id = v_third
+          AND (generation_claim_token IS NOT NULL OR generation_claimed_at IS NOT NULL)
+    ) THEN
+        RAISE EXCEPTION 'self-check 11: an expired claim survived an ordinary save';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM public.bill_line_items
+        WHERE bill_id = v_third AND description = 'Expired save line'
+    ) THEN
+        RAISE EXCEPTION 'self-check 11: the save after expiry did not write the lines';
+    END IF;
+
+    -- The generation that rendered before the expiry must now be unable to write
+    -- its (now older) snapshot.
+    v_result := public.finalize_bill_generation(
+        v_third, v_token,
+        'manual/' || v_third::text || '_E_v1_original.pdf',
+        'manual/' || v_third::text || '_E_v1_duplicate.pdf',
+        'manual/' || v_third::text || '_E_v1_triplicate.pdf',
+        NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'claim_lost' THEN
+        RAISE EXCEPTION 'self-check 11: a superseded generation finalized: %', v_result;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.bills
+        WHERE id = v_third
+          AND (status <> 'draft' OR original_pdf_path IS NOT NULL)
+    ) THEN
+        RAISE EXCEPTION 'self-check 11: a superseded finalize changed the document';
+    END IF;
+    RAISE NOTICE 'self-check 11: an expired claim cannot finalize after a newer save.';
+
+    -- 12. TAKEOVER. A second generation may take over an expired claim, and the
+    --     first generation can then neither finalize nor release.
+    INSERT INTO public.bills
+        (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
+         created_by, creator_draft_key, document_type)
+    VALUES (v_upload, 'CLAIM-CHECK-4', 'CLAIM-CHECK-4', '2026-04-04', 'draft', 'manual',
+            v_admin, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
+    RETURNING id INTO v_fourth;
+
+    v_claim := public.claim_bill_generation(v_fourth, v_admin, 'tax_invoice');
+    v_token := (v_claim->>'claim_token')::uuid;
+    UPDATE public.bills
+       SET generation_claimed_at = now() - interval '45 minutes'
+     WHERE id = v_fourth;
+
+    v_claim := public.claim_bill_generation(v_fourth, v_admin, 'tax_invoice');
+    IF (v_claim->>'ok')::boolean IS NOT TRUE THEN
+        RAISE EXCEPTION 'self-check 12: takeover of an expired claim was refused: %', v_claim;
+    END IF;
+    v_token2 := (v_claim->>'claim_token')::uuid;
+    IF v_token2 = v_token THEN
+        RAISE EXCEPTION 'self-check 12: takeover did not replace the token';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM public.bills
+        WHERE id = v_fourth
+          AND generation_claim_token = v_token2
+          AND generation_claimed_at > now() - public.bill_generation_lease()
+    ) THEN
+        RAISE EXCEPTION 'self-check 12: takeover did not store a fresh lease';
+    END IF;
+
+    v_result := public.finalize_bill_generation(
+        v_fourth, v_token,
+        'manual/' || v_fourth::text || '_A_v1_original.pdf',
+        'manual/' || v_fourth::text || '_A_v1_duplicate.pdf',
+        'manual/' || v_fourth::text || '_A_v1_triplicate.pdf',
+        NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'claim_lost' THEN
+        RAISE EXCEPTION 'self-check 12: the old generation finalized after takeover: %', v_result;
+    END IF;
+
+    v_ok := public.release_bill_generation(v_fourth, v_token);
+    IF v_ok OR NOT EXISTS (
+        SELECT 1 FROM public.bills WHERE id = v_fourth AND generation_claim_token = v_token2
+    ) THEN
+        RAISE EXCEPTION 'self-check 12: the old generation released the new claim';
+    END IF;
+
+    v_ok := public.release_bill_generation(v_fourth, v_token2);
+    IF NOT v_ok THEN
+        RAISE EXCEPTION 'self-check 12: the new holder could not release its claim';
+    END IF;
+    RAISE NOTICE 'self-check 12: takeover replaces the token and disowns the old generation.';
+
+    -- 13. A claim whose timestamp is missing is not ownership: it can be saved over
+    --     and cleared, and it can never finalize.
+    INSERT INTO public.bills
+        (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
+         created_by, creator_draft_key, document_type)
+    VALUES (v_upload, 'CLAIM-CHECK-5', 'CLAIM-CHECK-5', '2026-04-05', 'draft', 'manual',
+            v_admin, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
+    RETURNING id INTO v_fifth;
+
+    v_token := gen_random_uuid();
+    UPDATE public.bills
+       SET generation_claim_token = v_token,
+           generation_claimed_at = NULL
+     WHERE id = v_fifth;
+
+    v_result := public.save_creator_draft(
+        v_fifth, v_admin, 'tax_invoice',
+        jsonb_build_object('party_name', 'Malformed claim'), NULL, NULL);
+    IF (v_result->>'ok')::boolean IS NOT TRUE THEN
+        RAISE EXCEPTION 'self-check 13: a null-timestamp claim blocked a save: %', v_result;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.bills WHERE id = v_fifth AND generation_claim_token IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'self-check 13: a null-timestamp claim survived a save';
+    END IF;
+
+    UPDATE public.bills
+       SET generation_claim_token = v_token,
+           generation_claimed_at = NULL
+     WHERE id = v_fifth;
+    v_result := public.finalize_bill_generation(
+        v_fifth, v_token,
+        'manual/' || v_fifth::text || '_M_v1_original.pdf',
+        'manual/' || v_fifth::text || '_M_v1_duplicate.pdf',
+        'manual/' || v_fifth::text || '_M_v1_triplicate.pdf',
+        NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'claim_expired' THEN
+        RAISE EXCEPTION 'self-check 13: a null-timestamp claim finalized: %', v_result;
+    END IF;
+    RAISE NOTICE 'self-check 13: a claim with no timestamp is debris, not ownership.';
+
+    -- 14. THE ORIGINAL HOLE. The holder''s token still matches but its lease has run
+    --     out, and no newer save has happened: finalize must refuse on the lease
+    --     alone, so older rendered bytes cannot be linked to newer row values.
+    UPDATE public.bills
+       SET generation_claim_token = v_token,
+           generation_claimed_at = now() - interval '31 minutes'
+     WHERE id = v_fifth;
+
+    v_result := public.finalize_bill_generation(
+        v_fifth, v_token,
+        'manual/' || v_fifth::text || '_L_v1_original.pdf',
+        'manual/' || v_fifth::text || '_L_v1_duplicate.pdf',
+        'manual/' || v_fifth::text || '_L_v1_triplicate.pdf',
+        NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'claim_expired' THEN
+        RAISE EXCEPTION 'self-check 14: an expired holder finalized: %', v_result;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.bills WHERE id = v_fifth AND original_pdf_path IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'self-check 14: an expired finalize wrote paths';
+    END IF;
+    RAISE NOTICE 'self-check 14: lease expiry itself stops finalization.';
+
+    -- 15. OWNERSHIP. Another user cannot save or claim; a null-owner draft is not
+    --     adopted by whoever asks.
+    v_result := public.save_creator_draft(
+        v_fifth, gen_random_uuid(), 'tax_invoice',
+        jsonb_build_object('party_name', 'Not mine'), NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'draft_not_found' THEN
+        RAISE EXCEPTION 'self-check 15: another user could save: %', v_result;
+    END IF;
+    v_result := public.claim_bill_generation(v_fifth, gen_random_uuid(), 'tax_invoice');
+    IF (v_result->>'reason') IS DISTINCT FROM 'draft_not_found' THEN
+        RAISE EXCEPTION 'self-check 15: another user could claim: %', v_result;
+    END IF;
+
+    INSERT INTO public.bills
+        (bill_upload_id, sheet_name, invoice_no, invoice_date, status, origin,
+         created_by, creator_draft_key, document_type)
+    VALUES (v_upload, 'CLAIM-CHECK-6', 'CLAIM-CHECK-6', '2026-04-06', 'draft', 'manual',
+            NULL, 'claim-check-key-' || gen_random_uuid()::text, 'tax_invoice')
+    RETURNING id INTO v_sixth;
+
+    v_result := public.save_creator_draft(
+        v_sixth, v_admin, 'tax_invoice',
+        jsonb_build_object('party_name', 'Unowned'), NULL, NULL);
+    IF (v_result->>'reason') IS DISTINCT FROM 'draft_not_found' THEN
+        RAISE EXCEPTION 'self-check 15: a null-owner draft was adopted: %', v_result;
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.bills WHERE id = v_sixth AND party_name = 'Unowned') THEN
+        RAISE EXCEPTION 'self-check 15: a refused unowned save still wrote the row';
+    END IF;
+    RAISE NOTICE 'self-check 15: only the recorded owner can save, claim or finalize.';
+
+    DELETE FROM public.bills WHERE id IN (v_draft, v_second, v_third, v_fourth, v_fifth, v_sixth);
     DELETE FROM public.bill_uploads WHERE id = v_upload;
 
     RAISE NOTICE 'bill-generation claim self-check PASSED.';

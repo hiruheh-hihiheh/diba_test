@@ -100,6 +100,7 @@ import type { InvoiceLogo } from "../../types/invoiceLogo";
 import type { BillJobConnection } from "../../types/billJobConnections";
 import type { JobType } from "../../types/job";
 
+import type { CreatorSessionRecord } from "../../services/draftSessionStore";
 import { LogoPickerModal } from "./LogoPickerModal";
 import { BillSourcePickerSheet } from "./BillSourcePickerSheet";
 import { LinkBillToJobsSheet } from "./LinkBillToJobsSheet";
@@ -134,6 +135,13 @@ export interface CreateBillScreenProps {
   onBackToEntry: () => void;
   /** A persistence warning from the route, shown instead of silently promising recovery. */
   storageNote?: string | null;
+  /**
+   * The unfinished session stored on this device, when there is one for this document
+   * type. The entry screen offers to continue it; it is never entered automatically.
+   */
+  activeSession?: CreatorSessionRecord | null;
+  /** Resume the stored record exactly as it was left. */
+  onContinueSession?: (record: CreatorSessionRecord) => void;
 }
 
 type Styles = ReturnType<typeof createStyles>;
@@ -155,6 +163,8 @@ export function CreateBillScreen(props: CreateBillScreenProps) {
         onChoose={props.onChooseMode}
         onChooseSource={props.onChooseSource}
         onExit={props.onExit}
+        activeSession={props.activeSession ?? null}
+        onContinueSession={props.onContinueSession}
       />
     );
   }
@@ -187,6 +197,8 @@ function EntryScreen({
   onChoose,
   onChooseSource,
   onExit,
+  activeSession,
+  onContinueSession,
 }: {
   styles: Styles;
   documentType: BillDocumentType;
@@ -195,6 +207,8 @@ function EntryScreen({
   onChoose: (mode: CreatorMode) => void;
   onChooseSource: (billId: string) => void;
   onExit: () => void;
+  activeSession: CreatorSessionRecord | null;
+  onContinueSession: ((record: CreatorSessionRecord) => void) | undefined;
 }) {
   const info = DOCUMENT_TYPE_INFO[documentType];
   const challan = documentType === "delivery_challan";
@@ -232,6 +246,23 @@ function EntryScreen({
           All three options produce the same {noun}, with the same Original, Duplicate and
           Triplicate PDFs. They differ only in what starts filled in.
         </Text>
+
+        {/* FIRST, because it is the one choice the admin has already made once. It is
+            only an OFFER: Create New below still starts a completely fresh intent, so
+            this can never make the second invoice of the day inherit the first. */}
+        {activeSession && onContinueSession && (
+          <EntryChoice
+            styles={styles}
+            title={`Continue unfinished ${noun}`}
+            body={
+              activeSession.billId
+                ? `The ${noun} you were editing is saved on this device. Continue the same draft — no new ${noun} is created.`
+                : `A ${noun} you started is saved on this device. Continue it with the same draft identity, so no duplicate is created.`
+            }
+            disabled={!isAdmin}
+            onPress={() => onContinueSession(activeSession)}
+          />
+        )}
 
         <EntryChoice
           styles={styles}
@@ -890,22 +921,32 @@ function CreatorForm({
     async () => null
   );
 
-  /** Record the canonical bill id against this session so a restart can resume it. */
+  /**
+   * Record the canonical bill id against this session so a restart can resume it.
+   *
+   * AWAITED by the save that produced the id. The form must not claim durable recovery
+   * before the identity and row have actually reached storage; when the write fails the
+   * banner says so, and the draft itself is still safely on the server and is still
+   * reachable from the Billing list. A retry reuses the same key, so this cannot create
+   * a second bill.
+   */
   const rememberSession = useCallback(
-    (id: string) => {
-      void draftSessionStore
-        .remember({
+    async (id: string): Promise<boolean> => {
+      try {
+        await draftSessionStore.remember({
           sessionId,
           documentType,
           draftKey: sessionKey,
           billId: id,
           mode,
           sourceBillId,
-        })
-        .catch(() => {
-          /* The warning banner already exists; failing to persist must not fail the save. */
-          setStorageWarning(draftSessionStore.storageError());
         });
+        setStorageWarning(null);
+        return true;
+      } catch {
+        setStorageWarning(draftSessionStore.storageError());
+        return false;
+      }
     },
     [sessionId, documentType, sessionKey, mode, sourceBillId]
   );
@@ -920,7 +961,7 @@ function CreatorForm({
         const result = await saveCreatorDraft(buildRequest());
         setBillId(result.bill_id);
         applyServerTotals(result);
-        rememberSession(result.bill_id);
+        await rememberSession(result.bill_id);
         setProblems([]);
         if (!options.silent) notify("Draft saved");
         return result;
@@ -1006,19 +1047,39 @@ function CreatorForm({
 
   const [exitOpen, setExitOpen] = useState(false);
   const [exitBusy, setExitBusy] = useState(false);
+  /* Where the pending prompt will go if the admin chooses to leave: the section list,
+     or back to this screen's entry view. Both are navigation, so both are guarded. */
+  const [exitTarget, setExitTarget] = useState<"exit" | "entry">("exit");
 
-  const leave = useCallback(() => {
-    onExit();
-  }, [onExit]);
+  const leaveTo = useCallback(
+    (target: "exit" | "entry") => {
+      if (target === "entry") onBackToEntry();
+      else onExit();
+    },
+    [onBackToEntry, onExit]
+  );
 
-  const requestExit = useCallback(() => {
-    const queue = queueRef.current;
-    if (queue && (queue.isDirty() || queue.state().status === "error")) {
-      setExitOpen(true);
-      return;
-    }
-    leave();
-  }, [leave]);
+  /**
+   * The ONE navigation guard. `isBusy()` rather than `isDirty()`: a forced Save Draft on
+   * an otherwise clean form is a real write on the wire, and leaving during it used to
+   * be invisible to this check.
+   */
+  const requestNavigation = useCallback(
+    (target: "exit" | "entry") => {
+      if (busy !== null) return;
+      setExitTarget(target);
+      const queue = queueRef.current;
+      if (queue && (queue.isBusy() || queue.state().status === "error")) {
+        setExitOpen(true);
+        return;
+      }
+      leaveTo(target);
+    },
+    [busy, leaveTo]
+  );
+
+  const requestExit = useCallback(() => requestNavigation("exit"), [requestNavigation]);
+  const requestBackToEntry = useCallback(() => requestNavigation("entry"), [requestNavigation]);
 
   const saveAndExit = useCallback(async () => {
     setExitBusy(true);
@@ -1031,8 +1092,8 @@ function CreatorForm({
       return;
     }
     setExitOpen(false);
-    leave();
-  }, [leave]);
+    leaveTo(exitTarget);
+  }, [exitTarget, leaveTo]);
 
   /* Save Draft forces a write even when no autosave has been scheduled yet, which is
      what makes it work on a brand-new form. It goes through the same queue, so it can
@@ -1056,16 +1117,17 @@ function CreatorForm({
     await queueRef.current?.abandon();
     setExitBusy(false);
     setExitOpen(false);
-    leave();
-  }, [leave]);
+    leaveTo(exitTarget);
+  }, [exitTarget, leaveTo]);
 
   /* Android's hardware back is an exit path like any other, so it goes through the same
      prompt instead of bypassing it. Returning true tells the OS the press was handled. */
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (busy !== null) return true;
+      setExitTarget("exit");
       const queue = queueRef.current;
-      if (queue && (queue.isDirty() || queue.state().status === "error")) {
+      if (queue && (queue.isBusy() || queue.state().status === "error")) {
         setExitOpen(true);
         return true;
       }
@@ -1283,7 +1345,7 @@ function CreatorForm({
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
-          <Pressable onPress={onBackToEntry} hitSlop={10} accessibilityRole="button">
+          <Pressable onPress={requestBackToEntry} hitSlop={10} accessibilityRole="button">
             <Text style={styles.back}>‹ Back</Text>
           </Pressable>
 
@@ -2204,7 +2266,13 @@ function CreatorForm({
                 pressed && { opacity: 0.7 },
               ]}
             >
-              <Text style={styles.primaryBtnText}>{exitBusy ? "Saving…" : "Save & exit"}</Text>
+              <Text style={styles.primaryBtnText}>
+                {exitBusy
+                  ? "Saving…"
+                  : exitTarget === "entry"
+                    ? "Save & go back"
+                    : "Save & exit"}
+              </Text>
             </Pressable>
             <Pressable
               onPress={() => setExitOpen(false)}

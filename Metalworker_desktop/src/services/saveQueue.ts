@@ -21,6 +21,9 @@
 //                what an explicit "Save Draft" uses, so a draft can be created before
 //                the first autosave has ever been scheduled.
 //   state()    — what the footer should say.
+//   isBusy()   — whether any work is pending OR on the wire. Navigation uses this,
+//                because `isDirty()` alone is false during a forced Save Draft on an
+//                otherwise clean form: the write is real, and leaving must wait for it.
 //
 // A save is never started while another is running. If edits arrive while one runs,
 // the version counter moves, and the loop runs again the moment the first finishes. A
@@ -36,7 +39,10 @@
 //
 // `abandon()` is the "Leave draft" path: stop the debounce, wait for a request that is
 // already on the wire to settle, then discard anything that has not been confirmed.
-// It never starts another save for the discarded versions.
+// It never starts another save for the discarded versions. `flush()` and `saveNow()`
+// both re-check the abandon flag after they have awaited an in-flight request, so a
+// Save Draft that was started just before leaving cannot start a SECOND write once the
+// first one settles.
 //
 // Timers are injectable so the self-test can run this under plain Node without waiting
 // 1.2 seconds per case. The module is pure - no React, no Supabase - and the two app
@@ -102,6 +108,11 @@ export interface SaveQueue {
   isDirty(): boolean;
   /** True while a request is on the wire. */
   isRunning(): boolean;
+  /**
+   * True when there is unsaved work OR a request on the wire. This is what navigation
+   * must consult: `isDirty()` is false during a forced Save Draft on a clean form.
+   */
+  isBusy(): boolean;
   state(): SaveQueueState;
   /** Clear the timer. Does not cancel an in-flight request, which is already sent. */
   dispose(): void;
@@ -132,6 +143,10 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
   let disposed = false;
   /** Set by `abandon()`: the current loop must not start another write. */
   let stopAfterCurrent = false;
+  /** `abandon()` is terminal for this queue: the component is leaving. */
+  let abandoned = false;
+  /** True once any save has succeeded, so a clean form has a canonical row already. */
+  let savedOnce = false;
 
   function snapshot(): SaveQueueState {
     return { status, dirtyVersion, savedVersion, savedAt, error, running: running !== null };
@@ -165,6 +180,7 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
    */
   function run(force: boolean): Promise<boolean> {
     if (running) return running;
+    if (stopAfterCurrent) return Promise.resolve(false);
     if (!force && dirtyVersion <= savedVersion) {
       return Promise.resolve(status !== "error");
     }
@@ -192,6 +208,7 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
           return false;
         }
         savedVersion = Math.max(savedVersion, targetVersion);
+        savedOnce = true;
         savedAt = outcome.savedAt ?? now().toISOString();
         error = null;
         /* Only "saved" when nothing newer is waiting. If the user typed during the
@@ -210,7 +227,7 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
 
   return {
     change() {
-      if (disposed) return;
+      if (disposed || abandoned) return;
       stopAfterCurrent = false;
       dirtyVersion += 1;
       error = null;
@@ -219,11 +236,15 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
       schedule();
     },
     async flush() {
+      if (abandoned) return false;
       stopAfterCurrent = false;
       cancelTimer();
       if (running) {
         const finished = await running;
         if (!finished) return false;
+        /* The request settled while we waited. If the caller has meanwhile decided to
+           leave (`abandon()`), this must not start another write. */
+        if (stopAfterCurrent) return false;
       }
       if (disposed) return dirtyVersion <= savedVersion && status !== "error";
       if (dirtyVersion <= savedVersion) return status !== "error";
@@ -231,11 +252,17 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
       return done && dirtyVersion <= savedVersion && status !== "error";
     },
     async saveNow() {
+      if (abandoned) return false;
       stopAfterCurrent = false;
       cancelTimer();
       if (running) {
         const finished = await running;
         if (!finished) return false;
+        if (stopAfterCurrent) return false;
+        /* The in-flight save may have persisted everything, including the first-ever
+           save of a brand-new draft. In that case a second forced write would be a
+           redundant round-trip, but the form still needs an answer of "saved". */
+        if (savedOnce && dirtyVersion <= savedVersion && status !== "error") return true;
       }
       if (disposed) return false;
       const done = await run(true);
@@ -247,13 +274,20 @@ export function createSaveQueue(options: SaveQueueOptions): SaveQueue {
     isRunning() {
       return running !== null;
     },
+    isBusy() {
+      return running !== null || dirtyVersion > savedVersion || status === "pending";
+    },
     state: snapshot,
     dispose() {
       disposed = true;
       cancelTimer();
     },
     async abandon() {
-      /* Nothing scheduled may fire after this point. */
+      /* Nothing scheduled may fire after this point, and nothing that was already
+         awaiting the in-flight request may start a second write when it settles. The
+         flag is terminal: after "Leave draft" the component is unmounting, so a late
+         Save Draft is a request to write a document the admin has abandoned. */
+      abandoned = true;
       cancelTimer();
       stopAfterCurrent = true;
       const inflight = running;

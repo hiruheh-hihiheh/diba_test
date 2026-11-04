@@ -105,7 +105,11 @@ import {
   wordsAfterCopy,
   type DuplicateMatch,
 } from "../process-bill-upload/_shared/billCreator.ts";
-import { classifyDraftRecovery, finalizedDraftMessage } from "./draftRecovery.ts";
+import {
+  classifyDraftRecovery,
+  finalizedDraftMessage,
+  isCreatorOwner,
+} from "./draftRecovery.ts";
 
 const BUCKET = "bills";
 const TABLE = "bills";
@@ -288,12 +292,13 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "The draft could not be read." }, 500);
     }
     if (!read.row) return json({ ok: false, error: "That draft no longer exists." }, 404);
-    /* A manual draft belongs to the admin who started it. Imported rows have no
-       author and are not reachable here because they are finalized. */
-    if (
-      typeof read.row.created_by === "string" &&
-      read.row.created_by !== user.id
-    ) {
+    /* A draft belongs to the admin who started it - EXACTLY. A null author is not
+       "probably mine": it is a row whose owner cannot be proved, and proving it is
+       what authorises a write through this path. Historical null-owner draft rows
+       are therefore refused with the same 404 as any other unknown draft rather than
+       being adopted by the first request that names their id. The safe way to keep
+       working with such a row is to start a new draft; that cannot modify this one. */
+    if (!isCreatorOwner(read.row, user.id)) {
       return json({ ok: false, error: "That draft could not be found." }, 404);
     }
     if (read.row.status === "finalized") {

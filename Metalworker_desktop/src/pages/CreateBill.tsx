@@ -443,6 +443,20 @@ function CreatorForm({
   const jobIdsRef = useRef(jobIds);
   const useCurrentProfileRef = useRef(useCurrentProfile);
   const queueRef = useRef<SaveQueue | null>(null);
+  /**
+   * True from the moment Generate starts until the server operation settles.
+   *
+   * The overlay covers the form, but a lock is also checked INSIDE every mutation
+   * callback. A disabled button is a hint to a mouse; it is not a guarantee. A key
+   * press that reached a focused input, a dialog that was already open, or a callback
+   * queued in the same frame would otherwise still change a draft that is being
+   * generated from the values the server already read.
+   */
+  const lockedRef = useRef(false);
+  /** Mirrors `busy` for effects and the click guard, which must not re-register. */
+  const busyRef = useRef<null | "preview" | "finalize">(null);
+  /** A same-origin link the admin clicked while the draft had unsaved work. */
+  const pendingNavRef = useRef<string | null>(null);
 
   /** Report an edit to the save queue. Refs are updated first, so a Generate in the
       same event still sends the typed value. */
@@ -457,6 +471,7 @@ function CreatorForm({
 
   const setLogoId = useCallback(
     (id: string | null | undefined) => {
+      if (lockedRef.current) return;
       logoIdRef.current = id;
       setLogoIdState(id);
       markChanged();
@@ -466,6 +481,7 @@ function CreatorForm({
 
   const setFolderId = useCallback(
     (id: string | null) => {
+      if (lockedRef.current) return;
       folderIdRef.current = id;
       setFolderIdState(id);
       markChanged();
@@ -475,6 +491,7 @@ function CreatorForm({
 
   const setJobIds = useCallback(
     (update: string[] | ((previous: string[]) => string[])) => {
+      if (lockedRef.current) return;
       const next = typeof update === "function" ? update(jobIdsRef.current) : update;
       jobIdsRef.current = next;
       setJobIdsState(next);
@@ -485,6 +502,7 @@ function CreatorForm({
 
   const setUseCurrentProfile = useCallback(
     (update: boolean | ((previous: boolean) => boolean)) => {
+      if (lockedRef.current) return;
       const next =
         typeof update === "function" ? update(useCurrentProfileRef.current) : update;
       useCurrentProfileRef.current = next;
@@ -496,6 +514,7 @@ function CreatorForm({
 
   const setBank = useCallback(
     (update: BankDetails | ((previous: BankDetails) => BankDetails)) => {
+      if (lockedRef.current) return;
       const next = typeof update === "function" ? update(bankRef.current) : update;
       bankRef.current = next;
       setBankState(next);
@@ -506,6 +525,7 @@ function CreatorForm({
 
   const setAmountInWords = useCallback(
     (value: string) => {
+      if (lockedRef.current) return;
       amountInWordsRef.current = value;
       setAmountInWordsState(value);
       markChanged();
@@ -514,12 +534,14 @@ function CreatorForm({
   );
 
   const setWordsTouched = useCallback((value: boolean) => {
+    if (lockedRef.current) return;
     wordsTouchedRef.current = value;
     setWordsTouchedState(value);
   }, []);
 
   const setRoundOff = useCallback(
     (value: string | null) => {
+      if (lockedRef.current) return;
       roundOffRef.current = value;
       setRoundOffState(value);
       markChanged();
@@ -529,6 +551,7 @@ function CreatorForm({
 
   const setReverseChargeGst = useCallback(
     (value: string | null) => {
+      if (lockedRef.current) return;
       reverseChargeRef.current = value;
       setReverseChargeGstState(value);
       markChanged();
@@ -855,6 +878,7 @@ function CreatorForm({
 
   const setField = useCallback(
     (field: string, value: string) => {
+      if (lockedRef.current) return;
       const next = { ...valuesRef.current, [field]: value };
       valuesRef.current = next;
       setValues(next);
@@ -865,6 +889,7 @@ function CreatorForm({
 
   const setLine = useCallback(
     (key: string, field: keyof Omit<CreatorLineDraft, "key">, value: string) => {
+      if (lockedRef.current) return;
       const next = linesRef.current.map((line) =>
         line.key === key ? { ...line, [field]: value } : line
       );
@@ -876,6 +901,7 @@ function CreatorForm({
   );
 
   const addLine = useCallback(() => {
+    if (lockedRef.current) return;
     const previous = linesRef.current;
     const next = [
       ...previous,
@@ -888,6 +914,7 @@ function CreatorForm({
 
   const removeLine = useCallback(
     (key: string) => {
+      if (lockedRef.current) return;
       /* Never leave zero rows. An empty table has nowhere to type, and a bill with no line
          items is refused at finalization anyway — so an empty table is a dead end that looks
          like a form. */
@@ -905,6 +932,7 @@ function CreatorForm({
 
   const moveLine = useCallback(
     (key: string, by: number) => {
+      if (lockedRef.current) return;
       const previous = linesRef.current;
       const at = previous.findIndex((line) => line.key === key);
       const to = at + by;
@@ -1048,12 +1076,17 @@ function CreatorForm({
      `markChanged()`, so there is no render-driven effect that could report a seeded form
      as an edit. */
 
+  const [exitOpen, setExitOpen] = useState(false);
+  const [exitBusy, setExitBusy] = useState(false);
+
   /* Browser-level protection for refresh, tab close and an accidental navigation that
      leaves the page. It is registered for the life of the form and asks only while the
      queue still holds an unsaved version; a fully saved draft closes without a prompt. */
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!queueRef.current?.isDirty()) return;
+      /* A generation in flight is unsaved work too: closing the tab aborts the request
+         and the claim only expires after its lease. */
+      if (!queueRef.current?.isDirty() && busyRef.current !== "finalize") return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -1061,18 +1094,53 @@ function CreatorForm({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
+  /* In-app navigation (the sidebar, a link in a toast) is not an unload, so
+     `beforeunload` never sees it. This capture-phase listener intercepts a same-origin
+     anchor click while there is unsaved work OR a write on the wire, remembers where
+     the admin was going, and asks the same question the Save & exit button asks. The
+     answer then navigates to the remembered destination rather than the section list. */
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target;
+      const anchor = target instanceof Element ? target.closest("a[href]") : null;
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) {
+        return;
+      }
+      const queue = queueRef.current;
+      const needsPrompt =
+        (queue !== null && (queue.isBusy() || queue.state().status === "error")) ||
+        busyRef.current !== null;
+      if (!needsPrompt) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pendingNavRef.current = `${url.pathname}${url.search}${url.hash}`;
+      setExitOpen(true);
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+
   /* ── Leaving with unsaved work ───────────────────────────── */
 
-  const [exitOpen, setExitOpen] = useState(false);
-  const [exitBusy, setExitBusy] = useState(false);
-
   const leave = useCallback(() => {
-    navigate(info.route);
+    /* A link the admin clicked is a more specific destination than the section list,
+       and it is where they were already going. */
+    const pending = pendingNavRef.current;
+    pendingNavRef.current = null;
+    navigate(pending ?? info.route);
   }, [navigate, info.route]);
 
   const requestExit = useCallback(() => {
+    if (lockedRef.current) return;
+    pendingNavRef.current = null;
     const queue = queueRef.current;
-    if (queue && (queue.isDirty() || queue.state().status === "error")) {
+    if (queue && (queue.isBusy() || queue.state().status === "error")) {
       setExitOpen(true);
       return;
     }
@@ -1097,7 +1165,7 @@ function CreatorForm({
      makes it work on a brand-new form. It goes through the same queue, so it can never run
      beside an autosave. */
   const saveDraft = useCallback(async () => {
-    if (inFlightRef.current) return;
+    if (inFlightRef.current || lockedRef.current) return;
     inFlightRef.current = true;
     try {
       const saved = (await queueRef.current?.saveNow()) === true;
@@ -1121,7 +1189,7 @@ function CreatorForm({
   /* ── Preview ─────────────────────────────────────────────── */
 
   const preview = useCallback(async () => {
-    if (inFlightRef.current) return;
+    if (inFlightRef.current || lockedRef.current) return;
     inFlightRef.current = true;
     setBusy("preview");
     try {
@@ -1152,8 +1220,12 @@ function CreatorForm({
 
   const finalize = useCallback(
     async (confirmDuplicate: boolean) => {
-      if (inFlightRef.current) return;
+      if (inFlightRef.current || lockedRef.current) return;
       inFlightRef.current = true;
+      /* Set BEFORE the state update: React applies `busy` on the next render, and a
+         keystroke can be delivered in between. */
+      lockedRef.current = true;
+      pendingNavRef.current = null;
       setBusy("finalize");
       setDuplicates([]);
       try {
@@ -1214,11 +1286,20 @@ function CreatorForm({
         }
       } finally {
         inFlightRef.current = false;
+        /* A failure releases the lock so the admin can fix the form and try again. On
+           success the queue was abandoned and the page navigates away, so releasing
+           either way is safe. */
+        lockedRef.current = false;
         setBusy(null);
       }
     },
     [buildRequest, toast, navigate, challan, documentNoun, info.route, sessionId, documentType, setBillId]
   );
+
+  /* `busyRef` mirrors `busy` for listeners registered once. */
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
 
   /* ── Jobs ────────────────────────────────────────────────── */
 
@@ -2038,6 +2119,35 @@ function CreatorForm({
         )}
       </div>
 
+      {/* Generation covers the ENTIRE creator, not only the footer: the server has
+          already read the draft, so an edit that lands now is either lost or arrives
+          after finalization. `aria-busy` tells a screen reader the form is unavailable,
+          and the full-viewport layer stops the mouse at the same boundary the lock
+          stops a callback. */}
+      {busy === "finalize" && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-busy="true"
+          aria-label={`Generating the ${documentNoun}`}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm"
+        >
+          <div className="mx-4 max-w-sm rounded-xl border border-border bg-surface px-6 py-5 text-center shadow-xl">
+            <Loader2 size={26} className="mx-auto animate-spin text-primary" />
+            <h3 className="mt-3 text-sm font-bold text-text">
+              Generating the {documentNoun}…
+            </h3>
+            <p className="mt-1 text-sm text-text-secondary">
+              Writing the Original, Duplicate and Triplicate PDFs. The form is locked until
+              this finishes.
+            </p>
+            <p className="mt-2 text-xs text-text-muted">
+              If it fails, nothing is generated and your draft stays saved.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Dialogs ─────────────────────────────────────────────── */}
 
       <LogoPickerModal
@@ -2159,7 +2269,10 @@ function CreatorForm({
           that navigates after a confirmed write; a failure keeps the form open. */}
       <Modal
         open={exitOpen}
-        onClose={() => setExitOpen(false)}
+        onClose={() => {
+          pendingNavRef.current = null;
+          setExitOpen(false);
+        }}
         title="Leave this draft?"
         subtitle="The draft is saved automatically until you generate it."
         size="sm"
@@ -2168,7 +2281,10 @@ function CreatorForm({
             <button
               type="button"
               disabled={exitBusy}
-              onClick={() => setExitOpen(false)}
+              onClick={() => {
+                pendingNavRef.current = null;
+                setExitOpen(false);
+              }}
               className="px-4 py-2.5 rounded-xl border border-border text-sm font-semibold text-text-secondary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
             >
               Stay editing

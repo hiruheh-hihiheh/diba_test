@@ -13,26 +13,26 @@
 // has no idea it was mid-way through copying a bill or continuing a draft. A URL
 // parameter survives all of that, and Expo Router gives it a place for free.
 //
-// Refresh semantics were copied from the desktop route deliberately: no mode in the URL
-// means the entry screen, `mode=empty|profile` means the form, `copy=<bill id>` means the
-// form with that bill as its source, and `draft=<bill id>` means continue editing that
-// saved draft.
+// THE STORED RECORD IS THE SOURCE OF TRUTH, NOT JUST THE ID
 //
-// `session` is the creation intent's identity. It is minted here when the form is
-// opened, then written back into the URL so a refresh resumes the SAME intent and its
-// idempotency key. Two separate visits to this route are two intents and get two ids.
+// The URL carries a session id; the durable record carries the whole intent: the
+// idempotency key, whether a bill already exists, the original mode and the source bill
+// it was copied from. A restart therefore restores the COMPLETE record:
 //
-// ON A PHONE THE URL IS NOT ENOUGH
+//   * a record with a `billId` resumes that bill (`mode=resume`), and never creates
+//     another;
+//   * a record without a `billId` resumes the ORIGINAL creation intent with the SAME
+//     key, so a save is either the first save of that draft or the recovery of it,
+//     never a second draft;
+//   * the entry screen offers "Continue unfinished …" when such a record exists, and
+//     choosing it resumes the record rather than minting a new one.
 //
-// An Android force-stop does not guarantee that Expo Router restores the last URL. The
-// route therefore also consults `draftSessionStore`, which keeps the session id, the
-// idempotency key, the document type and the canonical bill id in AsyncStorage. If no
-// session is in the URL but an unfinished one is stored, that one is resumed. Choosing
-// a mode from the entry screen explicitly starts a NEW intent, so a deliberate second
-// invoice never inherits the first one's identity.
+// A deliberate "Create New" always mints a fresh session and key. An unfinished session
+// is never inherited silently, because that is how the second invoice of the day would
+// resolve to the first one.
 
 import { useLocalSearchParams, router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import {
   CreateBillScreen,
@@ -40,9 +40,22 @@ import {
 } from "../components/bills/CreateBillScreen";
 import type { BillDocumentType } from "../services/billDocumentTypes";
 import { draftKeyForSession, isDraftSessionComplete, newDraftKey } from "../services/draftLifecycle";
-import { draftSessionStore } from "../services/draftSessionStore";
+import { draftSessionStore, type CreatorSessionRecord } from "../services/draftSessionStore";
+import {
+  intentFromRecord,
+  intentMatchesParams,
+  intentToParams,
+  type ResolvedIntent,
+} from "../services/draftSessionIntent";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The URL intent, before the durable record gets a say. */
+function readMode(raw: string | string[] | undefined): CreatorMode | null {
+  if (typeof raw !== "string") return null;
+  if (raw === "empty" || raw === "profile" || raw === "copy") return raw;
+  return null;
+}
 
 export default function BillCreateRoute() {
   const params = useLocalSearchParams<{
@@ -53,20 +66,27 @@ export default function BillCreateRoute() {
     documentType?: string | string[];
   }>();
 
-  const draftId = typeof params.draft === "string" && UUID_RE.test(params.draft) ? params.draft : null;
-  const mode = draftId ? "resume" : readMode(params.mode);
-  const sourceBillId = draftId ?? (typeof params.copy === "string" ? params.copy : null);
+  const draftId =
+    typeof params.draft === "string" && UUID_RE.test(params.draft) ? params.draft : null;
+  const urlMode = draftId ? "resume" : readMode(params.mode);
+  const urlSource = draftId ?? (typeof params.copy === "string" ? params.copy : null);
   /* The document type travels in the URL for the same reason the mode does: a phone
      reclaims the process mid-form, and the form that comes back must still be the
      challan form rather than silently a tax invoice. */
   const documentType: BillDocumentType =
     params.documentType === "delivery_challan" ? "delivery_challan" : "tax_invoice";
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [intent, setIntent] = useState<ResolvedIntent | null>(null);
+  const [activeRecord, setActiveRecord] = useState<CreatorSessionRecord | null>(null);
   const [storageNote, setStorageNote] = useState<string | null>(null);
+  /* Guards the parameter-sync effect from writing while the restore is still resolving. */
+  const resolving = useRef(true);
+
+  /* ── Resolve the intent: URL first, durable record as the authority ─────── */
 
   useEffect(() => {
     let live = true;
+    resolving.current = true;
 
     (async () => {
       await draftSessionStore.hydrate();
@@ -75,57 +95,83 @@ export default function BillCreateRoute() {
       const hydrateWarning = draftSessionStore.storageError();
       if (hydrateWarning) setStorageNote(hydrateWarning);
 
+      const stored = await draftSessionStore.readActive();
+      if (!live) return;
+
+      const usable =
+        stored &&
+        stored.documentType === documentType &&
+        !isDraftSessionComplete(stored.sessionId, documentType, draftSessionStore.storage())
+          ? stored
+          : null;
+      setActiveRecord(usable);
+
       const fromUrl =
         typeof params.session === "string" && UUID_RE.test(params.session)
           ? params.session
           : null;
+
       if (fromUrl) {
-        setSessionId(fromUrl);
+        /* The URL names an intent. If the durable record is the same intent, the record
+           supplies the bill id, mode and source the URL may have lost. */
+        if (usable && usable.sessionId === fromUrl) {
+          setIntent(intentFromRecord(usable));
+          resolving.current = false;
+          return;
+        }
+        setIntent({ sessionId: fromUrl, mode: urlMode, sourceBillId: urlSource });
+        resolving.current = false;
         return;
       }
 
-      /* A mode without a session is either a deep link or a restored process. Resume the
-         stored unfinished intent when it belongs to this document type; otherwise mint
-         a fresh one. The entry screen (mode === null) never resumes, because choosing a
-         mode is what starts an intent. */
-      if (mode !== null && mode !== "resume") {
-        const active = await draftSessionStore.readActive();
-        if (
-          live &&
-          active &&
-          active.documentType === documentType &&
-          !isDraftSessionComplete(active.sessionId, documentType, draftSessionStore.storage())
-        ) {
-          setSessionId(active.sessionId);
+      if (urlMode !== null) {
+        /* A mode with no session is a deep link or a restored process. Reuse the stored
+           unfinished intent for this document type when there is one; otherwise mint a
+           fresh identity. */
+        if (usable) {
+          setIntent(intentFromRecord(usable));
+          resolving.current = false;
           return;
         }
+        setIntent({ sessionId: newDraftKey(), mode: urlMode, sourceBillId: urlSource });
+        resolving.current = false;
+        return;
       }
 
-      if (live) setSessionId(newDraftKey());
+      /* The entry screen. An unfinished record is OFFERED there, never entered
+         automatically; the session id is only a placeholder until a choice is made. */
+      setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null });
+      resolving.current = false;
     })();
 
     return () => {
       live = false;
     };
-  }, [params.session, mode, documentType]);
+  }, [params.session, params.mode, params.copy, params.draft, documentType, urlMode, urlSource]);
 
+  /* Keep the URL describing the resolved intent, so a refresh restores the SAME one.
+     The equality check is what stops this from looping with the effect above. */
   useEffect(() => {
-    if (!sessionId || mode === null || mode === "resume") return;
-    if (typeof params.session === "string" && params.session === sessionId) return;
-    router.setParams({ session: sessionId } as never);
-  }, [mode, params.session, sessionId]);
+    if (!intent || intent.mode === null || resolving.current) return;
+    if (intentMatchesParams(params, intent)) return;
+    router.setParams({ ...intentToParams(intent), documentType } as never);
+  }, [intent, params, documentType]);
 
   /* The store hydrates asynchronously. Rendering the form before that would let
      `draftKeyForSession` mint a key that is not the one already stored, which is exactly
      the duplicate-draft bug this change exists to remove. */
-  if (sessionId === null) return null;
+  if (intent === null) return null;
 
-  /* Choosing a mode is a NEW creation intent. It gets a new session id and a new
-     idempotency key even if an older unfinished session is still stored, so "Create
-     Bill" twice never resolves the second form to the first bill. */
+  /**
+   * Choosing a mode is a NEW creation intent: new session, new key, durable record
+   * pointing at it. An older unfinished session stays stored and remains offered from
+   * the entry screen, but it is never inherited by this one.
+   */
   const startIntent = (chosen: CreatorMode, source: string | null) => {
     const fresh = newDraftKey();
-    setSessionId(fresh);
+    const next: ResolvedIntent = { sessionId: fresh, mode: chosen, sourceBillId: source };
+    setIntent(next);
+    setActiveRecord(null);
     void draftSessionStore
       .remember({
         sessionId: fresh,
@@ -135,32 +181,44 @@ export default function BillCreateRoute() {
         mode: chosen,
         sourceBillId: source,
       })
+      .then(() => setStorageNote(null))
       .catch(() => {
+        /* The form can still save; it just cannot promise the intent survives a restart,
+           and the banner says so rather than staying silent. */
         setStorageNote(draftSessionStore.storageError());
       });
-    router.setParams({
-      mode: chosen,
-      copy: source ?? undefined,
-      draft: undefined,
-      session: fresh,
-      documentType,
-    } as never);
+  };
+
+  /** Resume the stored record exactly as it was left. */
+  const continueSession = (record: CreatorSessionRecord) => {
+    setIntent(intentFromRecord(record));
   };
 
   return (
     <CreateBillScreen
-      key={`${mode ?? "entry"}:${sourceBillId ?? ""}:${sessionId}`}
-      mode={mode}
-      sourceBillId={sourceBillId}
-      sessionId={sessionId}
+      key={`${intent.mode ?? "entry"}:${intent.sourceBillId ?? ""}:${intent.sessionId}`}
+      mode={intent.mode}
+      sourceBillId={intent.sourceBillId}
+      sessionId={intent.sessionId}
       documentType={documentType}
       storageNote={storageNote}
+      activeSession={activeRecord}
+      onContinueSession={continueSession}
       onChooseMode={(chosen) => startIntent(chosen, null)}
       onChooseSource={(billId) => startIntent("copy", billId)}
       onBackToEntry={() => {
-        /* Clearing the params drops the mode, which takes the screen back to the entry
-           view because `readMode(undefined)` — and only that — returns null. */
-        router.setParams({ mode: undefined, copy: undefined, draft: undefined, documentType } as never);
+        /* Clearing every mode parameter drops the screen to the entry view because
+           `readMode(undefined)` — and only that — returns null. The session id is
+           cleared too, so the restore effect cannot jump straight back into the form
+           that was just left. */
+        setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null });
+        router.setParams({
+          mode: undefined,
+          copy: undefined,
+          draft: undefined,
+          session: undefined,
+          documentType,
+        } as never);
       }}
       onExit={() => {
         if (router.canGoBack()) router.back();
@@ -175,11 +233,4 @@ export default function BillCreateRoute() {
       }}
     />
   );
-}
-
-/** The modes, with anything else — including no mode — meaning the entry screen. */
-function readMode(raw: string | string[] | undefined): CreatorMode | null {
-  if (typeof raw !== "string") return null;
-  if (raw === "empty" || raw === "profile" || raw === "copy") return raw;
-  return null;
 }
