@@ -32,7 +32,7 @@
 // resolve to the first one.
 
 import { useLocalSearchParams, router } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   CreateBillScreen,
@@ -82,6 +82,59 @@ export default function BillCreateRoute() {
   /* Guards the parameter-sync effect from writing while the restore is still resolving. */
   const resolving = useRef(true);
 
+  /* ── The creation identity must be durable before the first create ────────
+     A save that creates a bill is only idempotent for as long as its key survives.
+     The form is therefore allowed to send its FIRST create only once the key and the
+     session record have actually reached storage. Until then `identityReady` is false,
+     the creator refuses to post, and the banner offers a retry that keeps the form
+     exactly as it is. `identityRef` holds the record to retry, so a failed write can be
+     retried without minting a new identity. */
+  type IdentityPatch = {
+    sessionId: string;
+    documentType: BillDocumentType;
+    draftKey: string;
+    billId: null;
+    mode: CreatorMode;
+    sourceBillId: string | null;
+  };
+  const [identityReady, setIdentityReady] = useState(true);
+  const identityRef = useRef<IdentityPatch | null>(null);
+
+  const persistIdentity = useCallback(async (patch: IdentityPatch): Promise<boolean> => {
+    identityRef.current = patch;
+    setIdentityReady(false);
+    try {
+      await draftSessionStore.remember(patch);
+      identityRef.current = null;
+      setIdentityReady(true);
+      setStorageNote(draftSessionStore.storageError());
+      return true;
+    } catch {
+      /* The record may have been written while the separate key entry failed; either
+         way the form stays usable and the banner says recovery is not guaranteed. */
+      setStorageNote(draftSessionStore.storageError());
+      return false;
+    }
+  }, []);
+
+  /** Start a brand-new creation intent, and record it before the form can post. */
+  const beginIntent = useCallback(
+    (sessionId: string, chosen: CreatorMode, source: string | null) => {
+      const key = draftKeyForSession(sessionId, documentType, draftSessionStore.storage());
+      setIntent({ sessionId, mode: chosen, sourceBillId: source, draftKey: key });
+      setActiveRecord(null);
+      void persistIdentity({
+        sessionId,
+        documentType,
+        draftKey: key,
+        billId: null,
+        mode: chosen,
+        sourceBillId: source,
+      });
+    },
+    [documentType, persistIdentity]
+  );
+
   /* ── Resolve the intent: URL first, durable record as the authority ─────── */
 
   useEffect(() => {
@@ -111,15 +164,29 @@ export default function BillCreateRoute() {
           ? params.session
           : null;
 
+      const restore = (record: CreatorSessionRecord) => {
+        setIdentityReady(true);
+        identityRef.current = null;
+        setIntent(intentFromRecord(record));
+      };
+
       if (fromUrl) {
         /* The URL names an intent. If the durable record is the same intent, the record
-           supplies the bill id, mode and source the URL may have lost. */
+           supplies the bill id, mode, source AND the key the URL never carried. */
         if (usable && usable.sessionId === fromUrl) {
-          setIntent(intentFromRecord(usable));
+          restore(usable);
           resolving.current = false;
           return;
         }
-        setIntent({ sessionId: fromUrl, mode: urlMode, sourceBillId: urlSource });
+        if (urlMode !== null) {
+          /* A session in the URL with no record is a creation intent whose identity is
+             not durable yet. Record it (and gate the first create) under that session
+             rather than replacing the id the URL named. */
+          beginIntent(fromUrl, urlMode, urlSource);
+        } else {
+          setIdentityReady(true);
+          setIntent({ sessionId: fromUrl, mode: null, sourceBillId: null, draftKey: null });
+        }
         resolving.current = false;
         return;
       }
@@ -129,25 +196,47 @@ export default function BillCreateRoute() {
            unfinished intent for this document type when there is one; otherwise mint a
            fresh identity. */
         if (usable) {
-          setIntent(intentFromRecord(usable));
+          restore(usable);
           resolving.current = false;
           return;
         }
-        setIntent({ sessionId: newDraftKey(), mode: urlMode, sourceBillId: urlSource });
+        if (urlMode === "resume") {
+          /* Resuming a bill creates nothing, so there is no first-create to gate and no
+             creation key to send - the bill id alone identifies the row. */
+          setIdentityReady(true);
+          setIntent({
+            sessionId: newDraftKey(),
+            mode: "resume",
+            sourceBillId: urlSource,
+            draftKey: null,
+          });
+        } else {
+          beginIntent(newDraftKey(), urlMode, urlSource);
+        }
         resolving.current = false;
         return;
       }
 
       /* The entry screen. An unfinished record is OFFERED there, never entered
          automatically; the session id is only a placeholder until a choice is made. */
-      setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null });
+      setIdentityReady(true);
+      setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null, draftKey: null });
       resolving.current = false;
     })();
 
     return () => {
       live = false;
     };
-  }, [params.session, params.mode, params.copy, params.draft, documentType, urlMode, urlSource]);
+  }, [
+    params.session,
+    params.mode,
+    params.copy,
+    params.draft,
+    documentType,
+    urlMode,
+    urlSource,
+    beginIntent,
+  ]);
 
   /* Keep the URL describing the resolved intent, so a refresh restores the SAME one.
      The equality check is what stops this from looping with the effect above. */
@@ -168,29 +257,13 @@ export default function BillCreateRoute() {
    * the entry screen, but it is never inherited by this one.
    */
   const startIntent = (chosen: CreatorMode, source: string | null) => {
-    const fresh = newDraftKey();
-    const next: ResolvedIntent = { sessionId: fresh, mode: chosen, sourceBillId: source };
-    setIntent(next);
-    setActiveRecord(null);
-    void draftSessionStore
-      .remember({
-        sessionId: fresh,
-        documentType,
-        draftKey: draftKeyForSession(fresh, documentType, draftSessionStore.storage()),
-        billId: null,
-        mode: chosen,
-        sourceBillId: source,
-      })
-      .then(() => setStorageNote(null))
-      .catch(() => {
-        /* The form can still save; it just cannot promise the intent survives a restart,
-           and the banner says so rather than staying silent. */
-        setStorageNote(draftSessionStore.storageError());
-      });
+    beginIntent(newDraftKey(), chosen, source);
   };
 
-  /** Resume the stored record exactly as it was left. */
+  /** Resume the stored record exactly as it was left, including its key. */
   const continueSession = (record: CreatorSessionRecord) => {
+    setIdentityReady(true);
+    identityRef.current = null;
     setIntent(intentFromRecord(record));
   };
 
@@ -202,6 +275,13 @@ export default function BillCreateRoute() {
       sessionId={intent.sessionId}
       documentType={documentType}
       storageNote={storageNote}
+      draftKey={intent.draftKey}
+      identityReady={identityReady}
+      onRetryIdentity={async () => {
+        const pending = identityRef.current;
+        if (!pending) return true;
+        return persistIdentity(pending);
+      }}
       activeSession={activeRecord}
       onContinueSession={continueSession}
       onChooseMode={(chosen) => startIntent(chosen, null)}
@@ -211,7 +291,7 @@ export default function BillCreateRoute() {
            `readMode(undefined)` — and only that — returns null. The session id is
            cleared too, so the restore effect cannot jump straight back into the form
            that was just left. */
-        setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null });
+        setIntent({ sessionId: newDraftKey(), mode: null, sourceBillId: null, draftKey: null });
         router.setParams({
           mode: undefined,
           copy: undefined,

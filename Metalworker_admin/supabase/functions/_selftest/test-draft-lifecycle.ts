@@ -42,8 +42,13 @@ import {
   intentFromRecord,
   intentMatchesParams,
   intentToParams,
+  resolveCreatorDraftKey,
 } from "../../../src/services/draftSessionIntent.ts";
-import { isLegacyBill } from "../../../src/services/billDocument.ts";
+import { billCopyPath, isLegacyBill } from "../../../src/services/billDocument.ts";
+import {
+  generationAttemptId,
+  generationPdfPaths,
+} from "../create-bill/draftGenerationPaths.ts";
 import {
   classifyDraftRecovery,
   finalizedDraftMessage,
@@ -954,6 +959,295 @@ section("J. a restored record restores the whole intent");
   check(
     !intentMatchesParams(copyParams, resumed),
     "a draft intent and a copy intent never compare equal"
+  );
+
+  /* The key is part of the intent, because the record is written even when the separate
+     key entry failed. Without this a restore would mint a second token for the same
+     draft and the server would create a second bill. */
+  check(resumed.draftKey === "key-j", "a resumed intent still carries the stored key");
+  check(
+    copied.draftKey === "key-j" && profile.draftKey === "key-j" && blank.draftKey === "key-j",
+    "every restored mode carries the exact stored key"
+  );
+  check(
+    !("draftKey" in intentToParams(blank)),
+    "the idempotency key is never written into the URL"
+  );
+}
+
+/* ──────────────────────────────────────────────
+   K. Each generation attempt owns its PDF objects
+   ────────────────────────────────────────────── */
+
+section("K. each generation attempt owns its own PDF objects");
+
+{
+  const bill = "11111111-1111-4111-8111-111111111111";
+  const number = "INV_2026_001";
+  const attemptA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const attemptB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  const a = generationPdfPaths(bill, number, attemptA);
+  const b = generationPdfPaths(bill, number, attemptB);
+
+  check(
+    generationAttemptId(attemptA) !== generationAttemptId(attemptB),
+    "two claims reduce to two different attempt identities"
+  );
+  check(a.base !== b.base, "two claims for the same bill get different object bases");
+  for (const copy of ["original", "duplicate", "triplicate"] as const) {
+    check(a[copy] !== b[copy], `a takeover cannot collide on the ${copy} copy`);
+    check(a[copy].startsWith(`${a.base}_`), `the ${copy} copy belongs to attempt A`);
+    check(b[copy].startsWith(`${b.base}_`), `the ${copy} copy belongs to attempt B`);
+    check(a[copy].endsWith(`_${copy}.pdf`), `the ${copy} copy keeps its readable name`);
+  }
+  check(
+    a.base.includes(generationAttemptId(attemptA)),
+    "the claim token - not only the invoice number - names the attempt"
+  );
+
+  let refused = false;
+  try {
+    generationPdfPaths(bill, number, "");
+  } catch {
+    refused = true;
+  }
+  check(refused, "an attempt without a claim token is refused rather than sharing a path");
+
+  /* The database's `bills_pdf_paths_same_bill` check, reproduced: the first
+     `_`-delimited token of the second path segment must be the bill id on all three. */
+  const billTokenOf = (path: string) => path.split("/")[1].split("_")[0];
+  check(
+    [a.original, a.duplicate, a.triplicate].every((path) => billTokenOf(path) === bill),
+    "all three copies still satisfy bills_pdf_paths_same_bill"
+  );
+  check(
+    [a.original, a.duplicate, a.triplicate].every((path) => path.startsWith("manual/")),
+    "the objects stay under the manual prefix every consumer already understands"
+  );
+
+  /* The row is what download, ZIP and reprint read; the new names must resolve through it
+     with no consumer-side reconstruction of the path. */
+  const row = {
+    original_pdf_path: a.original,
+    duplicate_pdf_path: a.duplicate,
+    triplicate_pdf_path: a.triplicate,
+  } as unknown as Parameters<typeof billCopyPath>[0];
+  check(
+    billCopyPath(row, "original") === a.original &&
+      billCopyPath(row, "duplicate") === a.duplicate &&
+      billCopyPath(row, "triplicate") === a.triplicate,
+    "download, ZIP and reprint resolve the stored paths unchanged"
+  );
+
+  /* Cleanup must be per attempt: removing A's objects leaves every one of B's. */
+  const bucket = new Set([
+    a.original,
+    a.duplicate,
+    a.triplicate,
+    b.original,
+    b.duplicate,
+    b.triplicate,
+  ]);
+  for (const path of [a.original, a.duplicate]) bucket.delete(path);
+  check(
+    [b.original, b.duplicate, b.triplicate].every((path) => bucket.has(path)),
+    "cleanup by attempt A leaves every object attempt B uploaded"
+  );
+  check(
+    !bucket.has(a.original) && !bucket.has(a.duplicate),
+    "and removes only what attempt A itself uploaded"
+  );
+
+  /* A crashed attempt may have uploaded only the Original. The retry must still be able
+     to write all three copies. */
+  const leftovers = new Set([a.original]);
+  const retry = generationPdfPaths(bill, number, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  const retryPaths = [retry.original, retry.duplicate, retry.triplicate];
+  check(
+    retryPaths.every((path) => !leftovers.has(path)),
+    "a retry after a partial upload receives paths of its own"
+  );
+  for (const path of retryPaths) leftovers.add(path);
+  check(leftovers.size === 4, "so the retry can upload all three copies beside the leftover");
+}
+
+/* ──────────────────────────────────────────────
+   L. A restored creation intent keeps its exact key
+   ────────────────────────────────────────────── */
+
+section("L. a restored creation intent keeps its exact key");
+
+{
+  function memoryBackend(initial: Record<string, string> = {}) {
+    const map = new Map<string, string>(Object.entries(initial));
+    return {
+      getAllKeys: async () => [...map.keys()],
+      multiGet: async (keys: readonly string[]) =>
+        keys.map((name) => [name, map.get(name) ?? null] as const),
+      setItem: async (name: string, value: string) => {
+        map.set(name, value);
+      },
+      removeItem: async (name: string) => {
+        map.delete(name);
+      },
+      dump: () => map,
+    };
+  }
+
+  const session = "session-l";
+  const key = "key-l";
+  const active = JSON.stringify({
+    sessionId: session,
+    documentType: "tax_invoice",
+    draftKey: key,
+    billId: null,
+    mode: "empty",
+    sourceBillId: null,
+    updatedAt: "2026-04-01T10:00:00.000Z",
+  });
+  const keyName = draftSessionStorageKey("tax_invoice", session);
+
+  /* 2. The record survived; the separate key entry did not. */
+  const backend = memoryBackend({ "bill-creator:active": active });
+  const store = createDraftSessionStore(backend);
+  const record = await store.readActive();
+  check(record?.draftKey === key, "the active record carries the key on its own");
+  check(!backend.dump().has(keyName), "the separate key entry is genuinely missing");
+  const intent = intentFromRecord(record!);
+  check(intent.draftKey === key, "intentFromRecord keeps the key for a creation session");
+  check(
+    resolveCreatorDraftKey(intent, "tax_invoice", store.storage()) === key,
+    "the creator uses the record's key instead of minting another"
+  );
+  check(
+    store.storage().getItem(keyName) === key,
+    "and the missing key entry is repaired for the next reload"
+  );
+
+  /* 1. Both copies exist and agree. */
+  const both = createDraftSessionStore(
+    memoryBackend({ "bill-creator:active": active, [keyName]: key })
+  );
+  const bothRecord = await both.readActive();
+  check(
+    resolveCreatorDraftKey(intentFromRecord(bothRecord!), "tax_invoice", both.storage()) === key,
+    "when both copies exist the same key is used"
+  );
+
+  /* 4. A restart after the partial write restores the record and the key. */
+  const restarted = createDraftSessionStore(memoryBackend({ "bill-creator:active": active }));
+  const restartedRecord = await restarted.readActive();
+  check(
+    restartedRecord?.sessionId === session && restartedRecord?.draftKey === key,
+    "a restart restores the session and its key from the record alone"
+  );
+  const restoredIntent = intentFromRecord(restartedRecord!);
+  check(
+    resolveCreatorDraftKey(restoredIntent, "tax_invoice", restarted.storage()) === key,
+    "the restored form sends the original key"
+  );
+
+  /* 3. The key write fails while the record write succeeds. */
+  const partialBytes = new Map<string, string>();
+  const partial = createDraftSessionStore({
+    getAllKeys: async () => [...partialBytes.keys()],
+    multiGet: async (keys) => keys.map((name) => [name, partialBytes.get(name) ?? null] as const),
+    setItem: async (name, value) => {
+      if (name !== "bill-creator:active") throw new Error("key storage is read-only");
+      partialBytes.set(name, value);
+    },
+    removeItem: async (name) => {
+      partialBytes.delete(name);
+    },
+  });
+  let failed = false;
+  try {
+    await partial.remember({
+      sessionId: session,
+      documentType: "tax_invoice",
+      draftKey: key,
+      billId: null,
+      mode: "empty",
+      sourceBillId: null,
+    });
+  } catch {
+    failed = true;
+  }
+  check(failed, "a failed key write is reported");
+  const afterFailure = await partial.readActive();
+  check(afterFailure?.draftKey === key, "the record still holds the key after that failure");
+  check(
+    resolveCreatorDraftKey(intentFromRecord(afterFailure!), "tax_invoice", partial.storage()) === key,
+    "so the key is not silently replaced by the successful record write"
+  );
+
+  /* 6. A record with a bill id updates that exact bill. */
+  const resumedIntent = intentFromRecord({ ...restartedRecord!, billId: "bill-l" });
+  check(
+    resumedIntent.mode === "resume" && resumedIntent.sourceBillId === "bill-l",
+    "a record with a bill id resumes that exact bill"
+  );
+  check(
+    resolveCreatorDraftKey(resumedIntent, "tax_invoice", restarted.storage()) === "",
+    "a resumed bill sends no creation key"
+  );
+
+  /* 7. Without a bill id, the idempotency key recovers the existing row after a restart. */
+  const server = new Map<string, string>();
+  const createOrRecover = (draftKey: string): string => {
+    const existing = server.get(draftKey);
+    if (existing) return existing;
+    const created = `bill-${server.size + 1}`;
+    server.set(draftKey, created);
+    return created;
+  };
+  const beforeRestart = createOrRecover(
+    resolveCreatorDraftKey(restoredIntent, "tax_invoice", restarted.storage())
+  );
+  const secondStore = createDraftSessionStore(memoryBackend({ "bill-creator:active": active }));
+  const secondKey = resolveCreatorDraftKey(
+    intentFromRecord((await secondStore.readActive())!),
+    "tax_invoice",
+    secondStore.storage()
+  );
+  check(
+    createOrRecover(secondKey) === beforeRestart,
+    "an idempotency-key retry recovers the same row"
+  );
+  check(server.size === 1, "and no second draft is created for that intent");
+
+  /* 8. A completed session never hands its finalized key to a new creation. */
+  completeDraftSession(session, "tax_invoice", restarted.storage());
+  const afterFinalize = resolveCreatorDraftKey(restoredIntent, "tax_invoice", restarted.storage());
+  check(afterFinalize !== key, "a completed session does not reuse its finalized key");
+  const fresh = newDraftKey();
+  check(
+    draftKeyForSession(fresh, "tax_invoice", restarted.storage()) !== key,
+    "a new creation after finalization uses a different key"
+  );
+
+  /* The wiring, not just the adapter: the route must pass the restored key, and the creator
+     must resolve its key from that prop. */
+  const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const routeSource = readFileSync(join(root, "src/app/bill-create.tsx"), "utf8");
+  const screenSource = readFileSync(
+    join(root, "src/components/bills/CreateBillScreen.tsx"),
+    "utf8"
+  );
+  check(
+    routeSource.includes("draftKey={intent.draftKey}"),
+    "the route hands the restored key to the creator"
+  );
+  check(
+    screenSource.includes("resolveCreatorDraftKey(") &&
+      screenSource.includes("draftKey: restoredDraftKey"),
+    "the creator resolves its key from that prop"
+  );
+  check(
+    routeSource.includes("identityReady={identityReady}") &&
+      screenSource.includes("identityReady === false"),
+    "the route's persistence gate reaches the first create"
   );
 }
 

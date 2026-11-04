@@ -84,6 +84,7 @@ import { getBillConnections, unlinkJobsFromBill } from "../../services/billJobCo
 import { createBillingFolder, fetchBillingFolders, type BillingFolder } from "../../services/billingFolders";
 import { fetchBill, fetchBillFolderId, fetchBillLineItems, fetchBills } from "../../services/bills";
 import { draftKeyForSession, newDraftKey } from "../../services/draftLifecycle";
+import { resolveCreatorDraftKey } from "../../services/draftSessionIntent";
 import { draftSessionStore } from "../../services/draftSessionStore";
 import {
   createSaveQueue,
@@ -136,6 +137,18 @@ export interface CreateBillScreenProps {
   /** A persistence warning from the route, shown instead of silently promising recovery. */
   storageNote?: string | null;
   /**
+   * The exact key the stored session was created with. The creator prefers it over the
+   * separate key entry, because the record can exist while that entry write failed.
+   */
+  draftKey?: string | null;
+  /**
+   * False while this creation intent has not reached durable storage. The first create
+   * is refused until it is true, so a lost response cannot leave an untracked bill.
+   */
+  identityReady?: boolean;
+  /** Retry writing the creation identity; resolves true once it is durable. */
+  onRetryIdentity?: () => boolean | Promise<boolean>;
+  /**
    * The unfinished session stored on this device, when there is one for this document
    * type. The entry screen offers to continue it; it is never entered automatically.
    */
@@ -181,6 +194,9 @@ export function CreateBillScreen(props: CreateBillScreenProps) {
       onBackToEntry={props.onBackToEntry}
       sessionId={sessionId}
       storageNote={props.storageNote ?? null}
+      draftKey={props.draftKey ?? null}
+      identityReady={props.identityReady ?? true}
+      onRetryIdentity={props.onRetryIdentity}
     />
   );
 }
@@ -348,6 +364,9 @@ function CreatorForm({
   onExit,
   onBackToEntry,
   storageNote,
+  draftKey: restoredDraftKey,
+  identityReady = true,
+  onRetryIdentity,
 }: {
   mode: CreatorMode;
   sourceBillId: string | null;
@@ -358,6 +377,9 @@ function CreatorForm({
   onExit: () => void;
   onBackToEntry: () => void;
   storageNote: string | null;
+  draftKey: string | null;
+  identityReady?: boolean;
+  onRetryIdentity?: () => boolean | Promise<boolean>;
 }) {
   const isCopy = mode === "copy";
   const isResume = mode === "resume";
@@ -399,6 +421,13 @@ function CreatorForm({
   const roundOffRef = useRef(roundOff);
   const reverseChargeRef = useRef(reverseChargeGst);
   const billIdRef = useRef<string | null>(null);
+  /* The identity gate is read from a callback that can run in the same tick as the state
+     change that clears it (the retry path flushes immediately), so the guard reads a ref
+     rather than the rendered prop. */
+  const identityReadyRef = useRef(identityReady);
+  useEffect(() => {
+    identityReadyRef.current = identityReady;
+  }, [identityReady]);
   const logoIdRef = useRef(logoId);
   const folderIdRef = useRef(folderId);
   const jobIdsRef = useRef(jobIds);
@@ -579,8 +608,15 @@ function CreatorForm({
      `sessionKey` is always present, because the session store needs one to record the
      session even when the request itself omits it. */
   const sessionKey = useMemo(
-    () => draftKeyForSession(sessionId, documentType, draftSessionStore.storage()),
-    [sessionId, documentType]
+    () =>
+      /* A resumed bill sends no creation key, but the session record still needs one so a
+         restart can find it; the bill id remains what identifies the row. */
+      resolveCreatorDraftKey(
+        { sessionId, mode, draftKey: restoredDraftKey },
+        documentType,
+        draftSessionStore.storage()
+      ) || draftKeyForSession(sessionId, documentType, draftSessionStore.storage()),
+    [sessionId, mode, restoredDraftKey, documentType]
   );
   const draftKey = isResume ? "" : sessionKey;
 
@@ -957,6 +993,16 @@ function CreatorForm({
   const performSave = useCallback(
     async (options: { silent?: boolean } = {}) => {
       if (loading) return null;
+      /* A first create must never leave the device before its key is durable: if the
+         response were lost, a retry could not prove which draft it was. A resumed bill
+         already has its identity (the id), so it is never blocked here. */
+      if (!identityReadyRef.current && !isResume && !billIdRef.current) {
+        lastSaveError.current =
+          "This draft's identity is not saved on this device yet, so nothing was sent. Use “Try again” above to save it.";
+        setStorageWarning(lastSaveError.current);
+        if (!options.silent) notify("Not saved", lastSaveError.current);
+        return null;
+      }
       try {
         const result = await saveCreatorDraft(buildRequest());
         setBillId(result.bill_id);
@@ -983,7 +1029,7 @@ function CreatorForm({
         return null;
       }
     },
-    [loading, buildRequest, applyServerTotals, rememberSession, setBillId]
+    [loading, buildRequest, applyServerTotals, rememberSession, setBillId, identityReady, isResume]
   );
   /* Written in an effect, not during render: a ref updated in the render path is exactly
      what the hooks linting forbids, and the queue only reads it when a save actually runs. */
@@ -1018,6 +1064,19 @@ function CreatorForm({
       created.dispose();
     };
   }, []);
+
+  /* Retrying the identity is only half the job: edits typed while it was failing were
+     never sent. Once the key is durable, flush them through the normal queue rather than
+     asking the admin to touch a field again. A clean form is left alone - retrying must
+     not create an empty draft by itself. */
+  const retryIdentity = useCallback(async () => {
+    if (!onRetryIdentity) return;
+    const ok = await onRetryIdentity();
+    if (!ok) return;
+    /* The flush below runs before React has re-rendered with the new prop. */
+    identityReadyRef.current = true;
+    if (queueRef.current?.isDirty()) await queueRef.current.saveNow();
+  }, [onRetryIdentity]);
 
   /* A resumed draft is already stored under its bill id; remembering it here is what
      lets a phone restart land back on it rather than on the entry screen. */
@@ -1361,6 +1420,13 @@ function CreatorForm({
           {storageNote || storageWarning ? (
             <View style={styles.errorBox}>
               <Text style={styles.note}>{storageNote ?? storageWarning}</Text>
+              {identityReady === false && onRetryIdentity ? (
+                <Pressable onPress={retryIdentity} hitSlop={8} accessibilityRole="button">
+                  <Text style={[styles.note, { fontWeight: "700" }]}>
+                    Try saving the draft identity again
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
 

@@ -110,14 +110,12 @@ import {
   finalizedDraftMessage,
   isCreatorOwner,
 } from "./draftRecovery.ts";
+import { generationPdfPaths } from "./draftGenerationPaths.ts";
 
 const BUCKET = "bills";
 const TABLE = "bills";
 const LINE_ITEMS = "bill_line_items";
 const UPLOADS = "bill_uploads";
-
-/** Manual bills live under their own prefix, so they are obvious in the bucket. */
-const MANUAL_PREFIX = "manual";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -830,13 +828,29 @@ Deno.serve(async (req) => {
      `bills_pdf_paths_same_bill` checks: it requires all three paths' second segment
      to begin with the same `_`-delimited token. Naming them after the bill rather
      than after an upload means a manual bill satisfies that constraint without
-     inventing a fake upload folder - and it makes the objects self-describing. */
-  const base = `${MANUAL_PREFIX}/${draftId}_${token}_v1`;
-  const newPaths: Record<CopyKind, string> = {
-    original: `${base}_original.pdf`,
-    duplicate: `${base}_duplicate.pdf`,
-    triplicate: `${base}_triplicate.pdf`,
-  };
+     inventing a fake upload folder - and it makes the objects self-describing.
+
+     The claim token is part of the name too, so a retry (or a generation that took
+     over an expired lease) uploads to paths of its own. Without it, two attempts for
+     the same bill and number would compete for the same three objects, `upsert:false`
+     would fail the second, and one attempt's cleanup could delete the other's files.
+     The bill id is still the FIRST token of the segment, so the database constraint
+     is unchanged. */
+  if (!claimToken) {
+    /* Unreachable for a finalize - the claim is taken above and none of the failures
+       between there and here clear it - but naming objects after an absent attempt is
+       exactly the collision this guards against, so refuse rather than guess. */
+    return json(
+      {
+        ok: false,
+        error: "The generation claim was lost before the documents were stored. Nothing was generated.",
+        reason: "claim_lost",
+        bill_id: draftId,
+      },
+      409
+    );
+  }
+  const newPaths: Record<CopyKind, string> = generationPdfPaths(draftId, token, claimToken);
 
   const uploaded: string[] = [];
   for (const { copy } of models) {
